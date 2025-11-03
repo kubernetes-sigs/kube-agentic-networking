@@ -28,6 +28,8 @@ This subproject aims to deliver the following:
     
 -   Design APIs extensible enough for diverse implementations (service meshes, gateways, future architectures)
 
+![Architecture Diagram](./docs/diagram.svg)
+
 ## Community, discussion, contribution, and support
 
 Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
