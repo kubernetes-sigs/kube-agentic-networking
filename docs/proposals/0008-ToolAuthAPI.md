@@ -36,6 +36,8 @@ The API introduces 2 new CRDs:
 
 The CRD names may change depending on the OSS feedback.
 
+> **_NOTE:_** The API does not cover identity extraction, or request authentication. We will cover them in a follow-up Pull Request.
+
 ## Backend CRD
 
 A Backend resource could reference a standard **Kubernetes Service** or an **External FQDN** (Fully Qualified Domain Name). In addition, it allows protocol-specific backend configuration. For example, for a MCP server, it allows configuring the URL path of the MCP backend for MCP traffic, since a MCP backend may serve both MCP traffic and non-MCP traffic. Currently, the only supported backend type is MCP. We can extend this CRD to support other types of backends involved in agentic networking.
