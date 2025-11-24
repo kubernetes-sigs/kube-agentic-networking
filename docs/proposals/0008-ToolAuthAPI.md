@@ -2,7 +2,8 @@
 
 This proposal defines authorization policies for tool access from AI agents running inside a Kubernetes cluster to MCP servers running in the Kubernetes cluster or outside of the Kubernetes cluster. By default, an AI agent can call initialize, notifications/initialized and tools/list. To enforce a "zero trust" security posture, a tools/call is denied unless it is allowed through the Tool Auth API described in this proposal.
 
-# ⚠️ Warning: Experimental API
+# 🚫🚫 **STOP – EXPERIMENTAL API** 🚫🚫
+**Do NOT use this in production.**
 
 This API is currently **experimental** and is subject to change without prior notice. We recommend against using it in production environments until a stable version is released.
 
@@ -31,6 +32,9 @@ As an AI Engineer, I want my agents running in Kubernetes to have unique, verifi
 #### Protocol-Aware Authorization for MCP Tools
 
 As an AI Engineer, I want to create authorization policies to specify which individual tools (e.g., getWeather, sendEmail) my agent is permitted to call on an allow-listed MCP server, so that I can enforce least-privilege access at the specific tool-function level, not just the network endpoint.
+
+TODO: explore MCP tool filtering. For example, a `tools/list` call should filter out the tools the caller
+does not have access to.
 
 # API
 
