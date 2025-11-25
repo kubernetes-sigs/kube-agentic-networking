@@ -91,7 +91,7 @@ const (
 )
 
 // MCPBackend describes a MCP Backend.
-// ServiceName and Hostname cannot be defined at the same time.
+// ServiceName and Hostname MUST NOT be defined at the same time.
 // +kubebuilder:validation:ExactlyOneOf=serviceName;hostname
 type MCPBackend struct {
 	// ServiceName defines the Kubernetes Service name of a MCP backend.
@@ -178,7 +178,7 @@ type AccessRule struct {
 // Source specifies the source of a request.
 // This struct is same as the Source struct defined in https://github.com/kubernetes-sigs/gateway-api/blob/950c6639afd099b7bba4236f8b894ae4b891d26a/geps/gep-3779/index.md#api-design.
 //
-// At least one field may be set. If multiple fields are set,
+// At least one field MAY be set. If multiple fields are set,
 // a request matches this Source if it matches
 // **any** of the specified criteria (logical OR across fields).
 //
@@ -197,15 +197,18 @@ type AccessRule struct {
 // to support richer match expressions or logical operators. </gateway:util:excludeFromCRD>
 type Source struct {
 	// Identities specifies a list of identities that are matched by this rule.
-	// A request's identity must be present in this list to match the rule.
+	// A request's identity MUST be present in this list to match the rule.
 	//
-	// Identities must be specified as SPIFFE-formatted URIs following the pattern:
+	// Identities MUST be specified as SPIFFE-formatted URIs following the pattern:
 	//   spiffe://<trust_domain>/<workload-identifier>
 	//
 	// While the exact workload identifier structure is implementation-specific,
 	// implementations are encouraged to follow the convention of
 	// `spiffe://<trust_domain>/ns/<namespace>/sa/<serviceaccount>`
 	// when representing Kubernetes workload identities.
+  //
+  // While identities MAY be used in the future to represent non-k8s workloads,
+  // the initial focus will be Kubernetes workloads.
 	//
 	// +optional
 	Identities []string `json:"identities,omitempty"`
@@ -213,7 +216,7 @@ type Source struct {
 	// matched by this rule. A request originating from a pod associated with
 	// one of these Serviceaccounts will match the rule.
 	//
-	// Values must be in one of the following formats:
+	// Values MUST be in one of the following formats:
 	//   - "<namespace>/<serviceaccount-name>": A specific Serviceaccount in a namespace.
 	//   - "<namespace>/*": All Serviceaccounts in the given namespace.
 	//   - "<serviceaccount-name>": a Serviceaccount in the same namespace as the policy.
