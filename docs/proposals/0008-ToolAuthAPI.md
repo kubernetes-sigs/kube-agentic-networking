@@ -3,9 +3,9 @@
 This proposal defines authorization policies for tool access from AI agents running inside a Kubernetes cluster to MCP servers running in the Kubernetes cluster or outside of the Kubernetes cluster. By default, an AI agent can call initialize, notifications/initialized and tools/list. To enforce a "zero trust" security posture, a tools/call is denied unless it is allowed through the Tool Auth API described in this proposal.
 
 # 🚫🚫 **STOP – EXPERIMENTAL API** 🚫🚫
-**Do NOT use this in production.**
+**Do NOT implement. Do NOT use in production.**
 
-This API is currently **experimental** and is subject to change without prior notice. We recommend against using it in production environments until a stable version is released.
+This API is **experimental** and subject to change without prior notice. Vendors and integrators should not implement or rely on it, and it must not be enabled in production environments until a stable version is released.
 
 # Non-Goals
 
@@ -639,7 +639,7 @@ It turns complex, multi-step authentication flows into standard Kubernetes YAML.
 
 #### **Latency (The `ext_authz` Hop)**
 
-Because it relies on Envoy's *external authorization* API, every request that hits your Gateway must pause, make a network hop to the Authorino service, wait for a decision, and then resume.
+Because it relies on Envoy's *external authorization* API, requests within the scope of an AuthPolicy must pause, make a network hop to the Authorino service over gRPC or HTTP, wait for a decision, and then resume. Although caching can be enabled to mitigate the impact of the extra hop, some additional latency should often be expected.
 
 #### **Operational Complexity**
 
