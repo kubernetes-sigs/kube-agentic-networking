@@ -2,10 +2,10 @@
 
 This proposal defines authorization policies for tool access from AI agents running inside a Kubernetes cluster to MCP servers running in the Kubernetes cluster or outside of the Kubernetes cluster. By default, an AI agent can call initialize, notifications/initialized and tools/list. To enforce a "zero trust" security posture, a tools/call is denied unless it is allowed through the Tool Auth API described in this proposal.
 
-# 🚫🚫 **STOP – EXPERIMENTAL API** 🚫🚫
+# 🚫🚫 **STOP – PROVISIONAL API** 🚫🚫
 **Do NOT implement. Do NOT use in production.**
 
-This API is **experimental** and subject to change without prior notice. Vendors and integrators should not implement or rely on it, and it must not be enabled in production environments until a stable version is released.
+This API is **provisional** and subject to change without prior notice. Vendors and integrators should not implement or rely on it, and it must not be enabled in production environments until a stable version is released.
 
 # Non-Goals
 
