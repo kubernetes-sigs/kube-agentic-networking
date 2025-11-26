@@ -1,3 +1,7 @@
+Date: 17th November 2025
+Authors: haiyanmeng, guicassolato
+Status: Provisional
+
 # Tool Authorization in Agentic Networking
 
 This proposal defines authorization policies for tool access from AI agents running inside a Kubernetes cluster to MCP servers running in the Kubernetes cluster or outside of the Kubernetes cluster. By default, an AI agent can call initialize, notifications/initialized and tools/list. To enforce a "zero trust" security posture, a tools/call is denied unless it is allowed through the Tool Auth API described in this proposal.
