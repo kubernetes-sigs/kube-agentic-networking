@@ -2,5 +2,8 @@
 
 approvers:
   - LiorLieberman
-  - guicassolato
+  - david-martin
   - yuzisun
+
+emeritus_approvers:
+  - guicassolato
