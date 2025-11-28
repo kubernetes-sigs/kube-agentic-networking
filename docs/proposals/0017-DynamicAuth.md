@@ -429,6 +429,47 @@ CEL is strongly typed. When working with dynamic claims:
 - Avoid expensive operations: Minimize use of regex matching and large list iterations
 - Cache-friendly expressions: Expressions that depend only on identity claims can be cached more effectively than those examining request details
 
+### Kubernetes RBAC for agentic networking authorization
+
+The AuthScheme API enables offloading authorization decisions to the Kubernetes RBAC system (as demonstrated in [Example 2](#example-2---standalone-authscheme)). This approach offers compelling advantages for managing access control to agentic networking resources, but also requires careful consideration of operational impacts.
+
+#### Motivations to use Kubernetes RBAC for agentic authorization
+
+- **Platform-native authorization system:** Kubernetes RBAC is an authorization system that comes with the platform itself—as opposed to being implementation-specific. This makes access control configurations less obscure and more portable across different Kubernetes distributions and implementations. By using RBAC, users establish the Kubernetes platform as the single source of truth for all authorization decisions in their cluster, creating consistency between infrastructure access control and agentic networking access control.
+
+- **Simplified permission management:** Using Kubernetes RBAC eliminates the need to repeat identical sets of identities across multiple AccessPolicy objects. When multiple agents require the same set of permissions and/or can consume resources from multiple backends, users can simplify this to a common rule that translates to "check it with this single source of truth." For example, instead of maintaining N separate AccessPolicy resources that enumerate the same identities for each Backend, users can create a single Role and bind it to multiple ServiceAccounts through RoleBindings. Updating permissions becomes significantly simpler: modifying one RoleBinding is far more maintainable than updating N policy objects scattered across the cluster.
+
+- **Role-Based Access Control vs. Access Control Lists:** RBAC is fundamentally different from ACL (Access Control List) based systems. With RBAC, users can leverage roles as reusable permission templates and use Kubernetes user groups as grouping mechanisms, providing better organizational scalability. This doesn't sacrifice granularity—users can still implement fine-grained authorization for specific agents when needed by creating targeted Roles and RoleBindings. The system allows expressing both broad patterns ("all agents in the 'data-processors' group can call any tool from mcp-server1") and specific exceptions ("agent-x can only call the 'read' tool") within the same authorization framework.
+
+- **Standardized language and tooling:** Kubernetes RBAC standardizes the language used to manage all access control within a Kubernetes system. Platform operators, security teams, and developers already familiar with Roles, RoleBindings, and ServiceAccounts can apply that same knowledge to agentic networking authorization. This reduces the learning curve and allows teams to use existing tooling, audit processes, and security policies designed for Kubernetes RBAC. Authorization decisions for agent tool access are expressed using the same constructs as authorization for accessing Deployments, Secrets, or any other Kubernetes resource.
+
+#### Caveats and operational considerations
+
+- **Increased API Server Load:** The primary operational concern when using Kubernetes RBAC for agentic networking authorization is the additional traffic generated to the Kubernetes API server. Each authorization check requires a SubjectAccessReview API request to validate whether the agent's ServiceAccount has permission to access the requested resource. This authorization traffic competes with the usual cluster management operations, including:
+  - Pod lifecycle management
+  - Controller reconciliation loops
+  - Custom resource updates from operators
+  - User kubectl commands
+  - Admission webhook calls
+
+  In environments with high-frequency agent operations—such as agents that make hundreds or thousands of tool calls per minute—this can create significant load on the API server. The impact is especially pronounced in clusters that already experience high API server utilization from numerous controllers and operators.
+
+#### Recommendations for production use
+
+Users should deploy Kubernetes RBAC-based authorization with caution and consider the following operational practices:
+
+- **Monitor API server metrics:** Establish baseline metrics for API server request rates, latency, and resource utilization before enabling RBAC-based authorization. Monitor these metrics continuously to detect degradation.
+
+- **Consider high availability deployment**: For production workloads that rely on Kubernetes RBAC for agentic networking authorization, consider deploying the Kubernetes API server in a high availability (HA) configuration. This distributes the authorization check load across multiple API server instances and provides resilience against API server failures.
+
+- **Rate limiting and backpressure**: Implement rate limiting on the authorization enforcement side to prevent unbounded SubjectAccessReview request bursts. Consider implementing backpressure mechanisms that slow down agent operations when API server latency increases.
+
+- **Evaluate authorization patterns**: Not all authorization patterns benefit equally from RBAC offloading. Static, infrequently-changing authorization policies may be better served by AccessPolicy resources, while highly dynamic scenarios with frequently-changing roles and bindings are better candidates for RBAC delegation.
+
+- **Test under load**: Before deploying RBAC-based authorization to production, conduct load testing to understand the API server impact under realistic agent workload conditions.
+
+When used appropriately and with proper infrastructure planning, Kubernetes RBAC provides a powerful, platform-native approach to managing authorization for agentic networking resources. The key is balancing the operational simplicity and standardization benefits against the infrastructure requirements needed to handle the increased API server load.
+
 ### Security considerations
 
 Implementations of the AuthScheme API must carefully consider the following security aspects to maintain a secure agentic networking environment:
