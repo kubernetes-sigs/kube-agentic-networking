@@ -1,0 +1,10 @@
+# Binaries
+bin/
+cache/
+
+# Python cache files
+**/__pycache__/
+__pycache__/**
+
+# Virtual environments
+.venv
