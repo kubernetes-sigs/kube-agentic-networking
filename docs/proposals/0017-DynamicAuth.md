@@ -445,7 +445,7 @@ The AuthScheme API enables offloading authorization decisions to the Kubernetes 
 
 #### Caveats and operational considerations
 
-- **Increased API Server Load:** The primary operational concern when using Kubernetes RBAC for agentic networking authorization is the additional traffic generated to the Kubernetes API server. Each authorization check requires a SubjectAccessReview API request to validate whether the agent's ServiceAccount has permission to access the requested resource. This authorization traffic competes with the usual cluster management operations, including:
+- **Increased API server load:** The primary operational concern when using Kubernetes RBAC for agentic networking authorization is the additional traffic generated to the Kubernetes API server. Each authorization check requires a SubjectAccessReview API request to validate whether the agent's ServiceAccount has permission to access the requested resource. This authorization traffic competes with the usual cluster management operations, including:
   - Pod lifecycle management
   - Controller reconciliation loops
   - Custom resource updates from operators
@@ -453,6 +453,10 @@ The AuthScheme API enables offloading authorization decisions to the Kubernetes 
   - Admission webhook calls
 
   In environments with high-frequency agent operations—such as agents that make hundreds or thousands of tool calls per minute—this can create significant load on the API server. The impact is especially pronounced in clusters that already experience high API server utilization from numerous controllers and operators.
+
+- **Abusive Role and RoleBinding writing permissions:** When using Kubernetes RBAC for agentic networking authorization, cluster users with permissions to create Role and RoleBinding resources could maliciously or inadvertently abuse those privileges by declaring permissions beyond what's needed for the agentic networking authorization use case. Because the `apiGroup`, `resource`, and `subresource` fields in RBAC rules by default accept any value, a user with sufficient permissions could declare a rule that grants access to sensitive cluster resources—for example, granting read access to all Secrets in the namespace or modify permissions on critical workloads. To mitigate this risk, cluster administrators are encouraged to:
+  1. Prefer granting write permissions over Roles and RoleBindings rather than ClusterRoles and ClusterRoleBindings. This narrows the blast radius of abusing the permissions to the scope of a single namespace instead of cluster-wide.
+  2. Consider implementing a ValidatingAdmissionPolicy that limits the usage of Roles and RoleBindings to authorizing specific kinds of resources only. For example, restrict rules to only allow `apiGroups: ["agentic.networking.x-k8s.io"]` and `resources: ["backends"]` to prevent privilege escalation beyond agentic networking resources.
 
 #### Recommendations for production use
 
