@@ -69,7 +69,7 @@ BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 ## @ Code Generation
 
 .PHONY: generate
-generate: deepcopy register ## Generate manifests, deepcopy code, and clientsets.
+generate: manifests deepcopy register clientsets ## Generate manifests, deepcopy code, and clientsets.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate CustomResourceDefinition objects.
