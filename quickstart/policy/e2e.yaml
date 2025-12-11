@@ -1,0 +1,130 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentic-net-gateway
+  namespace: quickstart-ns
+spec:
+  gatewayClassName: cloud-provider-kind
+  listeners:
+    - protocol: HTTP
+      port: 10001
+      name: agentic-net-gateway-listener2
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# Define a Backend resource for server1, which runs in the K8s cluster.
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XBackend
+metadata:
+  name: local-mcp-backend
+  namespace: quickstart-ns
+spec:
+  mcp:
+    serviceName: mcp-everything-svc
+    port: 3001
+    path: /mcp
+---
+# Define a Backend resource for mcp.deepwiki.com.
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XBackend
+metadata:
+  name: remote-mcp-backend
+  namespace: quickstart-ns
+spec:
+  mcp:
+    hostname: mcp.deepwiki.com
+    port: 443
+    path: /mcp
+---
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: auth-policy-local-mcp
+  namespace: quickstart-ns
+spec:
+  # AuthPolicy targets a single HTTPRoute.
+  targetRefs:
+    - group: agentic.prototype.x-k8s.io
+      kind: XBackend
+      name: local-mcp-backend
+  rules:
+    - source:
+        type: ServiceAccount
+        serviceAccount:
+          name: adk-agent-sa
+          namespace: quickstart-ns
+      tools:
+        - "get-sum"
+        - "get-tiny-image"
+---
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: auth-policy-remote-mcp
+  namespace: quickstart-ns
+spec:
+  targetRefs:
+    - group: agentic.prototype.x-k8s.io
+      kind: XBackend
+      name: remote-mcp-backend
+  rules:
+    - source:
+        type: ServiceAccount
+        serviceAccount:
+          name: adk-agent-sa
+          namespace: quickstart-ns
+      tools:
+        - "read_wiki_structure"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httproute-local-mcp
+  namespace: quickstart-ns
+spec:
+  parentRefs:
+    - name: agentic-net-gateway
+      namespace: quickstart-ns
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /local/mcp
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /mcp
+      backendRefs:
+        - name: local-mcp-backend # local mcp backend running in the Kubernetes cluster
+          group: agentic.prototype.x-k8s.io
+          kind: XBackend
+          namespace: quickstart-ns
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httproute-remote-mcp
+  namespace: quickstart-ns
+spec:
+  parentRefs:
+    - name: agentic-net-gateway
+      namespace: quickstart-ns
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /remote/mcp
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /mcp
+      backendRefs:
+        - name: remote-mcp-backend # remote mcp server
+          group: agentic.prototype.x-k8s.io
+          kind: XBackend
+          namespace: quickstart-ns
