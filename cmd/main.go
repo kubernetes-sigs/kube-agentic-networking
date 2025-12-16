@@ -31,17 +31,24 @@ import (
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
 	"sigs.k8s.io/kube-agentic-networking/pkg/controller"
-	discovery "sigs.k8s.io/kube-agentic-networking/pkg/dicovery"
-)
-
-const (
-	workerCount = 2
+	discovery "sigs.k8s.io/kube-agentic-networking/pkg/discovery"
 )
 
 var (
-	masterURL  string
-	kubeconfig string
+	apiServerURL string
+	kubeconfig   string
+	proxyImage   string
+	workerCount  int
+	resyncPeriod time.Duration
 )
+
+func init() {
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster. Leaving empty assumes in-cluster configuration.")
+	flag.StringVar(&apiServerURL, "apiserver-url", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster. Leaving empty assumes in-cluster configuration.")
+	flag.StringVar(&proxyImage, "proxy-image", "", "The image of the envoy proxy.")
+	flag.IntVar(&workerCount, "worker-count", 2, "Number of workers for the controller")
+	flag.DurationVar(&resyncPeriod, "resync-period", 10*time.Minute, "Informer resync period")
+}
 
 func main() {
 	klog.InitFlags(nil)
@@ -51,7 +58,12 @@ func main() {
 	ctx := context.Background()
 	logger := klog.FromContext(ctx)
 
-	cfg, err := clientcmd.BuildConfigFromFlags(masterURL, kubeconfig)
+	if proxyImage == "" {
+		logger.Error(nil, "--proxy-image cannot be empty")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
+	cfg, err := clientcmd.BuildConfigFromFlags(apiServerURL, kubeconfig)
 	if err != nil {
 		logger.Error(err, "Error building kubeconfig")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
@@ -74,9 +86,9 @@ func main() {
 		logger.Error(err, "Error building Agentic Networking clientset")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
-	sharedKubeInformers := kubeinformers.NewSharedInformerFactory(kubeClient, 60*time.Second)
-	sharedGwInformers := gatewayinformers.NewSharedInformerFactory(gatewayClientset, 60*time.Second)
-	sharedAgenticInformers := agenticinformers.NewSharedInformerFactory(agenticClientset, 60*time.Second)
+	sharedKubeInformers := kubeinformers.NewSharedInformerFactory(kubeClient, resyncPeriod)
+	sharedGwInformers := gatewayinformers.NewSharedInformerFactory(gatewayClientset, resyncPeriod)
+	sharedAgenticInformers := agenticinformers.NewSharedInformerFactory(agenticClientset, resyncPeriod)
 
 	jwtIssuer, err := discovery.JWTIssuer(cfg)
 	if err != nil {
@@ -86,6 +98,7 @@ func main() {
 	c, err := controller.New(
 		ctx,
 		jwtIssuer,
+		proxyImage,
 		kubeClient,
 		gatewayClientset,
 		agenticClientset,
@@ -112,9 +125,4 @@ func main() {
 		logger.Error(err, "Error running controller")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
-}
-
-func init() {
-	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
-	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 }

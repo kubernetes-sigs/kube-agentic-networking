@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 func (c *Controller) setupGatewayClassEventHandlers(gatewayClassInformer gatewayinformers.GatewayClassInformer) error {
@@ -70,7 +71,7 @@ func (c *Controller) syncGatewayClass(key string) {
 	}
 
 	// We only care about the GatewayClass that matches our controller name.
-	if gwc.Spec.ControllerName != controllerName {
+	if gwc.Spec.ControllerName != constants.ControllerName {
 		return
 	}
 

@@ -35,6 +35,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 // translateHTTPRouteToEnvoyRoutes translates a full HTTPRoute into a slice of Envoy Routes.
@@ -86,7 +87,7 @@ func translateHTTPRouteToEnvoyRoutes(
 			}
 
 			envoyRoute := &routev3.Route{
-				Name:                   fmt.Sprintf(envoyRouteNameFormat, httpRoute.Namespace, httpRoute.Name, ruleIndex, matchIndex),
+				Name:                   fmt.Sprintf(constants.EnvoyRouteNameFormat, httpRoute.Namespace, httpRoute.Name, ruleIndex, matchIndex),
 				Match:                  routeMatch,
 				RequestHeadersToAdd:    headersToAdd,
 				RequestHeadersToRemove: headersToRemove,
@@ -288,7 +289,7 @@ func buildHTTPRouteAction(namespace string,
 		}
 
 		clusterWeight := &routev3.WeightedCluster_ClusterWeight{
-			Name:   fmt.Sprintf(clusterNameFormat, backend.Namespace, backend.Name),
+			Name:   fmt.Sprintf(constants.ClusterNameFormat, backend.Namespace, backend.Name),
 			Weight: &wrapperspb.UInt32Value{Value: uint32(weight)},
 		}
 

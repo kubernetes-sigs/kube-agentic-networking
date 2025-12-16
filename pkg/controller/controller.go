@@ -39,10 +39,9 @@ import (
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
-)
-
-const (
-	controllerName = "sig.k8s.io/kube-agentic-networking-controller"
+	"sigs.k8s.io/kube-agentic-networking/pkg/infra/envoy"
+	"sigs.k8s.io/kube-agentic-networking/pkg/infra/xds"
+	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
 
 type coreResources struct {
@@ -87,15 +86,19 @@ type Controller struct {
 	gateway gatewayResources
 	agentic agenticNetResources
 
-	jwtIssuer string
+	jwtIssuer  string
+	envoyImage string
 
 	gatewayqueue workqueue.TypedRateLimitingInterface[string]
+	xdsServer    *xds.Server
+	translator   *translator.Translator
 }
 
 // New returns a new *Controller with the event handlers setup for types we are interested in.
 func New(
 	ctx context.Context,
 	jwtIssuer string,
+	envoyImage string,
 	kubeClientSet kubernetes.Interface,
 	gwClientSet gatewayclient.Interface,
 	agenticClientSet agenticclient.Interface,
@@ -134,12 +137,27 @@ func New(
 			accessPolicyLister: accessPolicyInformer.Lister(),
 			accessPolicySynced: accessPolicyInformer.Informer().HasSynced,
 		},
-		jwtIssuer: jwtIssuer,
+		jwtIssuer:  jwtIssuer,
+		envoyImage: envoyImage,
 		gatewayqueue: workqueue.NewTypedRateLimitingQueueWithConfig(
 			workqueue.DefaultTypedControllerRateLimiter[string](),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "gateway"},
 		),
+		xdsServer: xds.NewServer(ctx),
 	}
+
+	c.translator = translator.New(
+		jwtIssuer,
+		kubeClientSet,
+		gwClientSet,
+		namespaceInformer.Lister(),
+		serviceInformer.Lister(),
+		secretInformer.Lister(),
+		gatewayInformer.Lister(),
+		httprouteInformer.Lister(),
+		accessPolicyInformer.Lister(),
+		backendInformer.Lister(),
+	)
 
 	// Setup event handlers for all relevant resources.
 	if err := c.setupGatewayClassEventHandlers(gatewayClassInformer); err != nil {
@@ -171,8 +189,11 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	defer runtime.HandleCrashWithContext(ctx)
 	defer c.gatewayqueue.ShutDown()
 
-	// TODO: Start the Envoy xDS server.
+	// start the xDS server
 	klog.Info("Starting the Envoy xDS server")
+	if err := c.xdsServer.Run(ctx); err != nil {
+		return fmt.Errorf("failed to start xDS server: %w", err)
+	}
 
 	klog.Info("Waiting for informer caches to sync")
 	if ok := cache.WaitForCacheSync(ctx.Done(),
@@ -241,25 +262,43 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 		return nil
 	}
 
+	logger := klog.FromContext(ctx).WithValues("gateway", klog.KRef(namespace, name))
+	ctx = klog.NewContext(ctx, logger)
+
 	// Get the Gateway resource with this namespace/name
 	gateway, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			klog.InfoS("Gateway deleted", "gateway", klog.KRef(namespace, name))
-			return nil
+			logger.Info("Gateway deleted, cleaning up associated resources.")
+			return envoy.DeleteProxy(ctx, c.core.client, namespace, name)
 		}
 		return err
 	}
 
-	klog.InfoS("Syncing gateway", "gateway", klog.KObj(gateway))
+	logger.Info("Syncing gateway")
 
-	// TODO: Implement the reconciliation logic here.
-	// This will involve:
-	// 1. Finding all relevant resources (HTTPRoutes, Backends, Services, AccessPolicies).
-	// 2. Validating them.
-	// 3. Generating an Envoy configuration snapshot.
-	// 4. Updating the xDS cache with the new snapshot.
+	// Ensure Envoy proxy deployment and service exist.
+	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage)
+	if err := rm.EnsureProxyExist(ctx); err != nil {
+		return err
+	}
 
-	klog.InfoS("Finished syncing gateway", "gateway", klog.KRef(namespace, name))
+	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID())
+
+	// Translate Gateway to xDS resources.
+	resources, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
+	if err != nil {
+		// TODO: Update Gateway status with the error.
+		return fmt.Errorf("failed to translate gateway to xDS resources: %w", err)
+	}
+
+	logger.Info("Translated gateway to xDS resources")
+
+	// Update the xDS server with the new resources.
+	if err := c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources); err != nil {
+		return fmt.Errorf("failed to update xDS server: %w", err)
+	}
+
+	logger.Info("Updated xDS server with new resources", "nodeID", rm.NodeID())
 	return nil
 }
