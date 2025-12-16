@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"reflect"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -44,8 +45,13 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 func (c *Controller) onServiceUpdate(old, new interface{}) {
 	oldSvc := old.(*corev1.Service)
 	newSvc := new.(*corev1.Service)
-	klog.V(4).InfoS("Service updated", "service", klog.KObj(oldSvc))
-	c.enqueueGatewaysForService(newSvc)
+
+	if !reflect.DeepEqual(oldSvc.Spec.ClusterIPs, newSvc.Spec.ClusterIPs) ||
+		newSvc.DeletionTimestamp != oldSvc.DeletionTimestamp ||
+		!reflect.DeepEqual(newSvc.Annotations, oldSvc.Annotations) {
+		klog.V(4).InfoS("Service updated", "service", klog.KObj(oldSvc))
+		c.enqueueGatewaysForService(newSvc)
+	}
 }
 
 func (c *Controller) onServiceDelete(obj interface{}) {

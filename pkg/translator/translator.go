@@ -38,6 +38,7 @@ import (
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 type ControllerError struct {
@@ -164,7 +165,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 		var filterChains []*listenerv3.FilterChain
 		// Prepare to collect ALL virtual hosts for this port into a single list.
 		virtualHostsForPort := make(map[string]*routev3.VirtualHost)
-		routeName := fmt.Sprintf(routeNameFormat, port)
+		routeName := fmt.Sprintf(constants.RouteNameFormat, port)
 
 		// All these listeners have the same port
 		for _, listener := range listeners {
@@ -242,7 +243,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 							vh, ok := virtualHostsForPort[domain]
 							if !ok {
 								vh = &routev3.VirtualHost{
-									Name:    fmt.Sprintf(vHostNameFormat, gateway.Name, port, domain),
+									Name:    fmt.Sprintf(constants.VHostNameFormat, gateway.Name, port, domain),
 									Domains: []string{domain},
 								}
 								virtualHostsForPort[domain] = vh
@@ -266,12 +267,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			}
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
-			vhSlice := make([]*routev3.VirtualHost, 0, len(virtualHostsForPort))
-			for _, vh := range virtualHostsForPort {
-				vhSlice = append(vhSlice, vh)
-			}
-
-			filterChain, err := t.translateListenerToFilterChain(gateway, listener, vhSlice, routeName)
+			filterChain, err := t.translateListenerToFilterChain(gateway, listener, routeName)
 			if err != nil {
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
@@ -321,7 +317,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 		// 10. If there are any filterChains -> create an Envoy Listener for port with those filterChains
 		if len(filterChains) > 0 {
 			envoyListener := &listenerv3.Listener{
-				Name:            fmt.Sprintf(listenerNameFormat, port),
+				Name:            fmt.Sprintf(constants.ListenerNameFormat, port),
 				Address:         createEnvoyAddress(uint32(port)),
 				FilterChains:    filterChains,
 				ListenerFilters: createListenerFilters(),
@@ -331,7 +327,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			// For HTTPS, we create one filter chain per listener because they have unique
 			// SNI matches and TLS settings.
 			if listeners[0].Protocol == gatewayv1.HTTPProtocolType {
-				filterChain, _ := t.translateListenerToFilterChain(gateway, listeners[0], allVirtualHosts, routeName)
+				filterChain, _ := t.translateListenerToFilterChain(gateway, listeners[0], routeName)
 				envoyListener.FilterChains = []*listenerv3.FilterChain{filterChain}
 			}
 			finalEnvoyListeners = append(finalEnvoyListeners, envoyListener)

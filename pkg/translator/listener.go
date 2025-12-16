@@ -42,6 +42,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 const (
@@ -212,13 +213,13 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 	return listenerConditions
 }
 
-func (t *Translator) translateListenerToFilterChain(gateway *gatewayv1.Gateway, lis gatewayv1.Listener, virtualHosts []*routev3.VirtualHost, routeName string) (*listener.FilterChain, error) {
+func (t *Translator) translateListenerToFilterChain(gateway *gatewayv1.Gateway, lis gatewayv1.Listener, routeName string) (*listener.FilterChain, error) {
 	var filterChain *listener.FilterChain
 	var err error
 
 	switch lis.Protocol {
 	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		filterChain, err = buildHTTPFilterChain(lis, routeName, virtualHosts, t.jwtIssuer)
+		filterChain, err = buildHTTPFilterChain(lis, routeName, t.jwtIssuer)
 	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType:
 		filterChain, err = buildTCPFilterChain(lis)
 	case gatewayv1.UDPProtocolType:
@@ -253,25 +254,24 @@ func (t *Translator) translateListenerToFilterChain(gateway *gatewayv1.Gateway, 
 	return filterChain, nil
 }
 
-func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, virtualHosts []*routev3.VirtualHost, jwtIssuer string) (*listener.FilterChain, error) {
+func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, jwtIssuer string) (*listener.FilterChain, error) {
 	httpFilters, err := buildHTTPFilters(jwtIssuer)
 	if err != nil {
 		return nil, err
 	}
 
-	// Embed the route configuration directly in the HttpConnectionManager.
-	// This is known as an "inline" RouteConfig, as opposed to fetching it dynamically via RDS.
-	inlineRouteConfig := &hcm.HttpConnectionManager_RouteConfig{
-		RouteConfig: &routev3.RouteConfiguration{
-			Name:         routeName,
-			VirtualHosts: virtualHosts,
-		},
-	}
-
 	hcmConfig := &hcm.HttpConnectionManager{
-		StatPrefix:     string(lis.Name),
-		RouteSpecifier: inlineRouteConfig,
-		HttpFilters:    httpFilters,
+		StatPrefix: string(lis.Name),
+		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
+			Rds: &hcm.Rds{
+				ConfigSource: &corev3.ConfigSource{
+					ResourceApiVersion:    corev3.ApiVersion_V3,
+					ConfigSourceSpecifier: &corev3.ConfigSource_Ads{Ads: &corev3.AggregatedConfigSource{}},
+				},
+				RouteConfigName: routeName,
+			},
+		},
+		HttpFilters: httpFilters,
 	}
 	hcmAny, err := anypb.New(hcmConfig)
 	if err != nil {
@@ -375,7 +375,7 @@ func buildJwtAuthnFilter(issuer string) (*hcm.HttpFilter, error) {
 						HttpUri: &corev3.HttpUri{
 							Uri: standardK8sOIDCJWKSURI,
 							HttpUpstreamType: &corev3.HttpUri_Cluster{
-								Cluster: k8sAPIClusterName,
+								Cluster: constants.K8sAPIClusterName,
 							},
 							Timeout: durationpb.New(uriTimeout),
 						},
@@ -384,13 +384,13 @@ func buildJwtAuthnFilter(issuer string) (*hcm.HttpFilter, error) {
 				},
 				FromHeaders: []*jwt_authnv3.JwtHeader{
 					{
-						Name: saAuthTokenHeader,
+						Name: constants.SAAuthTokenHeader,
 					},
 				},
 				ClaimToHeaders: []*jwt_authnv3.JwtClaimToHeader{
 					{
 						ClaimName:  "sub",
-						HeaderName: userRoleHeader,
+						HeaderName: constants.UserRoleHeader,
 					},
 				},
 			},
