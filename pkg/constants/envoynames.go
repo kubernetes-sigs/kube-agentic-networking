@@ -41,4 +41,10 @@ const (
 	SAAuthTokenHeader = "x-k8s-sa-token"
 	// UserRoleHeader is the header populated with the subject claim from the JWT.
 	UserRoleHeader = "x-user-role"
+	// CredentialBearerSecretName is the name of the secret that holds the bearer token for credential injection.
+	CredentialBearerSecretName = "credential-bearer-secret"
+	// ServiceAccountTokenPath is the path to the Kubernetes service account token.
+	ServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	// ServiceAccountCACertPath is the path to the Kubernetes service account CA certificate.
+	ServiceAccountCACertPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )

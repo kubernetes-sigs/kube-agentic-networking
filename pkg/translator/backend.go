@@ -21,8 +21,15 @@ import (
 	"time"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	mutationv3 "github.com/envoyproxy/go-control-plane/envoy/config/common/mutation_rules/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	credential_injectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/credential_injector/v3"
+	headermutationv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
+	upstream_codecv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/upstream_codec/v3"
+	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	genericv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/http/injected_credentials/generic/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	http_protocol_options "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -138,7 +145,7 @@ func buildK8sApiCluster() (*clusterv3.Cluster, error) {
 					TrustedCa: &corev3.DataSource{
 						Specifier: &corev3.DataSource_Filename{
 							// This tells Envoy to trust the K8s API server's cert
-							Filename: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+							Filename: constants.ServiceAccountCACertPath,
 						},
 					},
 				},
@@ -148,6 +155,11 @@ func buildK8sApiCluster() (*clusterv3.Cluster, error) {
 	anyTlsContext, err := anypb.New(tlsContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal UpstreamTlsContext: %w", err)
+	}
+
+	anyHttpProtocolOptions, err := buildK8sApiHttpProtocolOptions()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal http protocol options: %w", err)
 	}
 
 	cluster := &clusterv3.Cluster{
@@ -160,6 +172,144 @@ func buildK8sApiCluster() (*clusterv3.Cluster, error) {
 				TypedConfig: anyTlsContext,
 			},
 		},
+		TypedExtensionProtocolOptions: map[string]*anypb.Any{
+			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": anyHttpProtocolOptions,
+		},
 	}
 	return cluster, nil
+}
+
+// buildK8sApiHttpProtocolOptions configures the HTTP protocol options for upstream
+// requests to the Kubernetes API server. It sets up a chain of HTTP filters to
+// handle credential injection, header manipulation, and finally routing the request.
+// This is necessary for the Envoy proxy to securely communicate with the Kubernetes API.
+func buildK8sApiHttpProtocolOptions() (*anypb.Any, error) {
+	credentialInjectorFilter, err := buildK8sApiCredentialInjector()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build credential injector filter: %w", err)
+	}
+
+	headerMutationFilter, err := buildHeaderMutationFilter()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build header mutation filter: %w", err)
+	}
+
+	upstreamCodecFilter, err := buildUpstreamCodecFilter()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build upstream codec filter: %w", err)
+	}
+
+	httpProtocolOptions := &http_protocol_options.HttpProtocolOptions{
+		// upstream_protocol_options is a required field. Missing it will get "Proto constraint validation failed" error.
+		UpstreamProtocolOptions: &http_protocol_options.HttpProtocolOptions_ExplicitHttpConfig_{
+			ExplicitHttpConfig: &http_protocol_options.HttpProtocolOptions_ExplicitHttpConfig{
+				ProtocolConfig: &http_protocol_options.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+					Http2ProtocolOptions: &corev3.Http2ProtocolOptions{
+						ConnectionKeepalive: &corev3.KeepaliveSettings{
+							// TODO: make these values configurable
+							Interval: durationpb.New(30 * time.Second),
+							Timeout:  durationpb.New(5 * time.Second),
+						},
+					},
+				},
+			},
+		},
+		HttpFilters: []*hcmv3.HttpFilter{
+			credentialInjectorFilter,
+			headerMutationFilter,
+			upstreamCodecFilter,
+		},
+	}
+
+	anyHttpProtocolOptions, err := anypb.New(httpProtocolOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal http protocol options: %w", err)
+	}
+	return anyHttpProtocolOptions, nil
+}
+
+// buildK8sApiCredentialInjector configures the `envoy.filters.http.credential_injector` filter.
+// This filter is responsible for injecting a Kubernetes service account token
+// into the Authorization header in the upstream requests.
+func buildK8sApiCredentialInjector() (*hcmv3.HttpFilter, error) {
+	genericCredential := &genericv3.Generic{
+		Credential: &tlsv3.SdsSecretConfig{
+			// Since only name is specified, secret will be loaded from static resources.
+			Name: constants.CredentialBearerSecretName,
+		},
+	}
+	genericCredentialAny, err := anypb.New(genericCredential)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal generic provider config: %w", err)
+	}
+
+	credentialInjector := &credential_injectorv3.CredentialInjector{
+		Credential: &corev3.TypedExtensionConfig{
+			Name:        "envoy.http.injected_credentials.generic",
+			TypedConfig: genericCredentialAny,
+		},
+		Overwrite: true,
+	}
+	anyCredentialInjector, err := anypb.New(credentialInjector)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal credential injector: %w", err)
+	}
+
+	return &hcmv3.HttpFilter{
+		Name: "envoy.filters.http.credential_injector",
+		ConfigType: &hcmv3.HttpFilter_TypedConfig{
+			TypedConfig: anyCredentialInjector,
+		},
+	}, nil
+}
+
+// buildHeaderMutationFilter configures the `envoy.filters.http.header_mutation` filter.
+// This filter modifies the Authorization header in upstream requests by prepending
+// the "Bearer " prefix to the token value from the incoming request.
+// The header will be `Authorization: Bearer <token>`.
+func buildHeaderMutationFilter() (*hcmv3.HttpFilter, error) {
+	headerMutation := &headermutationv3.HeaderMutation{
+		Mutations: &headermutationv3.Mutations{
+			RequestMutations: []*mutationv3.HeaderMutation{
+				{
+					Action: &mutationv3.HeaderMutation_Append{
+						Append: &corev3.HeaderValueOption{
+							Header: &corev3.HeaderValue{
+								Key:   "Authorization",
+								Value: "Bearer %REQ(Authorization)%",
+							},
+							AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS,
+						},
+					},
+				},
+			},
+		},
+	}
+	anyHeaderMutation, err := anypb.New(headerMutation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal header mutation: %w", err)
+	}
+	return &hcmv3.HttpFilter{
+		Name: "envoy.filters.http.header_mutation",
+		ConfigType: &hcmv3.HttpFilter_TypedConfig{
+			TypedConfig: anyHeaderMutation,
+		},
+	}, nil
+}
+
+// buildUpstreamCodecFilter configures the `envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec` filter.
+// This filter is used to explicitly specify the codec for the upstream connection.
+func buildUpstreamCodecFilter() (*hcmv3.HttpFilter, error) {
+	upstreamCodec := &upstream_codecv3.UpstreamCodec{}
+	anyUpstreamCodec, err := anypb.New(upstreamCodec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal upstream codec: %w", err)
+	}
+
+	return &hcmv3.HttpFilter{
+		Name: "envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec",
+		ConfigType: &hcmv3.HttpFilter_TypedConfig{
+			TypedConfig: anyUpstreamCodec,
+		},
+	}, nil
 }
