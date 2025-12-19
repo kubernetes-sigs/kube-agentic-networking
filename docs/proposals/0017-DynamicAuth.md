@@ -1,6 +1,6 @@
-Date: 27th November 2025
-Authors: guicassolato
-Status: Provisional
+Date: 27th November 2025<br/>
+Authors: guicassolato<br/>
+Status: Provisional<br/>
 
 # Dynamic Auth
 
@@ -33,7 +33,7 @@ See _Tool Authorization in Agentic Networking_ > [Personas](./0008-ToolAuthAPI.m
 
 #### Agent identity federation
 
-As an AI Engineer, I want the identities assigned to my agents running in Kubernetes to be federated with trusted identity sources to which authentication can be offloaded, based on standard protocols (e.g., OAuth 2.0, OpenID Connect), so that my applications can trust verifiable access tokens issued by those external systems.
+As an AI Engineer, I want the identities assigned to my agents running in Kubernetes to be federated with trusted identity sources to which authentication can be offloaded, based on standard protocols (e.g., OAuth 2.0, OpenID Connect), so that my applications can trust verifiable authentication tokens issued by those external systems.
 
 #### Flexible authorization patterns for agentic server resources
 
@@ -150,8 +150,8 @@ type Source struct {
 	// +optional
 	ServiceAccounts []string `json:"serviceAccounts,omitempty"`
  	// OIDC specifies a trusted OpenId Connect (OIDC) authentication server
-	// The request is expected to carry a valid access token issued the trusted authentication
-	// server in the Authorization: header
+	// The request is expected to carry a valid ID token issued the trusted
+	// authentication server, in the Authorization: header
 	// +optional
 	OIDC *OIDC `json:"oidc,omitempty"`
 }
@@ -430,7 +430,7 @@ Proper validation of OIDC issuers is essential to prevent token forgery and man-
 
 #### Defense in Depth
 
-- Combine AccessPolicy with AccessPolicy: Use AccessPolicy for identity verification and leverage AccessPolicy for additional resource-level authorization when appropriate
+- Check for resource-level authorization: Use AccessPolicy for identity verification and additional resource-level authorization when appropriate
 - Implement rate limiting: Protect against brute-force token validation attempts
 - Enable audit logging: Log all authentication and authorization decisions for security monitoring and incident response
 - Regular security reviews: Periodically review AccessPolicy configurations, especially CEL expressions and trusted issuer lists
