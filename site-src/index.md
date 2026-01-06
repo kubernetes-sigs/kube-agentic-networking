@@ -42,6 +42,8 @@ This subproject aims to deliver the following:
 
 -   Design APIs extensible enough for diverse implementations (service meshes, gateways, future architectures)
 
+![Architecture Diagram](/docs/docs/diagram.svg)
+
 ## API Resources
 
 Check back soon for the initial API proposal!
