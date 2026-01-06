@@ -57,15 +57,15 @@ SHELL = /usr/bin/env bash -o pipefail
 
 .PHONY: build-docs
 build-docs:
-		docker build --pull -t kube-agentic-net/mkdocs hack/mkdocs/image
-			docker run --rm -v ${PWD}:/docs kube-agentic-net/mkdocs build
+	docker build --pull -t kube-agentic-net/mkdocs hack/mkdocs/image
+	docker run --rm -v ${PWD}:/docs kube-agentic-net/mkdocs build
 
 .PHONY: build-docs-netlify
 build-docs-netlify:
-		pip install -r hack/mkdocs/image/requirements.txt
-			mkdocs build
+	pip install -r hack/mkdocs/image/requirements.txt
+	python -m mkdocs build
 
 .PHONY: live-docs
 live-docs:
-		docker build -t kube-agentic-net/mkdocs hack/mkdocs/image
-			docker run --rm -it -p 3000:3000 -v ${PWD}:/docs kube-agentic-net/mkdocs
+	docker build -t kube-agentic-net/mkdocs hack/mkdocs/image
+	docker run --rm -it -p 3000:3000 -v ${PWD}:/docs kube-agentic-net/mkdocs
