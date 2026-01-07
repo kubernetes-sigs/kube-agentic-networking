@@ -150,7 +150,7 @@ type Source struct {
 	// +optional
 	ServiceAccounts []string `json:"serviceAccounts,omitempty"`
  	// OIDC specifies a trusted OpenId Connect (OIDC) authentication server
-	// The request is expected to carry a valid ID token issued the trusted
+	// The request is expected to carry a valid ID token issued by the trusted
 	// authentication server, in the Authorization: header
 	// +optional
 	OIDC *OIDC `json:"oidc,omitempty"`
