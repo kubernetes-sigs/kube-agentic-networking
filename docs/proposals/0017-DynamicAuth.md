@@ -91,74 +91,79 @@ type AccessRule struct {
 
 // Source specifies the source of a request.
 //
-// At least one field MAY be set. If multiple fields are set,
-// a request matches this Source if it matches
-// **any** of the specified criteria (logical OR across fields).
-//
-// For example, if both `Identities` and `ServiceAccounts` are provided,
-// the rule matches a request if either:
-// - the request's identity is in `Identities`
-// - OR the request's Serviceaccount matches an entry in `ServiceAccounts`.
-//
-// Each list within the fields (e.g. `Identities`) is itself an OR list.
-//
-// If this struct is omitted in a rule, it matches any source.
-//
-// <gateway:util:excludeFromCRD> NOTE: In the future, if there’s a need to express more complex
-// logical conditions (e.g. requiring a request to match multiple
-// criteria simultaneously—logical AND), we may evolve this API
-// to support richer match expressions or logical operators. </gateway:util:excludeFromCRD>
+// Type must be set to indicate the type of source.
 type Source struct {
-	// Identities specifies a list of identities that are matched by this rule.
-	// A request's identity MUST be present in this list to match the rule.
+	// +unionDiscriminator
+	// +required
+	Type AuthorizationSourceType `json:"type"`
+
+	// spiffe specifies an identity that is matched by this rule.
 	//
-	// Identities MUST be specified as SPIFFE-formatted URIs following the pattern:
+	// spiffe identities must be specified as SPIFFE-formatted URIs following the pattern:
 	//   spiffe://<trust_domain>/<workload-identifier>
 	//
-	// While the exact workload identifier structure is implementation-specific,
-	// implementations are encouraged to follow the convention of
-	// `spiffe://<trust_domain>/ns/<namespace>/sa/<serviceaccount>`
-	// when representing Kubernetes workload identities.
+	// The exact workload identifier structure is implementation-specific.
 	//
-	// While identities MAY be used in the future to represent non-k8s workloads,
-	// the initial focus will be Kubernetes workloads.
+	// spiffe identities for authorization can be derived in various ways by the underlying
+	// implementation. Common methods include:
+	// - From peer mTLS certificates: The identity is extracted from the client's
+	//   mTLS certificate presented during connection establishment.
+	// - From IP-to-identity mappings: The implementation might maintain a dynamic
+	//   mapping between source IP addresses (pod IPs) and their associated
+	//   identities (e.g., Service Account, SPIFFE IDs).
+	// - From JWTs or other request-level authentication tokens.
 	//
 	// +optional
-	Identities []string `json:"identities,omitempty"`
-	// ServiceAccounts specifies a list of Kubernetes Service Accounts that are
+	SPIFFE *AuthorizationSourceSPIFFE `json:"spiffe,omitempty"`
+
+	// ServiceAccount specifies a Kubernetes Service Account that is
 	// matched by this rule. A request originating from a pod associated with
-	// one of these Serviceaccounts will match the rule.
+	// this serviceaccount will match the rule.
 	//
-	// Values MUST be in one of the following formats:
-	//   - "<namespace>/<serviceaccount-name>": A specific Serviceaccount in a namespace.
-	//   - "<namespace>/*": All Serviceaccounts in the given namespace.
-	//   - "<serviceaccount-name>": a Serviceaccount in the same namespace as the policy.
-	//
-	// Use of "*" alone (i.e., all Serviceaccounts in all namespaces) is not allowed.
-	// To select all Serviceaccounts in the current namespace, use "<namespace>/*" explicitly.
-	//
-	// Example:
-	//   - "default/bookstore" → Matches Serviceaccount "bookstore" in namespace "default"
-	//   - "payments/*" → Matches any Serviceaccount in namespace "payments"
-	//   - "frontend" → Matches "frontend" Serviceaccount in the same namespace as the policy
-	//
-	// The ServiceAccounts listed here are expected to exist within the same
-	// trust domain as the targeted workload, which in many environments means
-	// the same Kubernetes cluster. Cross-cluster or cross-trust-domain access
-	// should instead be expressed using the `Identities` field.
-	//
+	// The ServiceAccount listed here is expected to exist within the same
+	// trust domain as the targeted workload. Cross-trust-domain access should
+	// instead be expressed using the `SPIFFE` field.
 	// +optional
-	ServiceAccounts []string `json:"serviceAccounts,omitempty"`
+	ServiceAccount *AuthorizationSourceServiceAccount `json:"serviceAccount,omitempty"`
+
  	// OIDC specifies a trusted OpenId Connect (OIDC) authentication server
 	// The request is expected to carry a valid ID token issued by the trusted
 	// authentication server, in the Authorization: header
 	// +optional
-	OIDC *OIDC `json:"oidc,omitempty"`
+	OIDC *AuthorizationSourceOIDC `json:"oidc,omitempty"`
 }
 
-// OIDC specifies a trusted OpenId Connect (OIDC) authentication server
-type OIDC struct {
-	// IssuerUrl is the URL of the OIDC issuer
+// AuthorizationSourceType identifies a type of source for authorization.
+// +kubebuilder:validation:Enum=ServiceAccount;SPIFFE;OIDC
+type AuthorizationSourceType string
+
+const (
+	// AuthorizationSourceTypeSPIFFE is used to identify a request matches a SPIFFE Identity.
+	AuthorizationSourceTypeSPIFFE AuthorizationSourceType = "SPIFFE"
+
+	// AuthorizationSourceTypeServiceAccount is used to identify a request matches a ServiceAccount from within the cluster.
+	AuthorizationSourceTypeServiceAccount AuthorizationSourceType = "ServiceAccount"
+
+	// AuthorizationSourceTypeOIDC is used to identify a request bears an authentication token issued by a trusted specified OIDC server.
+	AuthorizationSourceTypeOIDC AuthorizationSourceType = "OIDC"
+)
+
+// +kubebuilder:validation:Pattern=`^spiffe://[a-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`
+type AuthorizationSourceSPIFFE string
+
+type AuthorizationSourceServiceAccount struct {
+	// Namespace is the namespace of the ServiceAccount
+	// If not specified, current namespace (the namespace of the policy) is used.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// Name is the name of the ServiceAccount.
+	// +required
+	Name string `json:"name"`
+}
+
+type AuthorizationSourceOIDC struct {
+	// IssuerUrl is the URL of the trusted OpenId Connect (OIDC) issuer
 	// A JSON Web Key Set (JWKS) will be fetched from the issuer's
 	// `/.well-known/openid-configuration` endpoint to validate the tokens
 	// +required
@@ -173,19 +178,23 @@ type OIDC struct {
 
 // AuthorizationRule specifies an authorization rule.
 //
-// At least one field MAY be set. If multiple fields are set,
-// a request matches this AuthorizationRule if it matches
-// **any** of the specified criteria (logical OR across fields).
+// Type must be set to indicate the type of authorization rule.
 type AuthorizationRule struct {
-	// Tools specifies a list of tools.
+	// +unionDiscriminator
+	// +required
+	Type AuthorizationRuleType `json:"type"`
+
+	// Tools specifies a list of tools inline.
 	// +optional
 	Tools []string `json:"tools,omitempty"`
+
 	// CEL specifies a Common Expression Language (CEL) expression.
 	// E.g.:
 	// - request.body["tool-name"] in identity.authorized_tools
 	// - identity.group == "admin"
 	// +optional
-	CEL *CELAuthorization `json:"cel,omitempty"`
+	CEL *AuthorizationRuleCEL `json:"cel,omitempty"`
+
 	// ExternalAuth specifies an external authorization service.
 	// The field is defined as the HTTPExternalAuthFilter type from
 	// Gateway API: https://pkg.go.dev/sigs.k8s.io/gateway-api/apis/v1#HTTPExternalAuthFilter
@@ -193,8 +202,26 @@ type AuthorizationRule struct {
 	ExternalAuth *gatewayapiv1.HTTPExternalAuthFilter `json:"externalAuth,omitempty"`
 }
 
-// CELAuthorization specifies a Common Expression Language (CEL) authorization rule.
-type CELAuthorization string
+// AuthorizationRuleType identifies a type of rule for authorization.
+// +kubebuilder:validation:Enum=InlineTools;CEL;ExternalAuth
+type AuthorizationRuleType string
+
+const (
+	// AuthorizationRuleTypeInlineTools is used to identify a request must match one of the specified tool
+	// for access to be granted.
+	AuthorizationRuleTypeInlineTools AuthorizationRuleType = "InlineTools"
+
+	// AuthorizationRuleTypeCEL is used to identify a Common Expression Language (CEL) expression
+	// whose evaluation determines whether access shall be granted.
+	AuthorizationRuleTypeCEL AuthorizationRuleType = "CEL"
+
+	// AuthorizationRuleTypeExternalAuth is used to identify an external authorization endpoint to offload
+	// the access control decision to.
+	AuthorizationRuleTypeExternalAuth AuthorizationRuleType = "ExternalAuth"
+)
+
+// AuthorizationRuleCEL specifies a Common Expression Language (CEL) authorization rule.
+type AuthorizationRuleCEL string
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.
 type AccessPolicyStatus struct {
@@ -254,10 +281,12 @@ spec:
     name: mcp-server1
   rules:
   - source:
+      type: OIDC
       oidc:
         issuerUrl: auth-server.example.com
     authorization:
-    - tools:
+    - type: InlineTools
+      tools:
       - add
       - subtract
 ```
@@ -278,11 +307,13 @@ spec:
     name: mcp-server1
   rules:
   - source:
-      identities:
+      type: SPIFFE
+      spiffe:
       - spiffe://example.org/ns/default/sa/agent-1
       - spiffe://example.org/ns/default/sa/agent-2
     authorization:
-    - cel: 'request.mcp.tool_name.startsWith("read_")'
+    - type: CEL
+      cel: 'request.mcp.tool_name.startsWith("read_")'
 ```
 
 ### Example 3 – Multiple OIDC sources used in combination with CEL authorization
@@ -300,15 +331,19 @@ spec:
   targetRefs: […]
   rules:
   - source:
+      type: OIDC
       oidc:
         issuerUrl: auth-server1.example.com
     authorization:
-    - cel: 'identity.aud == "my-server"' # type(identity.aud) == string
+    - type: CEL
+      cel: 'identity.aud == "my-server"' # type(identity.aud) == string
   - source:
+      type: OIDC
       oidc:
         issuerUrl: auth-server2.example.com
     authorization:
-    - cel: '"my-server" in identity.aud' # type(identity.aud) == list
+    - type: CEL
+      cel: '"my-server" in identity.aud' # type(identity.aud) == list
 ```
 
 ### Example 4 – External authorization service
@@ -324,7 +359,8 @@ spec:
   targetRefs: […]
   rules:
   - authorization:
-    - externalAuth:
+    - type: ExternalAuth
+      externalAuth:
         protocol: GRPC
         backendRef:
           name: ext-authz-service
