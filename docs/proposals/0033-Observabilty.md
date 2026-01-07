@@ -1,6 +1,6 @@
-Date: 19th December 2025
-Authors: david-martin
-Status: Provisional
+Date: 19th December 2025<br/>
+Authors: david-martin, evaline-ju<br/>
+Status: Provisional<br/>
 
 # Observability in Agentic Networking
 
@@ -14,7 +14,7 @@ If something goes wrong while the Agent is solving the goal, such as the Agent a
 
 This requires solving several observability challenges:
 - How to trace an agent's entire execution flow from the initial user request through to completion
-- How to capture which LLM calls were made, what prompts were sent, and what responses were received
+- How to reference which LLM calls were made, what prompts were sent, and what responses were received. For security and compliance, we recommend not capturing full prompts and responses in logs. Trace IDs could be used as pointers, and prompts could be identified via hashes or IDs, with full content retrieved only as necessary through appropriate access controls.
 - How to log tool invocations with sufficient context about why they were called and what permissions were checked
 - How to provide detailed information when a permission check fails, including which AccessPolicy rule caused the failure
 - How to correlate agent actions back to the original user who delegated authority
@@ -34,7 +34,7 @@ Leverage distributed tracing standards (W3C Trace Context) to track agent execut
 - **Trace ID**: A unique identifier for the entire agent session (from initial user goal to completion), propagated across all components
 - **Span ID**: A unique identifier for each individual operation (e.g., a single LLM call or tool invocation)
 
-Each component (agent runtime, LLM providers, MCP servers) propagates the trace context via standard headers and creates spans for its operations. All spans share the same trace ID, allowing the full flow to be reconstructed.
+Each component (agent runtime, LLM providers, MCP servers) propagates the trace context via standard headers or request attributes (e.g. `request.params._meta`) and creates spans for its operations. All spans share the same trace ID, allowing the full flow to be reconstructed.
 
 ### Standardized Trace Attributes
 
@@ -47,6 +47,14 @@ Extend standard tracing with agent-specific attributes on each span:
 - **permission.policy**: AccessPolicy evaluated for the operation
 - **permission.rule**: Specific rule within the AccessPolicy that caused success/failure
 - **permission.result**: Whether the permission check passed or failed
+
+### Error and retry standardization
+
+The protocols used by components in agentic systems to communicate are constantly evolving - including but not limited to MCP and A2A, where error formats can be subject to variety. They generally standaridize on one of JSON-RPC or HTTP protocols with further protocol-specific additions (e.g. A2A's task_not_found error code). Errors in logs and spans should include identifiers for error source whether agent or tools, where a common request (trace) ID allows for the error source (e.g. agent Y, tool server X, or LLM server W) to be more easily identified.Protocol-specific attributes can be added to spans.
+
+Error format conventions as defined in [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/) should be followed.
+
+Tracing retries in agentic systems will be complicated by changing parameters. For example, an agent may "retry" a tool call with different tool call parameters, a slightly altered prompt or context, or try to call an entirely alternate tool. A common request (trace) ID needs to be leveraged to track the retry attempts and allow an end user to observe the linked retry attempts. To avoid full logging of prompts and responses, updated prompts can be referenced by hashes.
 
 ### Identity Propagation Options
 
