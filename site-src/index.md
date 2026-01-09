@@ -46,7 +46,14 @@ This subproject aims to deliver the following:
 
 ## API Resources
 
-Check back soon for the initial API proposal!
+### Tool Authorization API in Agentic Netowrking
+
+This defines authorization policies for tool access from AI agents running inside a Kubernetes cluster to MCP servers running in the Kubernetes cluster or outside of the Kubernetes cluster.
+
+The API introduces 2 new CRDs:
+
+- `XBackend`: describes a backend in agentic networking
+- `XAccessPolicy`: describes who can access what (the permissions/grants) in relation to the agentic networking backends
 
 ## Who is working on this project?
 
