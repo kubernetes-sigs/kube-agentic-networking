@@ -1,0 +1,19 @@
+# Git
+.git
+.gitignore
+
+# Local binaries
+bin/
+
+# CI/CD
+.github/
+
+# IDE/Editor files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+
+# Cache files
+cache/
