@@ -35,10 +35,12 @@ import (
 var bootstrapTemplate string
 
 type configData struct {
-	Cluster             string
-	ID                  string
-	ControlPlaneAddress string
-	ControlPlanePort    int
+	Cluster                    string
+	ID                         string
+	ControlPlaneAddress        string
+	ControlPlanePort           int
+	CredentialBearerSecretName string
+	ServiceAccountTokenPath    string
 }
 
 // generateEnvoyBootstrapConfig returns an envoy config generated from config data
@@ -48,10 +50,12 @@ func generateEnvoyBootstrapConfig(cluster, id string) (string, error) {
 	}
 
 	data := &configData{
-		Cluster:             cluster,
-		ID:                  id,
-		ControlPlaneAddress: fmt.Sprintf("%s.%s.svc.cluster.local", constants.XDSServerServiceName, constants.AgenticNetSystemNamespace),
-		ControlPlanePort:    15001,
+		Cluster:                    cluster,
+		ID:                         id,
+		ControlPlaneAddress:        fmt.Sprintf("%s.%s.svc.cluster.local", constants.XDSServerServiceName, constants.AgenticNetSystemNamespace),
+		ControlPlanePort:           15001,
+		CredentialBearerSecretName: constants.CredentialBearerSecretName,
+		ServiceAccountTokenPath:    constants.ServiceAccountTokenPath,
 	}
 
 	t, err := template.New("gateway-config").Parse(bootstrapTemplate)

@@ -14,6 +14,11 @@ dynamic_resources:
     ads: {}
 
 static_resources:
+  secrets:
+  - name: {{ .CredentialBearerSecretName }}
+    generic_secret:
+      secret:
+        filename: "{{ .ServiceAccountTokenPath }}"
   clusters:
   - name: xds_cluster
     type: STRICT_DNS
