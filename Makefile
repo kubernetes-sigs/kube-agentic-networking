@@ -48,6 +48,82 @@ test: vet;$(info $(M)...Begin to run tests.)  @ ## Run tests.
 verify:
 	hack/verify-all.sh -v
 
+REPO_ROOT:=${CURDIR}
+
+## @ Code Generation Variables
+
+# Find the code-generator package in the Go module cache.
+# The 'go mod download' command in the targets ensures this will succeed.
+CODEGEN_PKG = $(shell go env GOPATH)/pkg/mod/k8s.io/code-generator@$(shell go list -m -f '{{.Version}}' k8s.io/code-generator)
+CODEGEN_SCRIPT := $(CODEGEN_PKG)/kube_codegen.sh
+
+# The root directory where your API type definitions are located.
+SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/
+# The root directory where client code will be placed.
+CLIENT_OUTPUT_DIR := $(REPO_ROOT)/k8s/client
+# The root Go package for your generated client code.
+CLIENT_OUTPUT_PKG := $(shell go list -m)/k8s/client
+BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
+
+
+## @ Code Generation
+
+.PHONY: generate
+generate: manifests deepcopy register clientsets ## Generate manifests, deepcopy code, and clientsets.
+
+.PHONY: manifests
+manifests: controller-gen ## Generate CustomResourceDefinition objects.
+	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./api/..." output:crd:artifacts:config=k8s/crds
+
+.PHONY: deepcopy
+deepcopy: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	$(CONTROLLER_GEN) object:headerFile="$(BOILERPLATE_FILE)" paths="./api/..."
+
+.PHONY: clientsets
+clientsets: ## Generate clientsets, listers, and informers.
+	@echo "--- Ensuring code-generator is in module cache..."
+	@go mod download k8s.io/code-generator
+	@echo "+++ Generating client code..."
+	@bash -c 'source $(CODEGEN_SCRIPT); \
+		kube::codegen::gen_client \
+		    --with-watch \
+		    --output-dir $(CLIENT_OUTPUT_DIR) \
+		    --output-pkg $(CLIENT_OUTPUT_PKG) \
+		    --boilerplate $(BOILERPLATE_FILE) \
+		    ./'
+
+.PHONY: register
+register: ## Generate register code for CRDs under ./api/v0alpha0
+	@echo "--- Ensuring code-generator is in module cache..."
+	@go mod download k8s.io/code-generator
+	@echo "+++ Generating register code for api/v0alpha0..."
+	@bash -c 'source $(CODEGEN_SCRIPT); \
+		kube::codegen::gen_register \
+		    --boilerplate $(BOILERPLATE_FILE) \
+		    ./api/v0alpha0'
+
+## @ Dependencies
+
+## Location to install dependencies to
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+## Tool Binaries
+CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
+
+## Tool Versions
+CONTROLLER_TOOLS_VERSION ?= v0.19.0
+
+.PHONY: controller-gen
+controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
+$(CONTROLLER_GEN): $(LOCALBIN) ## Installs controller-gen if not already installed.
+	chmod +x ./hack/install-tool.sh
+	./hack/install-tool.sh \
+		"$(CONTROLLER_GEN)" \
+		"sigs.k8s.io/controller-tools/cmd/controller-gen" \
+		"$(CONTROLLER_TOOLS_VERSION)" \
+		"$(LOCALBIN)"
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
