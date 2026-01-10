@@ -1,6 +1,6 @@
-Date: 17th November 2025
-Authors: haiyanmeng, guicassolato
-Status: Provisional
+Date: 17th November 2025<br/>
+Authors: haiyanmeng, guicassolato<br/>
+Status: Provisional<br/>
 
 # Tool Authorization in Agentic Networking
 

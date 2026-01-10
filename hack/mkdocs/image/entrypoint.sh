@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 
-# Copyright 2020 The Kubernetes Authors.
+# Copyright 2026 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,18 +15,14 @@
 # limitations under the License.
 
 set -o errexit
-set -o nounset
 set -o pipefail
 
-SCRIPT_ROOT=$(dirname "${BASH_SOURCE}")/..
+CMD=$1
 
-echo "CURRETNLY SKIPPING CODEGEN VERIFICATION ON MAIN, RE-ENABLE ONCE APIs ARE MERGED TO MAIN"
-# make -C "$SCRIPT_ROOT" generate
+if [ "$CMD" == "build" ];
+then
+  mkdocs build
+  exit 0;
+fi
 
-# if git status -s 2>&1 | grep -E -q '^\s+[MADRCU]'
-# then
-# 	echo Uncommitted changes in generated sources:
-# 	git status -s
-# 	git diff
-# 	exit 1
-# fi
+mkdocs serve --dev-addr=0.0.0.0:3000 --livereload

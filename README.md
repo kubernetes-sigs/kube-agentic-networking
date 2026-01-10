@@ -32,12 +32,19 @@ This subproject aims to deliver the following:
 
 ## Community, discussion, contribution, and support
 
-Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
+Our community meetings are held weekly on Thursday at 4PM UTC ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=4PM&tz=UTC)).
+- [Meeting Notes](https://docs.google.com/document/d/1EQET_VWe_IAINyQhVj-wduZg99gBaObpz9612eZ1iYg/edit?tab=t.0#heading=h.q1zi45aa3n69)
+- [Zoom (client) Meeting Link](https://zoom.us/j/92037420986)
+- [Zoom (web) Meeting Link](https://zoom.us/wc/join/92037420986)
 
 You can reach the maintainers of this project at:
 
 - [Slack channel (#sig-network-agentic-networking)](https://kubernetes.slack.com/archives/C09P6KS6EQZ)
 - [Mailing List](https://groups.google.com/a/kubernetes.io/g/sig-network)
+
+Contributions are readily welcomed!
+
+Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
 
 ### Code of conduct
 
