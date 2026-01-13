@@ -180,66 +180,69 @@ type AccessRule struct {
 }
 
 // Source specifies the source of a request.
-// This struct is same as the Source struct defined in https://github.com/kubernetes-sigs/gateway-api/blob/950c6639afd099b7bba4236f8b894ae4b891d26a/geps/gep-3779/index.md#api-design.
 //
-// At least one field MAY be set. If multiple fields are set,
-// a request matches this Source if it matches
-// **any** of the specified criteria (logical OR across fields).
-//
-// For example, if both `Identities` and `ServiceAccounts` are provided,
-// the rule matches a request if either:
-// - the request's identity is in `Identities`
-// - OR the request's Serviceaccount matches an entry in `ServiceAccounts`.
-//
-// Each list within the fields (e.g. `Identities`) is itself an OR list.
-//
-// If this struct is omitted in a rule, it matches any source.
-//
-// <gateway:util:excludeFromCRD> NOTE: In the future, if there’s a need to express more complex
-// logical conditions (e.g. requiring a request to match multiple
-// criteria simultaneously—logical AND), we may evolve this API
-// to support richer match expressions or logical operators. </gateway:util:excludeFromCRD>
+// Type must be set to indicate the type of source type.
+// Similarly, either SPIFFE or Serviceaccount can be set based on the type.
 type Source struct {
-	// Identities specifies a list of identities that are matched by this rule.
-	// A request's identity MUST be present in this list to match the rule.
+
+	// +unionDiscriminator
+	// +required
+	Type AuthorizationSourceType `json:"type"`
+
+	// spiffe specifies an identity that is matched by this rule.
 	//
-	// Identities MUST be specified as SPIFFE-formatted URIs following the pattern:
+	// spiffe identities must be specified as SPIFFE-formatted URIs following the pattern:
 	//   spiffe://<trust_domain>/<workload-identifier>
 	//
-	// While the exact workload identifier structure is implementation-specific,
-	// implementations are encouraged to follow the convention of
-	// `spiffe://<trust_domain>/ns/<namespace>/sa/<serviceaccount>`
-	// when representing Kubernetes workload identities.
-  //
-  // While identities MAY be used in the future to represent non-k8s workloads,
-  // the initial focus will be Kubernetes workloads.
+	// The exact workload identifier structure is implementation-specific.
+	//
+	// spiffe identities for authorization can be derived in various ways by the underlying
+	// implementation. Common methods include:
+	// - From peer mTLS certificates: The identity is extracted from the client's
+	//   mTLS certificate presented during connection establishment.
+	// - From IP-to-identity mappings: The implementation might maintain a dynamic
+	//   mapping between source IP addresses (pod IPs) and their associated
+	//   identities (e.g., Service Account, SPIFFE IDs).
+	// - From JWTs or other request-level authentication tokens.
 	//
 	// +optional
-	Identities []string `json:"identities,omitempty"`
-	// ServiceAccounts specifies a list of Kubernetes Service Accounts that are
+	SPIFFE *AuthorizationSourceSPIFFE `json:"spiffe,omitempty"`
+
+	// ServiceAccount specifies a Kubernetes Service Account that is
 	// matched by this rule. A request originating from a pod associated with
-	// one of these Serviceaccounts will match the rule.
+	// this serviceaccount will match the rule.
 	//
-	// Values MUST be in one of the following formats:
-	//   - "<namespace>/<serviceaccount-name>": A specific Serviceaccount in a namespace.
-	//   - "<namespace>/*": All Serviceaccounts in the given namespace.
-	//   - "<serviceaccount-name>": a Serviceaccount in the same namespace as the policy.
-	//
-	// Use of "*" alone (i.e., all Serviceaccounts in all namespaces) is not allowed.
-	// To select all Serviceaccounts in the current namespace, use "<namespace>/*" explicitly.
-	//
-	// Example:
-	//   - "default/bookstore" → Matches Serviceaccount "bookstore" in namespace "default"
-	//   - "payments/*" → Matches any Serviceaccount in namespace "payments"
-	//   - "frontend" → Matches "frontend" Serviceaccount in the same namespace as the policy
-	//
-	// The ServiceAccounts listed here are expected to exist within the same
-	// trust domain as the targeted workload, which in many environments means
-	// the same Kubernetes cluster. Cross-cluster or cross-trust-domain access
-	// should instead be expressed using the `Identities` field.
-	//
+	// The ServiceAccount listed here is expected to exist within the same
+	// trust domain as the targeted workload. Cross-trust-domain access should
+	// instead be expressed using the `SPIFFE` field.
 	// +optional
-	ServiceAccounts []string `json:"serviceAccounts,omitempty"`
+	ServiceAccount *AuthorizationSourceServiceAccount `json:"serviceAccount,omitempty"`
+}
+
+// AuthorizationSourceType identifies a type of source for authorization.
+// +kubebuilder:validation:Enum=ServiceAccount;SPIFFE
+type AuthorizationSourceType string
+
+const (
+	// AuthorizationSourceTypeSPIFFE is used to identify a request matches a SPIFFE Identity.
+	AuthorizationSourceTypeSPIFFE AuthorizationSourceType = "SPIFFE"
+
+	// AuthorizationSourceTypeServiceAccount is used to identify a request matches a ServiceAccount from within the cluster.
+	AuthorizationSourceTypeServiceAccount AuthorizationSourceType = "ServiceAccount"
+)
+
+// +kubebuilder:validation:Pattern=`^spiffe://[a-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`
+type AuthorizationSourceSPIFFE string
+
+type AuthorizationSourceServiceAccount struct {
+	// Namespace is the namespace of the ServiceAccount
+	// If not specified, current namespace (the namespace of the policy) is used.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// Name is the name of the ServiceAccount.
+	// +required
+	Name string `json:"name"`
 }
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.

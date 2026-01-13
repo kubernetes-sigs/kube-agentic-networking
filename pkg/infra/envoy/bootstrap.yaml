@@ -1,0 +1,40 @@
+node:
+  cluster: {{ .Cluster }}
+  id: {{ .ID }}
+
+dynamic_resources:
+  ads_config:
+    api_type: GRPC
+    grpc_services:
+    - envoy_grpc:
+        cluster_name: xds_cluster
+  cds_config:
+    ads: {}
+  lds_config:
+    ads: {}
+
+static_resources:
+  clusters:
+  - name: xds_cluster
+    type: STRICT_DNS
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config:
+          http2_protocol_options: {}
+    load_assignment:
+      cluster_name: xds_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: {{ .ControlPlaneAddress }}
+                port_value: {{ .ControlPlanePort }}
+
+admin:
+  access_log_path: /dev/stdout
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 15000
