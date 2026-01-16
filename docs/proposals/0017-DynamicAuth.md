@@ -475,3 +475,158 @@ Proper validation of OIDC issuers is essential to prevent token forgery and man-
 ## Prior Art
 
 See [Kuadrant’s AuthPolicy](./0008-ToolAuthAPI.md#kuadrants-authpolicy) and [Envoy Gateway’s SecurityPolicy](./0008-ToolAuthAPI.md#envoy-gateways-securitypolicy).
+
+## Alternatives Considered
+
+An alternative approach considered was to split the AccessPolicy specification into multiple CRDs to avoid repetition of policy configurations that are often reused across multiple AccessPolicy resources. This would improve maintainability when updating common source configurations.
+
+For example, an AccessPolicy that would look like this under the proposed API:
+
+```yaml
+kind: AccessPolicy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  rules:
+  - source:
+      type: OIDC
+      oidc:
+        issuerUrl: auth-server.example.com
+        audiences:
+        - foo
+    authorization:
+    - type: InlineTools
+      tools:
+      - add
+      - subtract
+```
+
+Could instead be split into two resources working together:
+
+```yaml
+kind: AccessPolicy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  rules:
+  - authorization: {…}
+---
+kind: SourcePolicy
+metadata:
+  name: my-oidc-policy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  config:
+    type: OIDC
+    oidc:
+      issuerUrl: auth-server.example.com
+      audiences:
+      - foo
+```
+
+In this approach, the `source` part of the AccessPolicy spec would be specified in a separate `SourcePolicy` CRD. A Service Account source would follow the same pattern:
+
+```yaml
+kind: SourcePolicy
+metadata:
+  name: my-kube-sa-policy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  config:
+    type: ServiceAccount
+    serviceAccount:
+      namespace: foo
+```
+
+Other variations of this pattern were also considered:
+
+**Option 1: AccessPolicy references SourcePolicy**
+
+This avoids the complexity of computing policies when AccessPolicy and SourcePolicy have non-identical target sets:
+
+```yaml
+kind: AccessPolicy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  rules:
+  - sourcePolicyRef:
+      name: my-oidc-policy
+    authorization:
+    - type: InlineTools
+      tools:
+      - add
+      - subtract
+---
+kind: SourcePolicy
+metadata:
+  name: my-oidc-policy
+spec:
+  type: OIDC
+  oidc:
+    issuerUrl: auth-server.example.com
+    audiences:
+    - foo
+```
+
+**Option 2: AccessPolicy extends SourcePolicy**
+
+Multiple AccessPolicy resources could reference the same minimal SourcePolicy while providing case-specific extensions:
+
+```yaml
+kind: AccessPolicy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  rules:
+  - sourcePolicyRef:
+      name: my-oidc-policy
+    extraConfigs:
+      audiences:
+      - foo
+    …
+---
+kind: SourcePolicy
+metadata:
+  name: my-oidc-policy
+spec:
+  type: OIDC
+  oidc:
+    issuerUrl: auth-server.example.com
+```
+
+**Option 3: Type-specific source policies**
+
+Each source type would have its own dedicated CRD:
+
+```yaml
+kind: AccessPolicy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  rules:
+  - authorization: {…}
+---
+kind: OIDCPolicy
+metadata:
+  name: my-oidc-policy
+spec:
+  targetRefs:
+  - kind: Backend
+    name: math-mcp-server
+  config:
+    issuerUrl: auth-server.example.com
+    audiences:
+      - foo
+```
+
+All of these options were discarded primarily to avoid introducing a new kind of policy resource (new CRD). This decision avoids both the complexity of resolving multiple kinds of policies affecting the same targets and potential user friction in understanding and trying the API at this early stage. This decision can be revisited in the future.
