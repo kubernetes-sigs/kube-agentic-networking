@@ -6,6 +6,10 @@ Status: Provisional<br/>
 
 This proposal addresses observability challenges in agentic systems, where agents use LLMs and tools to autonomously solve user goals. It proposes leveraging distributed tracing standards (W3C Trace Context) with standardized agent-specific attributes to enable comprehensive auditing and debugging of agent execution flows, including user delegation context and permission enforcement.
 
+This proposal focuses on defining tracing schemas, specfically the structure of traces that will be emitted at runtime of agentic systems. APIs such as Kubernetes CRDs to allow users to configure traces and other observability data such as metrics and logs will be addressed in subsequent proposals. Here, we also particularly focus on tracing for proxy-like workloads in Kubernetes environments, including but not limited to sidecars and gateways.
+
+Generally this proposal recommends following existing OpenTelemetry semantic conventions. New permission and AccessPolicy attributes are also proposed here and can be considered for inclusion in an existing or new OpenTelemetry semantic convention registry.
+
 ## Problem space
 
 Users of Agentic systems can set goals for an Agent to solve. For example, "Generate a sales report for Q4 and share it with the leadership team". Agents use LLMs and tools in a loop to reach the goal. This will require tools like 'database query', 'report generation', and 'email/messaging'. LLM access will be required for things like analyzing sales data patterns, formatting the report, and composing the distribution message.
@@ -136,5 +140,158 @@ The protocols used by components in agentic systems to communicate are constantl
 Error format conventions as defined in [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/) should be followed.
 
 Tracing retries in agentic systems will be complicated by changing parameters. For example, an agent may "retry" a tool call with different tool call parameters, a slightly altered prompt or context, or try to call an entirely alternate tool. A common trace ID needs to be leveraged to track the retry attempts and allow an end user to observe the linked retry attempts. To avoid full logging of prompts and responses, updated prompts can be referenced by hashes.
+
+### Examples
+
+The shown span attributes utilize the example span attributes listed in previous sections but are not comprehensive of what attributes can be included.
+
+#### Access policy enforcement
+
+This shows a trace example of a permission rule checked prior to tool access through a gateway.
+
+```
+trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8
+
+Claude AI Agent
+      │
+      │ POST /mcp
+      │ Headers:
+      │   traceparent: 00-f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8-5e6f7a8b9c1d2e3f-01
+      │   Authorization: Bearer eyJhbGc...
+      │   ...
+      │ tool: delete_customer_data
+      ▼
+
+Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 17ms ━━━━━━━━━━━━━━
+├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8
+├─ span.kind: SERVER
+├─ http.response.status_code: 403
+│
+├─ gen_ai.agent.id: claude-agent-prod-001
+├─ gen_ai.agent.name: claude-sonnet-4.5
+├─ gen_ai.operation.name: execute_tool
+├─ gen_ai.tool.name: delete_customer_data
+├─ gen_ai.system: anthropic
+├─ gen_ai.request.model: claude-sonnet-4-20250514
+├─ gen_ai.operation.name: tool_use
+│
+├─ mcp.method.name: tools/call
+├─ mcp.session.id: sess_agent_2p7k4m
+│
+├─ error.type: PermissionDeniedError
+└─ status: ERROR
+    │
+    │
+    ├─► Span: mcp.authorization               [span_id: 7a8b9c1d]
+    │   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 15ms ━━━━━━━━━━━━━
+    │   ├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8  ← Same trace_id
+    │   ├─ span.kind: INTERNAL
+    │   ├─ parent_span_id: 5e6f7a8b
+    │   │
+    │   ├─ permission.policy.name: crm_data_access_policy
+    │   ├─ permission.policy.rule: admin_only_delete
+    │   ├─ permission.result: denied
+    │   ├─ permission.denial.reason: insufficient_privileges
+    │   │
+    │   ├─ error.type: PermissionDeniedError
+    │   ├─ error.message: "User role 'support_agent' lacks privileges for customer_data.delete"
+    │   └─ status: ERROR
+    │
+    │
+    └─► Span: mcp.audit.log                   [span_id: 8b9c1d2e]
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2ms ━━━━━━━━━━━━━
+        ├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8  ← Same trace_id
+        ├─ span.kind: INTERNAL
+        ├─ parent_span_id: 5e6f7a8b
+        ├─ audit.event.type: authorization_failure
+        ├─ audit.event.category: security
+        ├─ audit.event.outcome: failure
+        ├─ ...
+        └─ status: OK
+
+      │
+      ▼
+   ⛔ Error: 403 - Forbidden
+   🔒 Permission denied: insufficient privileges for customer_data.delete
+```
+
+#### Guardrailing
+
+This shows a trace example of a guardrail blocking a request at a gateway.
+
+```
+trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8
+
+Claude AI Agent
+      │
+      │ POST /mcp
+      │ Headers:
+      │   traceparent: 00-c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8-9c1d2e3f4a5b6c7d-01
+      │   ...
+      │ {
+      │   "method": "tools/call",
+      │   "params": {
+      │     "name": "send_email",
+      │     "arguments": {
+      │       "to": "bob@example.com",
+      │       "body": "SSN: 123-45-6789, CC: 4532-1234-5678-9010"
+      │     }
+      │   }
+      │ }
+      ▼
+
+Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 30ms ━━━━━━━━━━━━━━
+├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8
+├─ span.kind: SERVER
+├─ http.response.status_code: 400
+│
+├─ gen_ai.agent.id: claude-agent-prod-001
+├─ gen_ai.agent.name: claude-sonnet-4.5
+├─ gen_ai.operation.name: execute_tool
+├─ gen_ai.tool.name: send_email
+│
+├─ mcp.method.name: tools/call
+├─ mcp.session.id: sess_agent_5k9m2n
+│
+├─ error.type: GuardrailViolationError
+└─ status: ERROR
+    │
+    ├─► Span: mcp.guardrail.evaluate      [span_id: 7a8b9c1d]
+    │   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 25ms ━━━━━━━━━━━━━
+    │   ├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8  ← Same trace_id
+    │   ├─ span.kind: INTERNAL
+    │   ├─ parent_span_id: 5e6f7a8b
+    │   │
+    │   ├─ guardrail.type: content_filter
+    │   ├─ guardrail.policy.name: pii_detection_policy
+    │   ├─ guardrail.policy.rule: block_sensitive_pii
+    │   ├─ guardrail.result: blocked
+    │   │
+    │   ├─ guardrail.pii.types_detected: [ssn, credit_card]
+    │   ├─ guardrail.pii.confidence: high
+    │   ├─ guardrail.pii.field: arguments.body
+    │   │
+    │   ├─ error.type: PIIDetectedError
+    │   ├─ error.message: "PII detected: SSN, Credit Card"
+    │   └─ status: ERROR
+    │
+    └─► Span: mcp.audit.log               [span_id: 8b9c1d2e]
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5ms ━━━━━━━━━━━━━
+        ├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8  ← Same trace_id
+        ├─ span.kind: INTERNAL
+        ├─ audit.event.type: guardrail_violation
+        ├─ ...
+        ├─ audit.pii.types: [ssn, credit_card]
+        ├─ audit.severity: critical
+        └─ status: OK
+
+      │
+      ▼
+   ⛔ 400 Bad Request - Guardrail violation: PII detected
+   🔒 Blocked: SSN and Credit Card found in request
+```
+
 
 TODO: worked example showing logs & spans, including flow diagram
