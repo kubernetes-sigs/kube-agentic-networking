@@ -110,12 +110,18 @@ Follow [OpenTelemetry MCP semantic conventions](https://github.com/open-telemetr
 - `gen_ai.operation.name`: The operation being performed (e.g., "execute_tool")
 - `gen_ai.tool.name`: Name of the tool utilized by the agent. (e.g. "Flights")
 
-**Permission and AccessPolicy attributes (proposed):**
+*Policy enforcement spans:*
 
-For permission checks and AccessPolicy enforcement, we propose the following span attributes to capture authorization decisions:
-- `permission.policy.name`: Name or identifier of the AccessPolicy evaluated
-- `permission.policy.rule`: Specific rule within the AccessPolicy that determined the outcome
-- `permission.result`: Result of the permission check (`allowed` or `denied`)
+These can encompass spans for permission checks and AccessPolicy enforcement and can be generalized to other guardrails checks.
+
+Follow [OpenTelemetry security rule semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/security-rule/) such as:
+- `security_rule.ruleset.name` - Name or identifier of the policy/AccessPolicy evaluated
+- `security_rule.name` - Specific rule within the policy/AccessPolicy that determined the outcome
+- `security_rule.category` - Category of rule (e.g., "permission")
+
+We propose extending `event` conventions with:
+- `event.action` - Action to be taken due to the check (`allow` or `deny`)
+- `event.outcome` - Outcome of the check itself (`success`, `failure`, `unknown`)
 
 **Pros:**
 - Balances queryability with network efficiency
@@ -143,7 +149,7 @@ Tracing retries in agentic systems will be complicated by changing parameters. F
 
 ### Examples
 
-The shown span attributes utilize the example span attributes listed in previous sections but are not comprehensive of what attributes can be included.
+The shown span attributes utilize the example span attributes listed in previous sections but are not comprehensive of what attributes can be included. Some additional span attributes beyond those proposed above have been included to facilitate understanding of the examples but are not necessary for implementations.
 
 #### Access policy enforcement
 
@@ -189,10 +195,12 @@ Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
     │   ├─ span.kind: INTERNAL
     │   ├─ parent_span_id: 5e6f7a8b
     │   │
-    │   ├─ permission.policy.name: crm_data_access_policy
-    │   ├─ permission.policy.rule: admin_only_delete
-    │   ├─ permission.result: denied
-    │   ├─ permission.denial.reason: insufficient_privileges
+    │   ├─ security_rule.ruleset.name: crm_data_access_policy
+    │   ├─ security_rule.name: admin_only_delete
+    │   ├─ security_rule.category: permission
+    │   ├─ security_rule.denial_reason: insufficient_privileges
+    │   ├─ event.action: deny
+    │   ├─ event.outcome: success
     │   │
     │   ├─ error.type: PermissionDeniedError
     │   ├─ error.message: "User role 'support_agent' lacks privileges for customer_data.delete"
@@ -264,10 +272,12 @@ Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
     │   ├─ span.kind: INTERNAL
     │   ├─ parent_span_id: 5e6f7a8b
     │   │
-    │   ├─ guardrail.type: content_filter
-    │   ├─ guardrail.policy.name: pii_detection_policy
-    │   ├─ guardrail.policy.rule: block_sensitive_pii
-    │   ├─ guardrail.result: blocked
+    │   ├─ security_rule.ruleset.name: pii_detection_policy
+    │   ├─ security_rule.name: block_sensitive_pii
+    │   ├─ security_rule.category: guardrail
+    │   ├─ security_rule.denial_reason: sensitive_pii_present
+    │   ├─ event.action: deny
+    │   ├─ event.outcome: success
     │   │
     │   ├─ guardrail.pii.types_detected: [ssn, credit_card]
     │   ├─ guardrail.pii.confidence: high
