@@ -6,7 +6,7 @@ Status: Provisional<br/>
 
 This proposal addresses observability challenges in agentic systems, where agents use LLMs and tools to autonomously solve user goals. It proposes leveraging distributed tracing standards (W3C Trace Context) with standardized agent-specific attributes to enable comprehensive auditing and debugging of agent execution flows, including user delegation context and permission enforcement.
 
-This proposal focuses on defining tracing schemas, specfically the structure of traces that will be emitted at runtime of agentic systems. APIs such as Kubernetes CRDs to allow users to configure traces and other observability data such as metrics and logs will be addressed in subsequent proposals. Here, we also particularly focus on tracing for proxy-like workloads in Kubernetes environments, including but not limited to sidecars and gateways.
+This proposal focuses on defining tracing schemas, specifically the structure of traces that will be emitted at runtime of agentic systems. APIs such as Kubernetes CRDs to allow users to configure traces and other observability data such as metrics and logs will be addressed in subsequent proposals. Here, we also particularly focus on tracing for proxy-like workloads in Kubernetes environments, including but not limited to sidecars and gateways.
 
 Generally this proposal recommends following existing OpenTelemetry semantic conventions. New permission and AccessPolicy attributes are also proposed here and can be considered for inclusion in an existing or new OpenTelemetry semantic convention registry.
 
@@ -292,6 +292,3 @@ Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
    ⛔ 400 Bad Request - Guardrail violation: PII detected
    🔒 Blocked: SSN and Credit Card found in request
 ```
-
-
-TODO: worked example showing logs & spans, including flow diagram
