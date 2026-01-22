@@ -160,6 +160,35 @@ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8
 
 Claude AI Agent
       │
+      │ LLM call
+      │
+      ▼
+Span: gen_ai.agent.chat                         [span_id: 3d4e5f6a]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 342ms ━━━━━━━━━━━━
+├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8
+├─ span.kind: INTERNAL
+│
+├─ gen_ai.agent.id: claude-agent-prod-001
+├─ gen_ai.agent.name: claude-sonnet-4.5
+├─ gen_ai.operation.name: chat
+├─ gen_ai.system: anthropic
+├─ gen_ai.request.model: claude-sonnet-4-5-20250929
+│
+├─ gen_ai.usage.input_tokens: 1247
+├─ gen_ai.usage.output_tokens: 89
+│
+└─ status: OK
+    │
+    │
+    └─► Span: gen_ai.tool.call                  [span_id: 4e5f6a7b]
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12ms ━━━━━━━━━━━━━
+        ├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8  ← Same trace_id
+        ├─ span.kind: INTERNAL
+        ├─ parent_span_id: 3d4e5f6a
+        │
+        ├─ gen_ai.tool.name: delete_customer_data
+        └─ status: OK
+      │
       │ POST /mcp
       │ Headers:
       │   traceparent: 00-f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8-5e6f7a8b9c1d2e3f-01
@@ -168,19 +197,15 @@ Claude AI Agent
       │ tool: delete_customer_data
       ▼
 
-Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 17ms ━━━━━━━━━━━━━━
-├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8
+Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 17ms ━━━━━━━━━━━━
+├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8 ← Same trace_id
 ├─ span.kind: SERVER
+├─ parent_span_id: 3d4e5f6a
 ├─ http.response.status_code: 403
 │
-├─ gen_ai.agent.id: claude-agent-prod-001
-├─ gen_ai.agent.name: claude-sonnet-4.5
 ├─ gen_ai.operation.name: execute_tool
 ├─ gen_ai.tool.name: delete_customer_data
-├─ gen_ai.system: anthropic
-├─ gen_ai.request.model: claude-sonnet-4-20250514
-├─ gen_ai.operation.name: tool_use
 │
 ├─ mcp.method.name: tools/call
 ├─ mcp.session.id: sess_agent_2p7k4m
@@ -189,8 +214,8 @@ Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
 └─ status: ERROR
     │
     │
-    ├─► Span: mcp.authorization               [span_id: 7a8b9c1d]
-    │   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 15ms ━━━━━━━━━━━━━
+    ├─► Span: mcp.authorization                 [span_id: 7a8b9c1d]
+    │   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 15ms ━━━━━━━━━━━━
     │   ├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8  ← Same trace_id
     │   ├─ span.kind: INTERNAL
     │   ├─ parent_span_id: 5e6f7a8b
@@ -207,8 +232,8 @@ Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
     │   └─ status: ERROR
     │
     │
-    └─► Span: mcp.audit.log                   [span_id: 8b9c1d2e]
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2ms ━━━━━━━━━━━━━
+    └─► Span: mcp.audit.log                     [span_id: 8b9c1d2e]
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2ms ━━━━━━━━━━━
         ├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8  ← Same trace_id
         ├─ span.kind: INTERNAL
         ├─ parent_span_id: 5e6f7a8b
@@ -233,6 +258,35 @@ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8
 
 Claude AI Agent
       │
+      │ LLM call
+      │
+      ▼
+Span: gen_ai.agent.chat                         [span_id: 3d4e5f6a]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 342ms ━━━━━━━━━━━━
+├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8
+├─ span.kind: INTERNAL
+│
+├─ gen_ai.agent.id: claude-agent-prod-001
+├─ gen_ai.agent.name: claude-sonnet-4.5
+├─ gen_ai.operation.name: chat
+├─ gen_ai.system: anthropic
+├─ gen_ai.request.model: claude-sonnet-4-5-20250929
+│
+├─ gen_ai.usage.input_tokens: 427
+├─ gen_ai.usage.output_tokens: 89
+│
+└─ status: OK
+    │
+    │
+    └─► Span: gen_ai.tool.call                  [span_id: 4e5f6a7b]
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12ms ━━━━━━━━━━━━━
+        ├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8  ← Same trace_id
+        ├─ span.kind: INTERNAL
+        ├─ parent_span_id: 3d4e5f6a
+        │
+        ├─ gen_ai.tool.name: send_email
+        └─ status: OK
+      │
       │ POST /mcp
       │ Headers:
       │   traceparent: 00-c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8-9c1d2e3f4a5b6c7d-01
@@ -249,14 +303,13 @@ Claude AI Agent
       │ }
       ▼
 
-Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 30ms ━━━━━━━━━━━━━━
-├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8
+Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 30ms ━━━━━━━━━━━━
+├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8 ← Same trace_id
 ├─ span.kind: SERVER
+├─ parent_span_id: 3d4e5f6a
 ├─ http.response.status_code: 400
 │
-├─ gen_ai.agent.id: claude-agent-prod-001
-├─ gen_ai.agent.name: claude-sonnet-4.5
 ├─ gen_ai.operation.name: execute_tool
 ├─ gen_ai.tool.name: send_email
 │
@@ -266,8 +319,8 @@ Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
 ├─ error.type: GuardrailViolationError
 └─ status: ERROR
     │
-    ├─► Span: mcp.guardrail.evaluate      [span_id: 7a8b9c1d]
-    │   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 25ms ━━━━━━━━━━━━━
+    ├─► Span: mcp.guardrail.evaluate            [span_id: 7a8b9c1d]
+    │   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 25ms ━━━━━━━━━━━━
     │   ├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8  ← Same trace_id
     │   ├─ span.kind: INTERNAL
     │   ├─ parent_span_id: 5e6f7a8b
@@ -287,8 +340,8 @@ Span : mcp.gateway.request                           [span_id: 5e6f7a8b]
     │   ├─ error.message: "PII detected: SSN, Credit Card"
     │   └─ status: ERROR
     │
-    └─► Span: mcp.audit.log               [span_id: 8b9c1d2e]
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5ms ━━━━━━━━━━━━━
+    └─► Span: mcp.audit.log                     [span_id: 8b9c1d2e]
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5ms ━━━━━━━━━━━
         ├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8  ← Same trace_id
         ├─ span.kind: INTERNAL
         ├─ audit.event.type: guardrail_violation
