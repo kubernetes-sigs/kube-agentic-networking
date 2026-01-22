@@ -104,7 +104,7 @@ Follow [OpenTelemetry GenAI LLM spans conventions](https://opentelemetry.io/docs
 
 *Tool/MCP server spans:*
 
-Follow [OpenTelemetry MCP semantic conventions](https://github.com/open-telemetry/semantic-conventions/pull/2083) such as:
+Follow [Semantic conventions for Model Context Protocol (MCP)](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/) such as:
 - `mcp.method.name`: Name of the MCP method being invoked (e.g., "tools/call")
 - `mcp.session.id`: Session identifier for the MCP connection
 - `gen_ai.operation.name`: The operation being performed (e.g., "execute_tool")
