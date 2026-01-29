@@ -1,0 +1,50 @@
+# Copyright 2026 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Adapted from https://github.com/kubernetes-sigs/kind/blob/main/images/Makefile.common.in
+
+# shared makefile for all images
+
+# docker image registry, default to upstream
+# TODO: The registry is currently not ready.
+# 			Needs to wait https://github.com/kubernetes-sigs/kube-agentic-networking/issues/41 to be done.
+REGISTRY?=us-central1-docker.pkg.dev/k8s-staging-images/agentic-net
+# Go version to use, respected by images that build go binaries
+GO_VERSION=$(shell cat $(CURDIR)/.go-version | head -n1)
+
+# build with buildx
+PLATFORMS?=linux/amd64,linux/arm64
+OUTPUT?=
+PROGRESS=auto
+EXTRA_BUILD_OPT?=
+build: ensure-buildx
+	docker buildx build $(if $(PLATFORMS),--platform=$(PLATFORMS),) $(OUTPUT) --progress=$(PROGRESS) -t $(REGISTRY)/$(IMAGE_NAME):$(TAG) -t $(REGISTRY)/$(IMAGE_NAME):$(BASE_REF) --pull --build-arg GO_VERSION=$(GO_VERSION) $(EXTRA_BUILD_OPT) .
+
+# push the cross built image
+push: OUTPUT=--push
+push: build
+
+# quick can be used to do a build that will be imported into the local docker
+# for sanity checking before doing a cross build push
+# cross builds cannot be imported locally at the moment
+# https://github.com/docker/buildx/issues/59
+quick: PLATFORMS=
+quick: OUTPUT=--load
+quick: build
+
+# enable buildx
+ensure-buildx:
+	$(CURDIR)/hack/build/init-buildx.sh
+
+.PHONY: push build quick ensure-buildx

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-everything
+  namespace: quickstart-ns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-everything
+  template:
+    metadata:
+      labels:
+        app: mcp-everything
+    spec:
+      containers:
+        - name: mcp-everything
+          # TODO: Replace with the image from registry.k8s.io/agentic-net registry after https://github.com/kubernetes-sigs/kube-agentic-networking/issues/41 is done.
+          image: <PLACEHOLDER_FOR_MCP_EVERYTHING_IMAGE>
+          ports:
+            - containerPort: 3001
+          env:
+            - name: PORT
+              value: "3001"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-everything-svc
+  namespace: quickstart-ns
+spec:
+  type: ClusterIP
+  selector:
+    app: mcp-everything
+  ports:
+    - port: 3001
+      targetPort: 3001
+      protocol: TCP

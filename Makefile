@@ -15,6 +15,8 @@
 # We need all the Make variables exported as env vars.
 # Note that the ?= operator works regardless.
 
+include $(CURDIR)/hack/build/Makefile.common.in
+
 # Enable Go modules.
 export GO111MODULE=on
 
