@@ -111,7 +111,7 @@ type AccessPolicySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +listType=atomic
 	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
-  // +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
+	// +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
 	TargetRefs []gwapiv1.LocalPolicyTargetReference `json:"targetRefs"`
 ```
 
@@ -119,6 +119,6 @@ type AccessPolicySpec struct {
 
 * An implementation MUST support allowing AccessPolicy to target `Gateway` objects.
 
-* An implementation is NOT required to support allowing AccessPolicy to target `Backend` objects.
+* An implementation MAY support allowing AccessPolicy to target `Backend` objects.
 
 * If an implementation supports allowing AccessPolicy to target both `Gateway` and `Backend` objects, it MUST support the evaluation flow described above.
