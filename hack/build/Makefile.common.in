@@ -20,8 +20,11 @@
 # TODO: The registry is currently not ready.
 # 			Needs to wait https://github.com/kubernetes-sigs/kube-agentic-networking/issues/41 to be done.
 REGISTRY?=us-central1-docker.pkg.dev/k8s-staging-images/agentic-net
+
+REPO_ROOT?=$(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
+
 # Go version to use, respected by images that build go binaries
-GO_VERSION=$(shell cat $(CURDIR)/.go-version | head -n1)
+GO_VERSION?=$(shell cat $(REPO_ROOT)/.go-version | head -n1)
 
 # build with buildx
 PLATFORMS?=linux/amd64,linux/arm64
@@ -45,6 +48,6 @@ quick: build
 
 # enable buildx
 ensure-buildx:
-	$(CURDIR)/hack/build/init-buildx.sh
+	$(REPO_ROOT)/hack/build/init-buildx.sh
 
 .PHONY: push build quick ensure-buildx
