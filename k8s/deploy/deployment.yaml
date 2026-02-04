@@ -88,9 +88,7 @@ spec:
       serviceAccountName: agentic-net-gw-controller-sa
       containers:
         - name: manager
-          # TODO: The image is currently not available.
-          # Needs to wait until https://github.com/kubernetes-sigs/kube-agentic-networking/issues/41 is done.
-          image: registry.k8s.io/agentic-net/agentic-networking-controller:latest
+          image: registry.k8s.io/agentic-net/agentic-networking-controller:v20260130-5d7ea35
           imagePullPolicy: Always
           command:
             - "/manager"
