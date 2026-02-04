@@ -27,7 +27,6 @@ import (
 	"k8s.io/klog/v2"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
 )
@@ -99,5 +98,5 @@ func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAcc
 }
 
 func isXBackendTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionName) bool {
-	return targetRef.Group == v0alpha0.GroupName && targetRef.Kind == "XBackend"
+	return targetRef.Group == agenticv0alpha0.GroupName && targetRef.Kind == "XBackend"
 }

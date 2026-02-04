@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -41,8 +42,8 @@ func TestCRDValidation(t *testing.T) {
 
 	var kubectlLocation, kubeconfigLocation string
 
-	v0alpha0.AddToScheme(scheme)
-	corev1.AddToScheme(scheme)
+	utilruntime.Must(v0alpha0.Install(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
 
 	k8sVersion := os.Getenv("K8S_VERSION")
 

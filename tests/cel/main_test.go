@@ -27,6 +27,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,10 +42,10 @@ func TestMain(m *testing.M) {
 	var testEnv *envtest.Environment
 	var err error
 
-	v0alpha0.AddToScheme(scheme)
+	utilruntime.Must(v0alpha0.Install(scheme))
 
 	// Add core APIs in case we refer secrets, services and configmaps
-	corev1.AddToScheme(scheme)
+	utilruntime.Must(corev1.AddToScheme(scheme))
 
 	// If one wants to use a local cluster, a KUBECONFIG envvar should be passed,
 	// otherwise testenv will be used
