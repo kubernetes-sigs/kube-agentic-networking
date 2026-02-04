@@ -12,11 +12,11 @@ This proposal allows `AccessPolicy` to target `Gateway` objects, in addition to 
 
 1. A single `AccessPolicy` object targeting a Gateway and a Backend at the same time is NOT allowed.
 
-1. It is allowed to have `AccessPolicy` objects targeting a `Gateway` object and `AccessPolicy` objects targeting a `Backend` object behind the `Gateway` object. In this case, the `AccessPolicy` objects targeting the `Gateway` object will be evaluated first. Among the `AccessPolicy` objects targeting the `Gateway` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.  
-    
+1. It is allowed to have `AccessPolicy` objects targeting a `Gateway` object and `AccessPolicy` objects targeting a `Backend` object behind the `Gateway` object. In this case, the `AccessPolicy` objects targeting the `Gateway` object will be evaluated first. Among the `AccessPolicy` objects targeting the `Gateway` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.
+
     * If any of the `AccessPolicy` objects targeting the `Gateway` object denies the access, the HTTP request will be denied. The `AccessPolicy` objects targeting the `Backend` object will NOT be evaluated in this case.
 
-    * If all the `AccessPolicy` objects targeting the `Gateway` object allow the access, the `AccessPolicy` objects targeting the `Backend` object will be evaluated. Among the `AccessPolicy` objects targeting the `Backend` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.  
+    * If all the `AccessPolicy` objects targeting the `Gateway` object allow the access, the `AccessPolicy` objects targeting the `Backend` object will be evaluated. Among the `AccessPolicy` objects targeting the `Backend` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.
 
         * if any of the `AccessPolicy` objects targeting the `Backend` object denies the access, the HTTP request will be denied.
 
@@ -111,14 +111,18 @@ type AccessPolicySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +listType=atomic
 	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
-	// +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
+    // +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
 	TargetRefs []gwapiv1.LocalPolicyTargetReference `json:"targetRefs"`
+}
 ```
+
+Currently, the `InlineTools` type of [AuthorizationRule](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/docs/proposals/0017-DynamicAuth.md) supports a list of tool names, which works well for `AccessPolicy` targeting `Backend` objects. However, it does not work well for `AccessPolicy` targeting `Gateway` objects, because there could be tool name conflicts between different backends behind the same `Gateway`. We
+will address this in a separate proposal.
 
 ## Support requirements in implementation
 
-* An implementation MUST support allowing AccessPolicy to target `Gateway` objects.
+* An implementation MUST support allowing `AccessPolicy` to target `Gateway` objects.
 
-* An implementation MAY support allowing AccessPolicy to target `Backend` objects.
+* An implementation MAY support allowing `AccessPolicy` to target `Backend` objects.
 
-* If an implementation supports allowing AccessPolicy to target both `Gateway` and `Backend` objects, it MUST support the evaluation flow described above.
+* If an implementation supports allowing `AccessPolicy` to target both `Gateway` and `Backend` objects, it MUST support the evaluation flow described above.
