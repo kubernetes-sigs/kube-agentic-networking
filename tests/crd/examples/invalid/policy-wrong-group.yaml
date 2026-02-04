@@ -1,0 +1,15 @@
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: invalid-policy-wrong-group
+spec:
+  targetRefs:
+  - group: wrong.group
+    kind: XBackend
+    name: valid-backend
+  rules:
+  - name: allow-sa
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: my-sa

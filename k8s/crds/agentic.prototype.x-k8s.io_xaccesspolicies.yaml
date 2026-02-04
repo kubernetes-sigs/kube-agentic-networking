@@ -50,7 +50,9 @@ spec:
                   properties:
                     name:
                       description: Name specifies the name of the rule.
-                      maxLength: 63
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                       type: string
                     source:
                       description: Source specifies the source of the request.
