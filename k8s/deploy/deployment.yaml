@@ -91,7 +91,7 @@ spec:
           image: registry.k8s.io/agentic-net/agentic-networking-controller:v20260130-5d7ea35
           imagePullPolicy: Always
           command:
-            - "/manager"
+            - "/agentic-net-controller"
           args:
             - "--proxy-image=envoyproxy/envoy:v1.36-latest"
             - "--worker-count=6"

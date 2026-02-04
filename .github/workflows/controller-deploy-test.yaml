@@ -1,0 +1,43 @@
+name: Controller Deployment Test
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1.12.0
+      with:
+        cluster_name: kind
+
+    - name: Install Gateway API CRDs
+      run: |
+        kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+
+    - name: Install Project CRDs
+      run: |
+        kubectl apply -f k8s/crds/
+
+    - name: Deploy Controller
+      run: |
+        kubectl apply -f k8s/deploy/deployment.yaml
+
+    - name: Wait for Controller to be ready
+      run: |
+        kubectl wait --for=condition=available --timeout=300s deployment/agentic-net-gw-controller -n agentic-net-system
+
+    - name: Debug on failure
+      if: failure()
+      run: |
+        kubectl get all -A
+        kubectl get events -A
+        kubectl describe deployment agentic-net-gw-controller -n agentic-net-system
+        kubectl logs deployment/agentic-net-gw-controller -n agentic-net-system --all-containers
