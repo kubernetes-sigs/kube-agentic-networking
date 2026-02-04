@@ -84,44 +84,23 @@ Note: W3C Baggage is used instead of `tracestate` because user and agent identit
 
 **What each component emits as span attributes:**
 
-Components should follow [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/) where available, and extend with domain-specific attributes as needed.
+We propose following OpenTelemetry semantic conventions:
+- [GenAI Agent spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/) for agent runtime spans
+- [GenAI LLM spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/) for LLM provider spans
+- [Model Context Protocol (MCP)](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/) for tool/MCP server spans
+- [Security rule attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/security-rule/) for policy enforcement spans
+- [Error attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/) for error handling
 
-*Agent runtime spans:*
-
-Follow [OpenTelemetry GenAI Agent spans conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/) such as:
-- `gen_ai.agent.id`: Identifier for the agent
-- `gen_ai.agent.name`: Name of the agent
-- `gen_ai.operation.name`: The operation being performed (e.g., "chat", "generate_content")
-
-*LLM provider spans:*
-
-Follow [OpenTelemetry GenAI LLM spans conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/) such as:
-- `gen_ai.provider.name`: The LLM system being used (e.g., "openai", "anthropic")
-- `gen_ai.request.model`: Model identifier (e.g., "gpt-4", "claude-3-5-sonnet")
-- `gen_ai.usage.input_tokens`: Input token count
-- `gen_ai.usage.output_tokens`: Output token count
-- `gen_ai.operation.name`: The operation being performed (e.g., "chat", "completion")
-
-*Tool/MCP server spans:*
-
-Follow [Semantic conventions for Model Context Protocol (MCP)](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/) such as:
-- `mcp.method.name`: Name of the MCP method being invoked (e.g., "tools/call")
-- `mcp.session.id`: Session identifier for the MCP connection
-- `gen_ai.operation.name`: The operation being performed (e.g., "execute_tool")
-- `gen_ai.tool.name`: Name of the tool utilized by the agent. (e.g. "Flights")
-
-*Policy enforcement spans:*
-
-These can encompass spans for permission checks and AccessPolicy enforcement and can be generalized to other guardrails checks.
-
-Follow [OpenTelemetry security rule semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/security-rule/) such as:
+Security rule attributes can be used for permission checks and AccessPolicy enforcement and can be generalized to other guardrails checks in the following way:
 - `security_rule.ruleset.name` - Name or identifier of the policy/AccessPolicy evaluated
 - `security_rule.name` - Specific rule within the policy/AccessPolicy that determined the outcome
 - `security_rule.category` - Category of rule (e.g., "permission")
 
-We propose extending `event` conventions with:
-- `event.action` - Action to be taken due to the check (`allow` or `deny`)
-- `event.outcome` - Outcome of the check itself (`success`, `failure`, `unknown`)
+Where the OpenTelemetry spec does not define attributes for permission enforcement outcomes, we recommend extending `event` conventions with:
+- `event.action`: Action to be taken due to the check (`allow` or `deny`)
+- `event.outcome`: Outcome of the check itself (`success`, `failure`, `unknown`)
+
+Tracing retries in agentic systems will be complicated by changing parameters. For example, an agent may "retry" a tool call with different tool call parameters, a slightly altered prompt or context, or try to call an entirely alternate tool. Use a common trace ID to link retry attempts. Reference updated prompts by hash to avoid full logging.
 
 **Pros:**
 - Balances queryability with network efficiency
@@ -138,14 +117,6 @@ We propose extending `event` conventions with:
 3. Component-specific details (tool names, permission rules, LLM tokens) are only relevant where they occur and shouldn't be propagated
 4. Enables independent span queries for the most common use cases (filtering by user or agent) without requiring backend correlation
 5. Maintains privacy by not propagating verbose or sensitive data unnecessarily
-
-### Error and Retry Standardization
-
-The protocols used by components in agentic systems to communicate are constantly evolving - including but not limited to MCP and A2A, where error formats can be subject to variety. They generally standardize on one of JSON-RPC or HTTP protocols with further protocol-specific additions (e.g. A2A's task_not_found error code). Errors in logs and spans should include identifiers for error source whether agent or tools, where a common trace ID allows for the error source (e.g. agent Y, tool server X, or LLM server W) to be more easily identified. Protocol-specific attributes can be added to spans.
-
-Error format conventions as defined in [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/) should be followed.
-
-Tracing retries in agentic systems will be complicated by changing parameters. For example, an agent may "retry" a tool call with different tool call parameters, a slightly altered prompt or context, or try to call an entirely alternate tool. A common trace ID needs to be leveraged to track the retry attempts and allow an end user to observe the linked retry attempts. To avoid full logging of prompts and responses, updated prompts can be referenced by hashes.
 
 ### Examples
 
