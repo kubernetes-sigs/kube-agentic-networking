@@ -55,10 +55,9 @@ type AccessRule struct {
 	// Source specifies the source of the request.
 	// +required
 	Source Source `json:"source"`
-	// Tools specifies a list of tools.
-	// +listType=set
+	// Authorization specifies the authorization rule to be applied to requests from the source.
 	// +optional
-	Tools []string `json:"tools,omitempty"`
+	Authorization *AuthorizationRule `json:"authorization,omitempty"`
 }
 
 // Source specifies the source of a request.
@@ -131,6 +130,27 @@ type AuthorizationSourceServiceAccount struct {
 	// +required
 	Name string `json:"name"`
 }
+
+type AuthorizationRule struct {
+	// +unionDiscriminator
+	// +required
+	Type AuthorizationRuleType `json:"type"`
+
+	// Tools specifies a list of tools inline.
+	// +listType=set
+	// +optional
+	Tools []string `json:"tools,omitempty"`
+}
+
+// AuthorizationRuleType identifies a type of authorization rule.
+// +kubebuilder:validation:Enum=InlineTools
+type AuthorizationRuleType string
+
+const (
+	// AuthorizationRuleTypeInlineTools is used to identify authorization rules
+	// declared as an inline list of authorized tools.
+	AuthorizationRuleTypeInlineTools AuthorizationRuleType = "InlineTools"
+)
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.
 type AccessPolicyStatus struct {
