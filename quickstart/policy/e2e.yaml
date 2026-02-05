@@ -54,9 +54,11 @@ spec:
         serviceAccount:
           name: adk-agent-sa
           namespace: quickstart-ns
-      tools:
-        - "get-sum"
-        - "get-tiny-image"
+      authorization:
+        type: InlineTools
+        tools:
+          - "get-sum"
+          - "get-tiny-image"
 ---
 apiVersion: agentic.prototype.x-k8s.io/v0alpha0
 kind: XAccessPolicy
@@ -74,8 +76,10 @@ spec:
         serviceAccount:
           name: adk-agent-sa
           namespace: quickstart-ns
-      tools:
-        - "read_wiki_structure"
+      authorization:
+        type: InlineTools
+        tools:
+          - "read_wiki_structure"
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
