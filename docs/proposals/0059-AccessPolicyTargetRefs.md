@@ -120,8 +120,9 @@ Currently, the `InlineTools` type of [AuthorizationRule](https://github.com/kube
 
 ## Support requirements in implementation
 
-* An implementation MUST support allowing `AccessPolicy` to target `Gateway` objects.
+* An implementation MUST support at least one of the following:
 
-* An implementation MAY support allowing `AccessPolicy` to target `Backend` objects.
+    * `AccessPolicy` objects targeting `Gateway` objects
+    * `AccessPolicy` objects targeting `Backend` objects
 
 * If an implementation supports allowing `AccessPolicy` to target both `Gateway` and `Backend` objects, it MUST support the evaluation flow described above.
