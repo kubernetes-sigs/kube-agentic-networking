@@ -1,0 +1,8 @@
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XBackend
+metadata:
+  name: valid-backend
+spec:
+  mcp:
+    serviceName: my-service
+    port: 8080

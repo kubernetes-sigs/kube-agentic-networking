@@ -29,6 +29,7 @@ type AccessPolicySpec struct {
 	// An AccessPolicy must target at least one resource.
 	// +required
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
 	// +kubebuilder:validation:XValidation:rule="self.all(x, x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend')",message="TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"
 	TargetRefs []gwapiv1.LocalPolicyTargetReferenceWithSectionName `json:"targetRefs"`
@@ -36,13 +37,21 @@ type AccessPolicySpec struct {
 	// An AccessPolicy must have at least one rule.
 	// +required
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
+	// +kubebuilder:validation:XValidation:rule="self.all(r, self.filter(x, x.name == r.name).size() == 1)",message="AccessRule names must be unique"
 	Rules []AccessRule `json:"rules"`
 }
 
 // AccessRule specifies an authorization rule for the targeted backend.
 // If the tool list is empty, the rule denies access to all tools from Source.
 type AccessRule struct {
+	// Name specifies the name of the rule.
+	// +required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
 	// Source specifies the source of the request.
 	// +required
 	Source Source `json:"source"`

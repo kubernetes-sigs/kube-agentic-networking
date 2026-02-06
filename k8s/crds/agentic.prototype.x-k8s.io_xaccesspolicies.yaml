@@ -48,6 +48,12 @@ spec:
                     AccessRule specifies an authorization rule for the targeted backend.
                     If the tool list is empty, the rule denies access to all tools from Source.
                   properties:
+                    name:
+                      description: Name specifies the name of the rule.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
                     source:
                       description: Source specifies the source of the request.
                       properties:
@@ -113,11 +119,16 @@ spec:
                       type: array
                       x-kubernetes-list-type: set
                   required:
+                  - name
                   - source
                   type: object
+                maxItems: 10
                 minItems: 1
                 type: array
                 x-kubernetes-list-type: atomic
+                x-kubernetes-validations:
+                - message: AccessRule names must be unique
+                  rule: self.all(r, self.filter(x, x.name == r.name).size() == 1)
               targetRefs:
                 description: |-
                   TargetRefs specifies the targets of the AccessPolicy.
@@ -172,6 +183,7 @@ spec:
                   - kind
                   - name
                   type: object
+                maxItems: 10
                 minItems: 1
                 type: array
                 x-kubernetes-list-type: atomic

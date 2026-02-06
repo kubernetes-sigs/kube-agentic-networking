@@ -41,8 +41,19 @@ vet: ;$(info $(M)...Begin to run go vet against code.)  @ ## Run go vet against 
 
 # Run go test against code
 .PHONY: test
-test: vet;$(info $(M)...Begin to run tests.)  @ ## Run tests.
+test: vet test-pkg test-cel test-crd ## Run all tests.
+
+.PHONY: test-pkg
+test-pkg: ;$(info $(M)...Running pkg tests.) @ ## Run pkg tests.
 	go test -race -cover ./pkg/...
+
+.PHONY: test-cel
+test-cel: ;$(info $(M)...Running CEL tests.) @ ## Run CEL tests.
+	cd tests && go test -v ./cel/...
+
+.PHONY: test-crd
+test-crd: ;$(info $(M)...Running CRD tests.) @ ## Run CRD tests.
+	cd tests && go test -v ./crd/...
 
 
 # Run static analysis.
