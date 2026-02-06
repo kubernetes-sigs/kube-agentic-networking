@@ -143,13 +143,59 @@ func translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy, ba
 			})
 		}
 
-		// Build permissions based on type if specified
+		// Build permissions based on tools if specified
 		var permissions []*rbacconfigv3.Permission
-		switch rule.Authorization.Type {
-		case agenticv0alpha0.AuthorizationRuleTypeInlineTools:
-			if permission := translateInlineToolsToRBACPermission(rule.Authorization.Tools); permission != nil {
-				permissions = append(permissions, permission)
+		if len(rule.Tools) > 0 {
+			var toolValueMatchers []*matcherv3.ValueMatcher
+			for _, tool := range rule.Tools {
+				toolValueMatchers = append(toolValueMatchers, &matcherv3.ValueMatcher{
+					MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+						StringMatch: &matcherv3.StringMatcher{
+							MatchPattern: &matcherv3.StringMatcher_Exact{Exact: tool},
+						},
+					},
+				})
 			}
+
+			var toolsMatcher *matcherv3.ValueMatcher
+			if len(toolValueMatchers) == 1 {
+				toolsMatcher = toolValueMatchers[0]
+			} else {
+				toolsMatcher = &matcherv3.ValueMatcher{
+					MatchPattern: &matcherv3.ValueMatcher_OrMatch{OrMatch: &matcherv3.OrMatcher{ValueMatchers: toolValueMatchers}},
+				}
+			}
+
+			permissions = append(permissions, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_AndRules{
+					AndRules: &rbacconfigv3.Permission_Set{
+						Rules: []*rbacconfigv3.Permission{
+							{
+								Rule: &rbacconfigv3.Permission_SourcedMetadata{
+									SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+										MetadataMatcher: &matcherv3.MetadataMatcher{
+											Filter: mcpProxyFilterName,
+											Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+											Value:  &matcherv3.ValueMatcher{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: toolsCallMethod}}}},
+										},
+									},
+								},
+							},
+							{
+								Rule: &rbacconfigv3.Permission_SourcedMetadata{
+									SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+										MetadataMatcher: &matcherv3.MetadataMatcher{
+											Filter: mcpProxyFilterName,
+											Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "params"}}, {Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "name"}}},
+											Value:  toolsMatcher,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			})
 		}
 
 		policies[policyName] = &rbacconfigv3.Policy{
@@ -158,63 +204,6 @@ func translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy, ba
 		}
 	}
 	return policies
-}
-
-func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permission {
-	if len(tools) == 0 {
-		return nil
-	}
-
-	var toolValueMatchers []*matcherv3.ValueMatcher
-	for _, tool := range tools {
-		toolValueMatchers = append(toolValueMatchers, &matcherv3.ValueMatcher{
-			MatchPattern: &matcherv3.ValueMatcher_StringMatch{
-				StringMatch: &matcherv3.StringMatcher{
-					MatchPattern: &matcherv3.StringMatcher_Exact{Exact: tool},
-				},
-			},
-		})
-	}
-
-	var toolsMatcher *matcherv3.ValueMatcher
-	if len(toolValueMatchers) == 1 {
-		toolsMatcher = toolValueMatchers[0]
-	} else {
-		toolsMatcher = &matcherv3.ValueMatcher{
-			MatchPattern: &matcherv3.ValueMatcher_OrMatch{OrMatch: &matcherv3.OrMatcher{ValueMatchers: toolValueMatchers}},
-		}
-	}
-
-	return &rbacconfigv3.Permission{
-		Rule: &rbacconfigv3.Permission_AndRules{
-			AndRules: &rbacconfigv3.Permission_Set{
-				Rules: []*rbacconfigv3.Permission{
-					{
-						Rule: &rbacconfigv3.Permission_SourcedMetadata{
-							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
-								MetadataMatcher: &matcherv3.MetadataMatcher{
-									Filter: mcpProxyFilterName,
-									Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
-									Value:  &matcherv3.ValueMatcher{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: toolsCallMethod}}}},
-								},
-							},
-						},
-					},
-					{
-						Rule: &rbacconfigv3.Permission_SourcedMetadata{
-							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
-								MetadataMatcher: &matcherv3.MetadataMatcher{
-									Filter: mcpProxyFilterName,
-									Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "params"}}, {Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "name"}}},
-									Value:  toolsMatcher,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
 }
 
 // buildAllowMCPSessionClosePolicy creates the RBAC policy that allows agents to close MCP sessions.
