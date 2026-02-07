@@ -144,18 +144,17 @@ The final piece is the AI agent itself. We'll use a sample agent built with the 
 
 ### Step 5.1: Configure LLM Authentication
 
-The agent's ability to understand requests and generate responses is powered by a Large Language Model (LLM). This guide uses a HuggingFace model ([deepseek-ai/DeepSeek-R1-0528](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528)) for vendor neutrality.
+The agent's ability to understand requests and generate responses is powered by a Large Language Model (LLM). This guide uses a HuggingFace model ([deepseek-ai/DeepSeek-R1-0528](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528)) accessed via `LiteLLM` for vendor neutrality.
 
-> **Note**
-> The agent is configurable and supports various LLM providers like Google, OpenAI and Anthropic. You can modify the [agent deployment manifest](/quickstart/adk-agent/deployment.yaml) to use a different provider by configuring the API key as an environment variable. This [ADK documentation site](https://google.github.io/adk-docs/agents/models/) covers the setup details.
+To authenticate with the external HuggingFace model, you'll need a HuggingFace token. Obtain one by following [this guide](https://huggingface.co/docs/hub/en/security-tokens) and store it in a Kubernetes secret:
 
-<TODO: Use Google model for quota purpose. Switch to HF model later>
+```shell
+kubectl create secret generic hf-secret -n quickstart-ns --from-literal=hf-token-key='<YOUR-HUGGINGFACE-TOKEN>'
+```
 
-1.  Obtain an API key from [Google AI Studio](https://aistudio.google.com/).
-2.  Create a Kubernetes secret to securely store your key in the `quickstart-ns` namespace:
-    ```shell
-    kubectl create secret generic google-secret -n quickstart-ns --from-literal=google-api-key='<PASTE-YOUR-API-KEY-HERE>'
-    ```
+⚠️ **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
+
+> **Note** You can use other HuggingFace models that support chat and tool calling by modifying the `HF_MODEL` environment variable in the [agent deployment manifest](/quickstart/adk-agent/deployment.yaml). For details on configuring other generative AI models with ADK agents, refer to the [ADK documentation](https://google.github.io/adk-docs/agents/models/).
 
 ### Step 5.2: Deploy the Agent
 
@@ -170,6 +169,8 @@ Wait for the deployment to complete and the agent to be ready:
 ```shell
 kubectl wait --timeout=5m -n quickstart-ns deployment/adk-agent --for=condition=Available
 ```
+
+> **Note**: The agent connects to the proxy via `ENVOY_SERVICE` environment variable. The proxy service name is derived from a hash of the Gateway's namespace and name (e.g., `envoy-proxy-<hash>`). If these change, update the `ENVOY_SERVICE` value in the agent deployment manifest.
 
 ## 6. Interact with the Agent
 
