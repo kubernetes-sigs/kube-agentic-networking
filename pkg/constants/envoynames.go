@@ -33,8 +33,6 @@ const (
 	VHostNameFormat = "%s-vh-%d-%s"
 	// ClusterNameFormat is the format string for Envoy cluster names, becoming `<namespace>-<backend-name>`.
 	ClusterNameFormat = "%s-%s"
-	// RBACPolicyNameFormat is the format string for Envoy RBAC policies, becoming `<namespace>-<backend-name>-rule-<rule-index>`.
-	RBACPolicyNameFormat = "%s-%s-rule-%d"
 	// K8sAPIClusterName is the name of the cluster that points to the Kubernetes API server.
 	K8sAPIClusterName = "kubernetes_api_cluster"
 	// SAAuthTokenHeader is the header used to carry the Kubernetes service account token.
