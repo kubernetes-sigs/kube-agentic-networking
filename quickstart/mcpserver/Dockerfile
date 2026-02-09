@@ -1,4 +1,4 @@
-# Simple Dockerfile that runs the published server package via npx.
+# Simple Dockerfile that runs the published mcp-everything server package via npx.
 # Quick & minimal — no build step, downloads package at container start.
 FROM node:20-slim
 
