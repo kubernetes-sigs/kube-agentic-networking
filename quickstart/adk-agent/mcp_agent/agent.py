@@ -15,6 +15,7 @@
 import logging
 import os
 from google.adk.agents import LlmAgent
+from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
@@ -36,7 +37,9 @@ def get_sa_token():
         return None
 
 
-token = get_sa_token()
+sa_token = get_sa_token()
+envoy_service = os.environ.get("ENVOY_SERVICE")
+hf_model = os.environ.get("HF_MODEL")
 
 # Add these lines to configure logging
 logging.basicConfig(
@@ -44,14 +47,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-envoy_service = os.environ.get("ENVOY_SERVICE")
-
 try:
     local_mcp = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
             url=f"http://{envoy_service}/local/mcp",
             headers={
-                "x-k8s-sa-token": token,
+                "x-k8s-sa-token": sa_token,
             },
         ),
     )
@@ -64,7 +65,7 @@ try:
         connection_params=StreamableHTTPConnectionParams(
             url=f"http://{envoy_service}/remote/mcp",
             headers={
-                "x-k8s-sa-token": token,
+                "x-k8s-sa-token": sa_token,
             },
         ),
     )
@@ -73,10 +74,10 @@ except Exception as e:
     logger.error(f"Error initializing McpToolset remote_mcp: {e}")
 
 root_agent = LlmAgent(
-    model="gemini-2.0-flash",
-    name="github_assistant_agent",
-    # instruction="""You are my GitHub repository assistant.
-    # Use the provided tools to help me manage my GitHub repositories.
-    # No need to ask permission from the user to use the tools. Just use them as needed.""",
+    model=LiteLlm(model=hf_model),
+    name="multi_mcp_agent",
+    instruction="""You are an AI assistant that interacts with the world primarily
+    via the provided MCP tools. When processing a user's prompt, first check both MCPs
+    for available tools before processing it internally.""",
     tools=[local_mcp, remote_mcp],
 )
