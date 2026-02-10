@@ -95,6 +95,7 @@ func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Clus
 
 	// External MCP backend specified via backend.Spec.MCP.Hostname
 	cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_LOGICAL_DNS}
+	cluster.DnsLookupFamily = clusterv3.Cluster_ALL
 	cluster.LoadAssignment = createClusterLoadAssignment(clusterName, *backend.Spec.MCP.Hostname, uint32(backend.Spec.MCP.Port))
 	// TODO: A new field will probably be added to Backend to allow configuring TLS for external MCP backends.
 	// For now, we always enable TLS for external MCP backends.
