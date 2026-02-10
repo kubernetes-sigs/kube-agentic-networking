@@ -88,7 +88,7 @@ spec:
       serviceAccountName: agentic-net-gw-controller-sa
       containers:
         - name: manager
-          image: registry.k8s.io/agentic-net/agentic-networking-controller:v20260130-5d7ea35
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main
           imagePullPolicy: Always
           command:
             - "/agentic-net-controller"
