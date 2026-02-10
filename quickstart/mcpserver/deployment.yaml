@@ -15,10 +15,7 @@ spec:
     spec:
       containers:
         - name: mcp-everything
-          # TODO: Set the image field to a container registry image built with the provided Dockerfile.
-          # Alternatively, wait for us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-everything-mcp to become available.
-          # Reference: https://github.com/kubernetes-sigs/kube-agentic-networking/issues/41
-          # image: <PLACEHOLDER_FOR_MCP_EVERYTHING_IMAGE>
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-everything-mcp:v20260209-3abafff
           ports:
             - containerPort: 3001
           env:
