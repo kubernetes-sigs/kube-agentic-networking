@@ -370,7 +370,7 @@ func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister)
 				},
 			}
 			backendRef := extAuthz.BackendRef
-			clusterName := buildClusterNameForBackendRef(backendRef, ap.GetNamespace())
+			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuthz.ExternalAuthProtocol))
 			switch extAuthz.ExternalAuthProtocol {
 			case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
 				extAuthzProto.Services = &ext_authzv3.ExtAuthz_GrpcService{
@@ -378,7 +378,7 @@ func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister)
 						TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
 							EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{
 								ClusterName: clusterName,
-								Authority:   authorityFromBackendRef(backendRef, ap.GetNamespace()),
+								Authority:   fqdnFromBackendRef(backendRef, ap.GetNamespace()),
 							},
 						},
 					},
@@ -545,20 +545,4 @@ func externalAuthUniqueID(externalAuth *gatewayv1.HTTPExternalAuthFilter) (strin
 	}
 	sha256sum := sha256.Sum256(j)
 	return fmt.Sprintf("%x", sha256sum), nil
-}
-
-func buildClusterNameForBackendRef(ref gatewayv1.BackendObjectReference, defaultNamespace string) string {
-	clusterName := authorityFromBackendRef(ref, defaultNamespace)
-	if port := ref.Port; port != nil {
-		clusterName = fmt.Sprintf("%s-%d", clusterName, *port)
-	}
-	return clusterName
-}
-
-func authorityFromBackendRef(ref gatewayv1.BackendObjectReference, defaultNamespace string) string {
-	ns := defaultNamespace
-	if ref.Namespace != nil {
-		ns = string(*ref.Namespace)
-	}
-	return fmt.Sprintf("%s.%s.svc.cluster.local", ref.Name, ns)
 }
