@@ -24,6 +24,7 @@ import (
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/klog/v2"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 )
@@ -159,7 +160,12 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 				}
 			case agenticv0alpha0.AuthorizationRuleTypeExternalAuth:
 				if rule.Authorization.ExternalAuth != nil {
-					rbacConfig.ShadowRulesStatPrefix = externalAuthzShadowRulePrefix // TODO(guicassolato): Append a hash of externalAuth to distinguish different ext_authz configs that are triggered conditionally based on which AccessPolicy rule matches.
+					hash, err := externalAuthUniqueID(rule.Authorization.ExternalAuth)
+					if err != nil {
+						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
+						continue
+					}
+					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s", externalAuthzShadowRulePrefix, hash)
 					policy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
 					addBuiltPolicyToRBACShadowRules(rbacConfig, policyName, policy)
 					continue

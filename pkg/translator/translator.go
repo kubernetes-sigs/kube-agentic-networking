@@ -269,7 +269,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			}
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
-			filterChain, err := t.translateListenerToFilterChain(listener, routeName)
+			filterChain, err := t.translateListenerToFilterChain(listener, routeName, t.accessPolicyLister)
 			if err != nil {
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
@@ -329,7 +329,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			// For HTTPS, we create one filter chain per listener because they have unique
 			// SNI matches and TLS settings.
 			if listeners[0].Protocol == gatewayv1.HTTPProtocolType {
-				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName)
+				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, t.accessPolicyLister)
 				envoyListener.FilterChains = []*listenerv3.FilterChain{filterChain}
 			}
 			finalEnvoyListeners = append(finalEnvoyListeners, envoyListener)
