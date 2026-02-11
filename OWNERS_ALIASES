@@ -1,0 +1,18 @@
+# See the OWNERS docs: https://git.k8s.io/community/contributors/guide/owners.md
+# This file should be kept in sync with k/org.
+# KAN == Kube Agentic Networking
+
+aliases:
+  # Reference: https://github.com/kubernetes/org/blob/main/OWNERS_ALIASES.
+
+  kube-agentic-networking-maintainers:
+    - LiorLieberman
+    - david-martin
+#    - yuzisun
+
+
+  emeritus-kube-agentic-networking-maintainers:
+    - guicassolato
+
+  kan-reference-implementation-approvers:
+    - haiyanmeng
