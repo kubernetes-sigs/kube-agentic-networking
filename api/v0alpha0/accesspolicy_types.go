@@ -131,6 +131,8 @@ type AuthorizationSourceServiceAccount struct {
 	Name string `json:"name"`
 }
 
+// +kubebuilder:validation:XValidation:message="tools must be specified when type is set to 'InlineTools'",rule="self.type == 'InlineTools' ? has(self.tools) : true"
+// +kubebuilder:validation:XValidation:message="externalAuth must be specified when type is set to 'ExternalAuth'",rule="self.type == 'ExternalAuth' ? has(self.externalAuth) : true"
 type AuthorizationRule struct {
 	// +unionDiscriminator
 	// +required
@@ -140,16 +142,27 @@ type AuthorizationRule struct {
 	// +listType=set
 	// +optional
 	Tools []string `json:"tools,omitempty"`
+
+	// ExternalAuth specifies an external auth filter to be used for authorization.
+	//
+	// Support: Extended
+	//
+	// +optional
+	ExternalAuth *gwapiv1.HTTPExternalAuthFilter `json:"externalAuth,omitempty"`
 }
 
 // AuthorizationRuleType identifies a type of authorization rule.
-// +kubebuilder:validation:Enum=InlineTools
+// +kubebuilder:validation:Enum=InlineTools;ExternalAuth
 type AuthorizationRuleType string
 
 const (
 	// AuthorizationRuleTypeInlineTools is used to identify authorization rules
 	// declared as an inline list of authorized tools.
 	AuthorizationRuleTypeInlineTools AuthorizationRuleType = "InlineTools"
+
+	// AuthorizationRuleTypeExternalAuth is used to identify authorization rules
+	// evaluated by an external auth service.
+	AuthorizationRuleTypeExternalAuth AuthorizationRuleType = "ExternalAuth"
 )
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.
