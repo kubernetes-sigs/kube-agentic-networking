@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: mcp-everything
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-everything-mcp:v20260209-3abafff
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-everything-mcp:main
           ports:
             - containerPort: 3001
           env:

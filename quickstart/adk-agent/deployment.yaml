@@ -22,7 +22,7 @@ spec:
       serviceAccountName: adk-agent-sa
       containers:
         - name: adk-agent
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-adk-agent:v20260210-fbb601d
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-adk-agent:main
           imagePullPolicy: Always
           resources:
             limits:
