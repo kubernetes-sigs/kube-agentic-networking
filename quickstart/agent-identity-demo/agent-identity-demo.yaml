@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-identity-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  namespace: agent-identity-demo
+  labels:
+    app: client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client
+  template:
+    metadata:
+      labels:
+        app: client
+    spec:
+      restartPolicy: Always
+      containers:
+      - name: client
+        image: debian
+        command: ["sleep", "infinity"]
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            add:
+            - NET_BIND_SERVICE
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: agent-identity-mtls
+          mountPath: /run/agent-identity-mtls
+          readOnly: true
+      volumes:
+      - name: agent-identity-mtls
+        projected:
+          sources:
+          - clusterTrustBundle:
+              signerName: kube-agentic-networking.sigs.k8s.io/identity
+              labelSelector:
+                matchLabels:
+                  "kube-agentic-networking.sigs.k8s.io/canarying":             "live"
+                  "kube-agentic-networking.sigs.k8s.io/workload-trust-domain": "cluster.local"
+                  "kube-agentic-networking.sigs.k8s.io/peer-trust-domain":     "cluster.local"
+              path: cluster.local.trust-bundle.pem
+          - podCertificate:
+              signerName: kube-agentic-networking.sigs.k8s.io/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem

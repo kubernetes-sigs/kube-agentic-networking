@@ -6,13 +6,13 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: agentic-net-gw-controller-sa
+  name: agentic-net-controller-sa
   namespace: agentic-net-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: agentic-net-gw-controller-role
+  name: agentic-net-controller-role
 rules:
   # Permissions for reconciling Core/Gateway API/Agentic Networking resources
   - apiGroups: [""]
@@ -37,26 +37,67 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Permissions for the agentic identity signer.
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["podcertificaterequests"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["clustertrustbundles"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["podcertificaterequests/status"]
+    verbs: ["update"]
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["signers"]
+    resourceNames: ["kube-agentic-networking.sigs.k8s.io/*"]
+    verbs: ["sign", "attest"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agentic-net-gw-controller-rolebinding
+  name: agentic-net-controller-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: agentic-net-gw-controller-role
+  name: agentic-net-controller-role
 subjects:
   - kind: ServiceAccount
-    name: agentic-net-gw-controller-sa
+    name: agentic-net-controller-sa
     namespace: agentic-net-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: agentic-net-system
+  name: agentic-net-controller-role
+rules:
+# Permissions for the rendezvous hasher
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["create", "get", "list", "watch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: agentic-net-system
+  name: agentic-net-controller-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentic-net-controller-role
+subjects:
+- kind: ServiceAccount
+  namespace: agentic-net-system
+  name: agentic-net-controller-sa
+---
+# TODO: Remove this ClusterRoleBinding once we migrate away from K8s JWTs for
+# authentication.
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  # TODO: This ClusterRoleBinding needs to be removed after mTLS support is added, which is tracked in https://github.com/kubernetes-sigs/kube-agentic-networking/issues/46
-  name: system:service-account-issuer-discovery
+  name: agentic-net-controller-discovery
 roleRef:
+  roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: system:service-account-issuer-discovery
@@ -71,31 +112,64 @@ subjects:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agentic-net-gw-controller
+  name: agentic-net-controller
   namespace: agentic-net-system
   labels:
-    app: agentic-net-gw-controller
+    app: agentic-net-controller
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: agentic-net-gw-controller
+      app: agentic-net-controller
   template:
     metadata:
       labels:
-        app: agentic-net-gw-controller
+        app: agentic-net-controller
     spec:
-      serviceAccountName: agentic-net-gw-controller-sa
+      serviceAccountName: agentic-net-controller-sa
       containers:
         - name: manager
           image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent # Important for `kind load docker-image` to work
           command:
             - "/agentic-net-controller"
           args:
-            - "--proxy-image=envoyproxy/envoy:v1.36-latest"
-            - "--worker-count=6"
-            - "--v=5" # Set log level to 5 (debug)
+            - --proxy-image=envoyproxy/envoy:v1.36-latest
+            - --worker-count=6
+            - --sharding-pod-namespace=agentic-net-system
+            - --sharding-pod-namespace=$(POD_NAMESPACE)
+            - --sharding-pod-name=$(POD_NAME)
+            - --sharding-pod-uid=$(POD_UID)
+            - --sharding-application-name=agentic-net-controller
+            - --enable-agentic-identity-signer=true
+            - --agentic-identity-trust-domain=cluster.local
+            - --agentic-identity-ca-pool=/run/agentic-identity-ca-state/ca-pool.json
+            - --v=5 # Set log level to 5 (debug)
+          volumeMounts:
+          - name: "agentic-identity-ca-state"
+            mountPath: "/run/agentic-identity-ca-state"
+          env:
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_UID
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.uid
+      volumes:
+      - name: "agentic-identity-ca-state"
+        projected:
+          sources:
+          - secret:
+              name: "agentic-identity-ca-pool"
+              items:
+              - key: "ca-pool.json"
+                path: "ca-pool.json"
   revisionHistoryLimit: 1
 ---
 apiVersion: v1
@@ -110,5 +184,5 @@ spec:
       protocol: TCP
       targetPort: 15001
   selector:
-    app: agentic-net-gw-controller
+    app: agentic-net-controller
   type: ClusterIP
