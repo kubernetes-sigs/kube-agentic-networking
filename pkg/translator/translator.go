@@ -19,13 +19,18 @@ package translator
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	httpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	envoyproxytypes "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -146,12 +151,12 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 	// Start building Envoy config using only the pre-validated and accepted routes
 	envoyRoutes := []envoyproxytypes.Resource{}
-	envoyClusters := make(map[string]envoyproxytypes.Resource)
 	allListenerStatuses := make(map[gatewayv1.SectionName]gatewayv1.ListenerStatus)
 
-	// TODO(guicassolato): Add cluster definitions for each externalAuth backend referenced in AccessPolicies
+	// 3. Build Envoy Clusters for any external auth configs referenced by AccessPolicies
+	envoyClusters := buildExtAuthzBackendClusters(t.accessPolicyLister)
 
-	// 3. Group Gateway listeners by port
+	// 4. Group Gateway listeners by port
 	listenersByPort := make(map[gatewayv1.PortNumber][]gatewayv1.Listener)
 	for _, listener := range gateway.Spec.Listeners {
 		listenersByPort[listener.Port] = append(listenersByPort[listener.Port], listener)
@@ -161,7 +166,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	listenerValidationConditions := t.validateListeners(gateway)
 
 	finalEnvoyListeners := []envoyproxytypes.Resource{}
-	// 4. For each port group, process Listeners (build routes & filter chains)
+	// 5. For each port group, process Listeners (build routes & filter chains)
 	for port, listeners := range listenersByPort {
 		// This slice will hold the filter chains.
 		var filterChains []*listenerv3.FilterChain
@@ -213,7 +218,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 			switch listener.Protocol {
 			case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-				// 5. For each accepted HTTPRoute for this listener -> translate to Envoy routes
+				// 6. For each accepted HTTPRoute for this listener -> translate to Envoy routes
 				for _, httpRoute := range routesByListener[listener.Name] {
 					routes, allValidBackends, resolvedRefsCondition := t.translateHTTPRouteToEnvoyRoutes(httpRoute)
 
@@ -543,4 +548,77 @@ func createClusterLoadAssignment(clusterName, serviceHost string, servicePort ui
 			},
 		},
 	}
+}
+
+func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolicyLister) map[string]envoyproxytypes.Resource {
+	clusters := make(map[string]envoyproxytypes.Resource)
+	accessPolicies, err := accessPolicyLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("failed to list AccessPolicies: %v", err)
+		return clusters
+	}
+
+	for _, ap := range accessPolicies {
+		for _, rule := range ap.Spec.Rules {
+			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
+				continue
+			}
+			extAuth := rule.Authorization.ExternalAuth
+			backendRef := extAuth.BackendRef
+			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuth.ExternalAuthProtocol))
+			if _, ok := clusters[clusterName]; ok {
+				continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
+			}
+			serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
+			servicePort := uint32(5000) // default port if not specified
+			if backendRef.Port != nil {
+				servicePort = uint32(*backendRef.Port)
+			}
+			cluster := &clusterv3.Cluster{
+				Name:                 clusterName,
+				ConnectTimeout:       durationpb.New(defaultConnectTimeout),
+				ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
+				LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
+				LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
+			}
+			switch extAuth.ExternalAuthProtocol {
+			case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
+				opts := &httpv3.HttpProtocolOptions{
+					UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
+						ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
+							ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+								Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
+							},
+						},
+					},
+				}
+				optsAny, err := anypb.New(opts)
+				if err != nil {
+					klog.Errorf("failed to marshal typed extension config for cluster %s: %v", clusterName, err)
+					continue
+				}
+				cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+					string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
+				}
+			}
+			clusters[clusterName] = cluster
+		}
+	}
+	return clusters
+}
+
+func clusterNameForBackendRefAndProtocol(backendRef gatewayv1.BackendObjectReference, defaultNamespace, protocol string) string {
+	clusterName := fmt.Sprintf("%s-%s", fqdnFromBackendRef(backendRef, defaultNamespace), strings.ToLower(protocol))
+	if port := backendRef.Port; port != nil {
+		clusterName = fmt.Sprintf("%s:%d", clusterName, *port)
+	}
+	return clusterName
+}
+
+func fqdnFromBackendRef(ref gatewayv1.BackendObjectReference, defaultNamespace string) string {
+	ns := defaultNamespace
+	if ref.Namespace != nil {
+		ns = string(*ref.Namespace)
+	}
+	return fmt.Sprintf("%s.%s.svc.cluster.local", ref.Name, ns)
 }
