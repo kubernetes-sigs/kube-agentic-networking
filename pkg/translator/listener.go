@@ -272,6 +272,7 @@ func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, jwtIssuer st
 			},
 		},
 		HttpFilters: httpFilters,
+		// TODO(guicassolato): Add tracing config (?) - to signal from RBAC shadow rules that we need to call an ext_authz service - TBC: maybe not needed
 	}
 	hcmAny, err := anypb.New(hcmConfig)
 	if err != nil {
@@ -343,10 +344,13 @@ func buildHTTPFilters(issuer string) ([]*hcm.HttpFilter, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	rbacFilter, err := buildRBACFilter()
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO(guicassolato): Build ext_authz filter configs - one per unique externalAuth config referenced in AccessPolicies
 
 	routerFilter, err := buildRouterFilter()
 	if err != nil {
