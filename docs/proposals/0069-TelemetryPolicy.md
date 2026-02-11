@@ -35,7 +35,7 @@ In an Agentic Mesh:
 * **Cost is Volatile**: Usage is measured in tokens, not just requests. A single HTTP 200 OK could cost $0.01 or $10.00 depending on the prompt and model used.
 * **Context is King**: Debugging requires knowing the semantic context: Which Model? Which Prompt? Which tool?
 
-Existing telemetry policies are unaware of the Generative AI semantic conventions. They see an opaque TCP stream or HTTP POST. Without a standardized API to 
+Existing telemetry policies are unaware of the emerging Generative AI semantic conventions. They see an opaque TCP stream or HTTP POST. Without a standardized API to 
 configure the extraction and export of these attributes, the “Agentic Mesh” will remain a black box, increasing governance and cost control challenges.
 
 ## Design Objectives
