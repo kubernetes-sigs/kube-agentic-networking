@@ -15,10 +15,3 @@ aliases:
 
   kan-reference-implementation-approvers:
     - haiyanmeng
-
-<!-- Uncomment once k-sigs-membership is merged -->
-  <!-- kan-doc-approvers:
-    - rubambiza
-
-  kan-doc-reviewers:
-    - evaline-ju -->
