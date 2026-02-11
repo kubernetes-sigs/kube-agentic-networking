@@ -297,6 +297,7 @@ func (t *Translator) buildHTTPRouteAction(namespace string,
 			klog.Errorf("Failed to build per-cluster RBAC config for backend %s/%s: %v", backend.Namespace, backend.Name, err)
 			// Continue without RBAC config for this cluster if it fails to build.
 		}
+		// TODO(guicassolato): Add per-route ext_authz config - to populate context_metadata with info about which AccessPolicy rule matched
 		weightedClusters.Clusters = append(weightedClusters.Clusters, clusterWeight)
 	}
 

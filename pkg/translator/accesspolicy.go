@@ -48,12 +48,16 @@ const (
 	// spiffeIDFormat is the standard SPIFFE ID format for Kubernetes workloads.
 	// Format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
 	spiffeIDFormat = "spiffe://%s/ns/%s/sa/%s"
+
+	// externalAuthzShadowRulePrefix is the prefix for stat names of shadow rules generated from AccessPolicies with ExternalAuthz.
+	// This allows us to monitor the presence of RBAC rules that are evaluated (though not enforced), with the purpose of signaling the need to call an ext_authz service.
+	externalAuthzShadowRulePrefix = "access_policy_ext_authz_"
 )
 
 // rbacConfigFromAccessPolicy generates all RBAC policies for a given backend, including common policies
 // and those derived from AccessPolicy resources.
 func (t *Translator) rbacConfigFromAccessPolicy(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (*rbacv3.RBAC, error) {
-	var rbacPolicies = make(map[string]*rbacconfigv3.Policy)
+	rbacConfig := &rbacv3.RBAC{}
 
 	// Add AuthPolicy-derived RBAC policies.
 	// Currently, we assume only one AuthPolicy targets a given backend.
@@ -62,21 +66,15 @@ func (t *Translator) rbacConfigFromAccessPolicy(accessPolicyLister agenticlister
 		return nil, err
 	}
 	if accessPolicy != nil {
-		rbacPolicies = t.translateAccessPolicyToRBAC(accessPolicy)
+		rbacConfig = t.translatesAccessPolicyToRBAC(accessPolicy)
 	}
+
 	// It's deny-by-default (a.k.a ALLOW action), we explicitly allow necessary
 	// MCP operations for all backends. These policies are essential for MCP
 	// session management and tool initialization.
-	rbacPolicies[allowMCPSessionClosePolicyName] = buildAllowMCPSessionClosePolicy()
-	rbacPolicies[allowAnyoneToInitializeAndListToolsPolicyName] = buildAllowAnyoneToInitializeAndListToolsPolicy()
-	rbacPolicies[allowHTTPGet] = buildAllowHTTPGetPolicy()
-
-	rbacConfig := &rbacv3.RBAC{
-		Rules: &rbacconfigv3.RBAC{
-			Action:   rbacconfigv3.RBAC_ALLOW,
-			Policies: rbacPolicies,
-		},
-	}
+	addBuiltPolicyToRBACRules(rbacConfig, allowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
+	addBuiltPolicyToRBACRules(rbacConfig, allowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
+	addBuiltPolicyToRBACRules(rbacConfig, allowHTTPGet, buildAllowHTTPGetPolicy())
 
 	return rbacConfig, nil
 }
@@ -109,8 +107,8 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 	return fmt.Sprintf(spiffeIDFormat, trustDomain, namespace, saName)
 }
 
-func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) map[string]*rbacconfigv3.Policy {
-	policies := make(map[string]*rbacconfigv3.Policy)
+func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
+	rbacConfig := &rbacv3.RBAC{}
 
 	for _, rule := range accessPolicy.Spec.Rules {
 		policyName := rule.Name
@@ -145,23 +143,56 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 			})
 		}
 
-		// Build permissions based on type if specified
-		var permissions []*rbacconfigv3.Permission
+		if len(principalIDs) == 0 {
+			principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
+		}
+
+		policy := &rbacconfigv3.Policy{
+			Principals: principalIDs,
+		}
+
 		if rule.Authorization != nil {
 			switch rule.Authorization.Type {
 			case agenticv0alpha0.AuthorizationRuleTypeInlineTools:
 				if permission := translateInlineToolsToRBACPermission(rule.Authorization.Tools); permission != nil {
-					permissions = append(permissions, permission)
+					policy.Permissions = []*rbacconfigv3.Permission{permission}
+				}
+			case agenticv0alpha0.AuthorizationRuleTypeExternalAuth:
+				if rule.Authorization.ExternalAuth != nil {
+					rbacConfig.ShadowRulesStatPrefix = externalAuthzShadowRulePrefix // TODO(guicassolato): Append a hash of externalAuth to distinguish different ext_authz configs that are triggered conditionally based on which AccessPolicy rule matches.
+					policy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
+					addBuiltPolicyToRBACShadowRules(rbacConfig, policyName, policy)
+					continue
 				}
 			}
 		}
 
-		policies[policyName] = &rbacconfigv3.Policy{
-			Principals:  principalIDs,
-			Permissions: permissions,
+		addBuiltPolicyToRBACRules(rbacConfig, policyName, policy)
+	}
+
+	return rbacConfig
+}
+
+// addBuiltPolicyToRBACRules mutates the RBAC config by adding the given policy to the Rules section with the specified name.
+func addBuiltPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
+	if rbacConfig.Rules == nil {
+		rbacConfig.Rules = &rbacconfigv3.RBAC{
+			Action:   rbacconfigv3.RBAC_ALLOW,
+			Policies: map[string]*rbacconfigv3.Policy{},
 		}
 	}
-	return policies
+	rbacConfig.Rules.Policies[policyName] = policy
+}
+
+// addBuiltPolicyToRBACRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
+func addBuiltPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
+	if rbacConfig.ShadowRules == nil {
+		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
+			Action:   rbacconfigv3.RBAC_DENY,
+			Policies: map[string]*rbacconfigv3.Policy{},
+		}
+	}
+	rbacConfig.ShadowRules.Policies[policyName] = policy
 }
 
 func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permission {
@@ -251,13 +282,22 @@ func buildAllowMCPSessionClosePolicy() *rbacconfigv3.Policy {
 				},
 			},
 		},
-		Permissions: []*rbacconfigv3.Permission{
-			{
-				// If the principal (the request's identity) matches, allow it.
-				Rule: &rbacconfigv3.Permission_Any{
-					Any: true,
-				},
-			},
+		Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+	}
+}
+
+func buildAnyPermission() *rbacconfigv3.Permission {
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_Any{
+			Any: true,
+		},
+	}
+}
+
+func buildAnyPrincipal() *rbacconfigv3.Principal {
+	return &rbacconfigv3.Principal{
+		Identifier: &rbacconfigv3.Principal_Any{
+			Any: true,
 		},
 	}
 }
@@ -266,13 +306,7 @@ func buildAllowMCPSessionClosePolicy() *rbacconfigv3.Policy {
 // initialize a session and list available tools.
 func buildAllowAnyoneToInitializeAndListToolsPolicy() *rbacconfigv3.Policy {
 	return &rbacconfigv3.Policy{
-		Principals: []*rbacconfigv3.Principal{
-			{
-				Identifier: &rbacconfigv3.Principal_Any{
-					Any: true,
-				},
-			},
-		},
+		Principals: []*rbacconfigv3.Principal{buildAnyPrincipal()},
 		Permissions: []*rbacconfigv3.Permission{
 			{
 				Rule: &rbacconfigv3.Permission_AndRules{
@@ -314,13 +348,7 @@ func buildAllowAnyoneToInitializeAndListToolsPolicy() *rbacconfigv3.Policy {
 // https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http
 func buildAllowHTTPGetPolicy() *rbacconfigv3.Policy {
 	return &rbacconfigv3.Policy{
-		Principals: []*rbacconfigv3.Principal{
-			{
-				Identifier: &rbacconfigv3.Principal_Any{
-					Any: true,
-				},
-			},
-		},
+		Principals: []*rbacconfigv3.Principal{buildAnyPrincipal()},
 		Permissions: []*rbacconfigv3.Permission{
 			{
 				Rule: &rbacconfigv3.Permission_Header{

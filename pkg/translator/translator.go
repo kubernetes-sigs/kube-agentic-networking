@@ -149,6 +149,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	envoyClusters := make(map[string]envoyproxytypes.Resource)
 	allListenerStatuses := make(map[gatewayv1.SectionName]gatewayv1.ListenerStatus)
 
+	// TODO(guicassolato): Add cluster definitions for each externalAuth backend referenced in AccessPolicies
+
 	// 3. Group Gateway listeners by port
 	listenersByPort := make(map[gatewayv1.PortNumber][]gatewayv1.Listener)
 	for _, listener := range gateway.Spec.Listeners {

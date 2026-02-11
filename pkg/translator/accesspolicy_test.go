@@ -21,15 +21,21 @@ import (
 
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
+const testTrustDomain = "cluster.local"
+
+type expectedPrincipals []string
+
 func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 	tests := []struct {
-		name         string
-		accessPolicy *agenticv0alpha0.XAccessPolicy
-		backend      *agenticv0alpha0.XBackend
-		expectedKeys []string
+		name                string
+		accessPolicy        *agenticv0alpha0.XAccessPolicy
+		backend             *agenticv0alpha0.XBackend
+		expectedRules       map[string]expectedPrincipals
+		expectedShadowRules map[string]expectedPrincipals
 	}{
 		{
 			name: "single rule with specific name",
@@ -59,7 +65,9 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					Name:      "backend-1",
 				},
 			},
-			expectedKeys: []string{"allow-all"},
+			expectedRules: map[string]expectedPrincipals{
+				"allow-all": {"spiffe://example.com/ns/default/sa/default"},
+			},
 		},
 		{
 			name: "multiple rules",
@@ -99,7 +107,10 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					Name:      "backend-1",
 				},
 			},
-			expectedKeys: []string{"rule-1", "rule-2"},
+			expectedRules: map[string]expectedPrincipals{
+				"rule-1": {"spiffe://example.com/ns/default/sa/foo"},
+				"rule-2": {"spiffe://example.com/ns/default/sa/bar"},
+			},
 		},
 		{
 			name: "service account mapping",
@@ -123,31 +134,96 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					},
 				},
 			},
-			backend:      &agenticv0alpha0.XBackend{},
-			expectedKeys: []string{"allow-sa"},
+			backend: &agenticv0alpha0.XBackend{},
+			expectedRules: map[string]expectedPrincipals{
+				"allow-sa": {convertSAtoSPIFFEID(testTrustDomain, "my-ns", "my-sa")},
+			},
+		},
+		{
+			name: "inline tools rule",
+			accessPolicy: &agenticv0alpha0.XAccessPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "policy-1",
+				},
+				Spec: agenticv0alpha0.AccessPolicySpec{
+					Rules: []agenticv0alpha0.AccessRule{
+						{
+							Name: "allow-tools-a-and-b",
+							Source: agenticv0alpha0.Source{
+								Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE,
+								SPIFFE: func() *agenticv0alpha0.AuthorizationSourceSPIFFE {
+									s := agenticv0alpha0.AuthorizationSourceSPIFFE("spiffe://example.com/ns/default/sa/default")
+									return &s
+								}(),
+							},
+							Authorization: &agenticv0alpha0.AuthorizationRule{
+								Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+								Tools: []string{"tool-a", "tool-b"},
+							},
+						},
+					},
+				},
+			},
+			backend: &agenticv0alpha0.XBackend{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "backend-1",
+				},
+			},
+			expectedRules: map[string]expectedPrincipals{
+				"allow-tools-a-and-b": {"spiffe://example.com/ns/default/sa/default"},
+			},
+		},
+		{
+			name: "ext_authz rule",
+			accessPolicy: &agenticv0alpha0.XAccessPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "policy-1",
+				},
+				Spec: agenticv0alpha0.AccessPolicySpec{
+					Rules: []agenticv0alpha0.AccessRule{
+						{
+							Name: "ext-authz-rule",
+							Source: agenticv0alpha0.Source{
+								Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE,
+								SPIFFE: func() *agenticv0alpha0.AuthorizationSourceSPIFFE {
+									s := agenticv0alpha0.AuthorizationSourceSPIFFE("spiffe://example.com/ns/default/sa/default")
+									return &s
+								}(),
+							},
+							Authorization: &agenticv0alpha0.AuthorizationRule{
+								Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+								ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
+									ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
+									BackendRef: gwapiv1.BackendObjectReference{
+										Name: "ext-authz-backend",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			backend: &agenticv0alpha0.XBackend{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "backend-1",
+				},
+			},
+			expectedShadowRules: map[string]expectedPrincipals{
+				"ext-authz-rule": {"spiffe://example.com/ns/default/sa/default"},
+			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tr := &Translator{agenticIdentityTrustDomain: "cluster.local"}
-			policies := tr.translateAccessPolicyToRBAC(tc.accessPolicy)
-			if len(policies) != len(tc.expectedKeys) {
-				t.Errorf("expected %d policies, got %d", len(tc.expectedKeys), len(policies))
-			}
-
-			for _, key := range tc.expectedKeys {
-				verifyAccessRulePolicy(t, tc.accessPolicy, policies, key, tr.agenticIdentityTrustDomain)
-			}
-
-			// Optional: print keys found if failure
-			if t.Failed() {
-				found := make([]string, 0, len(policies))
-				for k := range policies {
-					found = append(found, k)
-				}
-				t.Logf("Found keys: %v", found)
-			}
+			tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
+			rbacConfig := tr.translatesAccessPolicyToRBAC(tc.accessPolicy)
+			verifyRBACRulesContainPolicyNames(t, rbacConfig.GetRules(), tc.expectedRules)
+			verifyRBACRulesContainPolicyNames(t, rbacConfig.GetShadowRules(), tc.expectedShadowRules)
 		})
 	}
 }
@@ -181,53 +257,42 @@ func TestConvertSAtoSPIFFEID(t *testing.T) {
 	}
 }
 
-func verifyAccessRulePolicy(t *testing.T, policy *agenticv0alpha0.XAccessPolicy, rbacPolicies map[string]*rbacconfigv3.Policy, ruleName, trustDomain string) {
-	rbacPolicy, ok := rbacPolicies[ruleName]
-	if !ok {
-		t.Errorf("expected policy with key %q not found", ruleName)
-		return
+func verifyRBACRulesContainPolicyNames(t *testing.T, rules *rbacconfigv3.RBAC, expectedRules map[string]expectedPrincipals) {
+	policies := rules.GetPolicies()
+	if len(policies) != len(expectedRules) {
+		t.Errorf("expected %d policies, got %d", len(expectedRules), len(policies))
 	}
-
-	var rule *agenticv0alpha0.AccessRule
-	for i := range policy.Spec.Rules {
-		if policy.Spec.Rules[i].Name == ruleName {
-			rule = &policy.Spec.Rules[i]
-			break
+	for key, expectedPrincipals := range expectedRules {
+		if _, ok := policies[key]; !ok {
+			t.Errorf("expected policy with key %q not found", key)
 		}
-	}
-	if rule == nil {
-		t.Errorf("rule %q not found in AccessPolicy", ruleName)
-		return
-	}
-
-	expectedPrincipal := ""
-	switch rule.Source.Type {
-	case agenticv0alpha0.AuthorizationSourceTypeSPIFFE:
-		if rule.Source.SPIFFE != nil {
-			expectedPrincipal = string(*rule.Source.SPIFFE)
-		}
-	case agenticv0alpha0.AuthorizationSourceTypeServiceAccount:
-		if rule.Source.ServiceAccount != nil {
-			ns := rule.Source.ServiceAccount.Namespace
-			if ns == "" {
-				ns = policy.Namespace
-			}
-			// Convert K8s ServiceAccount to SPIFFE ID
-			expectedPrincipal = convertSAtoSPIFFEID(trustDomain, ns, rule.Source.ServiceAccount.Name)
+		if expectedPrincipals != nil {
+			verifyRBACPolicyPrincipals(t, policies[key], expectedPrincipals)
 		}
 	}
 
-	if expectedPrincipal != "" {
-		found := false
-		for _, p := range rbacPolicy.Principals {
-			auth := p.GetAuthenticated()
-			if auth != nil && auth.PrincipalName.GetExact() == expectedPrincipal {
-				found = true
-				break
-			}
+	// Optional: print keys found if failure
+	if t.Failed() {
+		found := make([]string, 0, len(policies))
+		for k := range policies {
+			found = append(found, k)
 		}
-		if !found {
-			t.Errorf("rule %q: did not find expected principal %q", ruleName, expectedPrincipal)
+		t.Logf("Found keys: %v", found)
+	}
+}
+
+func verifyRBACPolicyPrincipals(t *testing.T, policy *rbacconfigv3.Policy, expectedPrincipals expectedPrincipals) {
+	foundPrincipals := make(map[string]bool)
+	for _, p := range policy.Principals {
+		auth := p.GetAuthenticated()
+		if auth != nil {
+			foundPrincipals[auth.PrincipalName.GetExact()] = true
+		}
+	}
+
+	for _, expected := range expectedPrincipals {
+		if !foundPrincipals[expected] {
+			t.Errorf("expected principal %q not found in policy", expected)
 		}
 	}
 }
