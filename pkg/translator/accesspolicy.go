@@ -48,7 +48,7 @@ const (
 
 	// externalAuthzShadowRulePrefix is the prefix for stat names of shadow rules generated from AccessPolicies with ExternalAuthz.
 	// This allows us to monitor the presence of RBAC rules that are evaluated (though not enforced), with the purpose of signaling the need to call an ext_authz service.
-	externalAuthzShadowRulePrefix = "access_policy_ext_authz_"
+	externalAuthzShadowRulePrefix = "access_policy_ext_authz"
 )
 
 // rbacConfigFromAccessPolicy generates all RBAC policies for a given backend, including common policies
@@ -162,10 +162,9 @@ func translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *
 						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
 						continue
 					}
-					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s", externalAuthzShadowRulePrefix, hash)
+					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash)
 					policy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
 					addBuiltPolicyToRBACShadowRules(rbacConfig, policyName, policy)
-					continue
 				}
 			}
 		}
