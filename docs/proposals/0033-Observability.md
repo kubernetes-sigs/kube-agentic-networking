@@ -4,125 +4,47 @@ Status: Provisional<br/>
 
 # Observability in Agentic Networking
 
-This proposal addresses observability challenges in agentic systems, where agents use LLMs and tools to autonomously solve user goals. It proposes leveraging distributed tracing standards (W3C Trace Context) with standardized agent-specific attributes to enable comprehensive auditing and debugging of agent execution flows, including user delegation context and permission enforcement.
+This proposal defines tracing schemas for agentic systems, specifically the structure of traces emitted at runtime. It focuses on proxy-like workloads in Kubernetes environments, including sidecars and gateways. APIs for configuring observability (e.g., Kubernetes CRDs) will be addressed in subsequent proposals.
 
-This proposal focuses on defining tracing schemas, specifically the structure of traces that will be emitted at runtime of agentic systems. APIs such as Kubernetes CRDs to allow users to configure traces and other observability data such as metrics and logs will be addressed in subsequent proposals. Here, we also particularly focus on tracing for proxy-like workloads in Kubernetes environments, including but not limited to sidecars and gateways.
+## OpenTelemetry Semantic Conventions
 
-Generally this proposal recommends following existing OpenTelemetry semantic conventions. New permission and AccessPolicy attributes are also proposed here and can be considered for inclusion in an existing or new OpenTelemetry semantic convention registry.
+Follow these OpenTelemetry semantic conventions:
 
-## Problem space
-
-Users of Agentic systems can set goals for an Agent to solve. For example, "Generate a sales report for Q4 and share it with the leadership team". Agents use LLMs and tools in a loop to reach the goal. This will require tools like 'database query', 'report generation', and 'email/messaging'. LLM access will be required for things like analyzing sales data patterns, formatting the report, and composing the distribution message.
-
-If something goes wrong while the Agent is solving the goal, such as the Agent attempting to access restricted financial data beyond its permitted scope, or trying to share the report with unauthorized recipients, it's necessary to understand where the Agent went wrong and why.
-
-This requires solving several observability challenges:
-- How to trace an agent's entire execution flow from the initial user request through to completion
-- How to reference which LLM calls were made, what prompts were sent, and what responses were received. For security and compliance, we recommend not capturing full prompts and responses in logs. Trace IDs could be used as pointers, and prompts could be identified via hashes or IDs, with full content retrieved only as necessary through appropriate access controls.
-- How to log tool invocations with sufficient context about why they were called and what permissions were checked
-- How to provide detailed information when a permission check fails, including which AccessPolicy rule caused the failure
-- How to correlate agent actions back to the original user who delegated authority
-- How to standardize the format for logging agent-related events across different components (agent runtime, LLM providers, MCP servers, etc.)
-
-## Possible solution
-
-The solution should provide:
-- A holistic view of the entire agent flow, from the initial user goal to the final response
-- Ability to drill down into each leg of the interaction: user-to-agent requests, agent-to-LLM requests, and agent-to-tool requests
-- Standardized logging format that includes user identity, agent identity, and permission check results
-- When a tool request fails due to an AccessPolicy, the audit trail should show the specific AccessPolicy and rule that caused the failure
-
-### Distributed Tracing Foundation
-
-All solutions leverage distributed tracing standards (W3C Trace Context) to track agent execution flows. The trace starts at the user-facing entry point (e.g., API gateway, agent controller) when the user submits their goal. The W3C `traceparent` header provides:
-- **Trace ID**: A unique identifier for the entire agent session (from initial user goal to completion), propagated across all components
-- **Span ID**: A unique identifier for each individual operation (e.g., a single LLM call or tool invocation)
-
-Each component (agent runtime, LLM providers, MCP servers) propagates the trace context via standard headers or request attributes (e.g. `request.params._meta`) and emits spans for its operations. All spans share the same trace ID, allowing the full flow to be reconstructed.
-
-### Solution Options
-
-There are three approaches to propagating and logging observability context, each with different trade-offs:
-
-#### Option 1: Minimal Propagation (Trace ID Only)
-
-Propagate only the W3C `traceparent` header (trace ID + span ID). All contextual information (user identity, agent identity, permissions, etc.) is logged only in the root span at the entry point.
-
-**Pros:**
-- Minimal network/header size overhead
-- Single source of truth for identity
-- Better privacy - sensitive identifiers only at entry point
-- Simpler component implementation
-
-**Cons:**
-- Requires a tracing and/or logging backend with join capabilities to correlate spans with root context
-
-#### Option 2: Full Context Propagation (Everything in Baggage)
-
-Propagate all contextual information (user.id (obfuscated), agent.id, tool.name, permission.policy, etc.) via W3C Baggage header or custom headers on every request.
-
-**Pros:**
-- Each span is self-contained and independently queryable
-- Works with any (and no) observability backend
-
-**Cons:**
-- Additional network overhead, potentially reaching header size limits
-- Data duplication - same values replicated across potentially thousands of spans
-- Privacy risk - sensitive identifiers propagated to all components. Though this can be mitigated via obfuscation.
-- More complex propagation logic in each component
-- Not all context is relevant to all components (e.g., permission.rule not needed by LLM providers)
-
-#### Option 3: Hybrid Approach with Critical Baggage (Recommended)
-
-Propagate only **critical cross-cutting context** via W3C Baggage that components need for runtime decisions or independent queryability. Each component enriches spans with **component-specific attributes** relevant to their operations.
-
-**What to propagate via W3C Baggage:**
-- `user.id`: Identifier for the user who delegated authority (needed for authorization, rate limiting, auditing), obfuscated if needed.
-- `agent.id`: Identifier for the agent executing operations (needed for authorization, attribution, auditing)
-
-Note: W3C Baggage is used instead of `tracestate` because user and agent identities are application-level context that components need for runtime decisions (authorization, rate limiting), not tracing vendor metadata. The W3C Baggage specification is explicitly designed for "application-defined properties" that flow with requests.
-
-**What each component emits as span attributes:**
-
-We propose following OpenTelemetry semantic conventions:
 - [GenAI Agent spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/) for agent runtime spans
-- [GenAI LLM spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/) for LLM provider spans
+- [GenAI LLM spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/llm-spans/) for LLM provider spans
 - [Model Context Protocol (MCP)](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/) for tool/MCP server spans
-- [Security rule attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/security-rule/) for policy enforcement spans
+- [Security rule attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/security-rule/) for policy enforcement and guardrails
 - [Error attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/) for error handling
 
-Security rule attributes can be used for permission checks and AccessPolicy enforcement and can be generalized to other guardrails checks in the following way:
-- `security_rule.ruleset.name` - Name or identifier of the policy/AccessPolicy evaluated
-- `security_rule.name` - Specific rule within the policy/AccessPolicy that determined the outcome
-- `security_rule.category` - Category of rule (e.g., "permission")
+## Context Propagation
 
-Where the OpenTelemetry spec does not define attributes for permission enforcement outcomes, we recommend extending `event` conventions with:
-- `event.action`: Action to be taken due to the check (`allow` or `deny`)
-- `event.outcome`: Outcome of the check itself (`success`, `failure`, `unknown`)
+Use [W3C Trace Context](https://www.w3.org/TR/trace-context/) for distributed tracing and [W3C Baggage](https://www.w3.org/TR/baggage/) to propagate:
 
-Tracing retries in agentic systems will be complicated by changing parameters. For example, an agent may "retry" a tool call with different tool call parameters, a slightly altered prompt or context, or try to call an entirely alternate tool. Use a common trace ID to link retry attempts. Reference updated prompts by hash to avoid full logging.
+- `user.id`: Identifier for the user who delegated authority (obfuscated if needed)
+- `agent.id`: Identifier for the agent executing operations
 
-**Pros:**
-- Balances queryability with network efficiency
-- Spans remain queryable by the most important dimensions without backend joins
-- Backend can still enrich or aggregate as needed
+W3C Baggage is used instead of `tracestate` because these are application-level identifiers needed for runtime decisions (authorization, rate limiting), not tracing vendor metadata.
 
-**Cons:**
-- Requires deciding what qualifies as "critical" (though user.id and agent.id are clear choices)
-- Still some propagation overhead compared to Option 1
+## Proposed Extensions
 
-**Why this is recommended:**
-1. User and agent identities are genuinely cross-cutting concerns needed for authorization and auditing across all components
-2. These identifiers are typically small (UUIDs or short strings)
-3. Component-specific details (tool names, permission rules, LLM tokens) are only relevant where they occur and shouldn't be propagated
-4. Enables independent span queries for the most common use cases (filtering by user or agent) without requiring backend correlation
-5. Maintains privacy by not propagating verbose or sensitive data unnecessarily
+Where OpenTelemetry does not define attributes for permission enforcement outcomes, we propose:
 
-### Examples
+| Attribute | Values | Description |
+|-----------|--------|-------------|
+| `event.action` | `allow`, `deny` | Action taken due to the policy check |
+| `event.outcome` | `success`, `failure`, `unknown` | Outcome of the check itself |
 
-The shown span attributes utilize the example span attributes listed in previous sections but are not comprehensive of what attributes can be included. Some additional span attributes beyond those proposed above have been included to facilitate understanding of the examples but are not necessary for implementations.
+These can be considered for inclusion in an existing or new OpenTelemetry semantic convention registry.
 
-#### Access policy enforcement
+## Retries
+
+Agentic retries often involve changed parameters (different tool arguments, altered prompts, or alternate tools). Use a common trace ID to link retry attempts. Reference prompts by hash to avoid full logging.
+
+## Examples
+
+These examples illustrate how the conventions apply. Span attributes shown are not comprehensive; see the linked OpenTelemetry specifications for complete attribute definitions.
+
+### Access policy enforcement
 
 This shows a trace example of a permission rule checked prior to tool access through a gateway.
 
@@ -220,7 +142,7 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
    🔒 Permission denied: insufficient privileges for customer_data.delete
 ```
 
-#### Guardrailing
+### Guardrailing
 
 This shows a trace example of a guardrail blocking a request at a gateway.
 
