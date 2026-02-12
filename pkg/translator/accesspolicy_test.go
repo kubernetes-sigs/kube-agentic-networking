@@ -212,6 +212,9 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					Name:      "backend-1",
 				},
 			},
+			expectedRules: map[string]expectedPrincipals{
+				"ext-authz-rule": {"spiffe://example.com/ns/default/sa/default"},
+			},
 			expectedShadowRules: map[string]expectedPrincipals{
 				"ext-authz-rule": {"spiffe://example.com/ns/default/sa/default"},
 			},
