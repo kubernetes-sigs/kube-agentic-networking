@@ -56,6 +56,8 @@ const (
 	// Cache the keys for 1 hour to avoid spamming the API server
 	jwksCacheDuration = 1 * time.Hour
 	uriTimeout        = 5 * time.Second
+
+	wellknownJWTAuthnFilter = "envoy.filters.http.jwt_authn"
 )
 
 // setListenerCondition is a helper to safely set a condition on a listener's status
@@ -407,6 +409,7 @@ func buildJwtAuthnFilter(issuer string) (*hcm.HttpFilter, error) {
 						HeaderName: constants.UserRoleHeader,
 					},
 				},
+				PayloadInMetadata: "sa_token",
 			},
 		},
 		Rules: []*jwt_authnv3.RequirementRule{
@@ -431,7 +434,7 @@ func buildJwtAuthnFilter(issuer string) (*hcm.HttpFilter, error) {
 	}
 
 	return &hcm.HttpFilter{
-		Name: "envoy.filters.http.jwt_authn",
+		Name: wellknownJWTAuthnFilter,
 		ConfigType: &hcm.HttpFilter_TypedConfig{
 			TypedConfig: jwtAny,
 		},
@@ -507,6 +510,9 @@ func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister)
 					Value: &matcherv3.ValueMatcher{
 						MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
 					},
+				},
+				MetadataContextNamespaces: []string{
+					wellknownJWTAuthnFilter,
 				},
 			}
 			backendRef := extAuthz.BackendRef
