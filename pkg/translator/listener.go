@@ -47,7 +47,11 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
-const uriTimeout = 5 * time.Second
+const (
+	uriTimeout = 5 * time.Second
+
+	wellknownJWTAuthnFilter = "envoy.filters.http.jwt_authn"
+)
 
 // setListenerCondition is a helper to safely set a condition on a listener's status
 // in a map of conditions.
@@ -366,6 +370,9 @@ func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister)
 					Value: &matcherv3.ValueMatcher{
 						MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
 					},
+				},
+				MetadataContextNamespaces: []string{
+					wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
 				},
 			}
 			backendRef := extAuthz.BackendRef
