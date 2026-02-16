@@ -115,6 +115,7 @@ func main() {
 		sharedGwInformers.Gateway().V1().GatewayClasses(),
 		sharedGwInformers.Gateway().V1().Gateways(),
 		sharedGwInformers.Gateway().V1().HTTPRoutes(),
+		sharedGwInformers.Gateway().V1beta1().ReferenceGrants(),
 		sharedAgenticInformers.Agentic().V0alpha0().XBackends(),
 		sharedAgenticInformers.Agentic().V0alpha0().XAccessPolicies())
 	if err != nil {
