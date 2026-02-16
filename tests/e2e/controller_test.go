@@ -56,15 +56,15 @@ func TestControllerE2E(t *testing.T) {
 	t.Log("Waiting for resources to be ready...")
 	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=2m")
 	runKubectl(t, "wait", "--for=condition=available", "deployment/mcp-everything", "-n", "e2e-test-ns", "--timeout=2m")
-	// Wait for Gateway to be programmed and proxy to be up
+	// Wait for Gateway to be programmed and proxy to be up.
 	var proxyPodName string
 	err := retry(20, 5*time.Second, func() error {
-		// Find the pod using the standard gateway-name label
-		out := runKubectlOutput(t, "get", "pods", "-n", "e2e-test-ns", "-l", fmt.Sprintf("%s=e2e-gateway", constants.GatewayNameLabel), "-o", "jsonpath={.items[0].metadata.name}")
-		if out == "" {
+		out := runKubectlOutput(t, "get", "pods", "-n", "e2e-test-ns", "-l", fmt.Sprintf("%s=e2e-gateway", constants.GatewayNameLabel), "-o", "jsonpath={.items[*].metadata.name}")
+		names := strings.Fields(strings.TrimSpace(out))
+		if len(names) == 0 {
 			return fmt.Errorf("envoy proxy pod not found")
 		}
-		proxyPodName = out
+		proxyPodName = names[0]
 		return nil
 	})
 
@@ -77,11 +77,12 @@ func TestControllerE2E(t *testing.T) {
 	t.Log("Verifying Gateway status address and capturing IP...")
 	var gatewayIP string
 	err = retry(20, 2*time.Second, func() error {
-		out := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", "e2e-test-ns", "-o", "jsonpath={.status.addresses[0].value}")
-		if out == "" {
+		out := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", "e2e-test-ns", "-o", "jsonpath={.status.addresses[*].value}")
+		values := strings.Fields(strings.TrimSpace(out))
+		if len(values) == 0 {
 			return fmt.Errorf("gateway status address not found")
 		}
-		gatewayIP = out
+		gatewayIP = values[0]
 		t.Logf("Found Gateway status address: %s", gatewayIP)
 		return nil
 	})
