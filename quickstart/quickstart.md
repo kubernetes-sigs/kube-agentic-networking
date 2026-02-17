@@ -289,18 +289,18 @@ You can also integrate your own agent by following these steps:
    - If your agent already has a `ServiceAccount`, note its name for use in access policies
    - Otherwise, create one and update your deployment:
      ```shell
-     kubectl create serviceaccount <your-agent-sa> -n <your-namespace>
-     kubectl set serviceaccount deployment/<your-agent-deployment> <your-agent-sa> -n <your-namespace>
+     kubectl create serviceaccount <agent-sa> -n <agent-namespace>
+     kubectl set serviceaccount deployment/<agent-deployment> <agent-sa> -n <agent-namespace>
      ```
 
-3. **Configure your agent to route through Envoy**:
-   - Find the Envoy proxy service name: `kubectl get svc -n <your-namespace> | grep envoy`
+2. **Configure your agent to route through Envoy**:
+   - Find the Envoy proxy service name: `kubectl get svc -n <envoy-gateway-namespace> | grep envoy`
    - Update your agent's configuration to use the Envoy proxy endpoint instead of connecting directly to tools
    - Example using environment variable:
      ```shell
-     kubectl set env deployment/<your-agent-deployment> \
-       TOOL_ENDPOINT=http://envoy-proxy-<hash>.<your-namespace>.svc.cluster.local:10001/local/mcp \
-       -n <your-namespace>
+     kubectl set env deployment/<agent-deployment> \
+       TOOL_ENDPOINT=http://envoy-proxy-<hash>.<envoy-gateway-namespace>.svc.cluster.local:10001/local/mcp \
+       -n <agent-namespace>
      ```
    - The exact configuration method depends on how your agent connects to MCP tools
 
@@ -310,7 +310,7 @@ You can also integrate your own agent by following these steps:
 
 5. **Define or update access policies** (see [Step 4](#4-define-and-apply-network-policies) for details):
    - Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your agent's ServiceAccount and tool endpoints
-   - Apply the policies: `kubectl apply -f <your-policy-file>.yaml`
+   - Apply the policies: `kubectl apply -f <policy-file>.yaml`
 
 ## 9. Clean Up
 
