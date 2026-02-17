@@ -16,6 +16,12 @@ Follow these OpenTelemetry semantic conventions:
 - [Security rule attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/security-rule/) for policy enforcement and guardrails
 - [Error attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/) for error handling
 
+### Alternate Conventions and Interoperability
+
+The agentic observability ecosystem includes earlier conventions like [OpenInference](https://github.com/Arize-ai/openinference) (used by [Phoenix](https://phoenix.arize.com/) from Arize) that predate the official OpenTelemetry GenAI conventions, as well as OpenTelemetry-compatible extensions like [OpenLLMetry](https://github.com/traceloop/openllmetry) (used by [Traceloop](https://www.traceloop.com/)/[Langfuse](https://langfuse.com/)).
+
+For alternate conventions, use [span processors](https://opentelemetry.io/docs/specs/otel/trace/sdk/#span-processor) or the OpenTelemetry Collector's [transform processor](https://opentelemetry.io/docs/collector/configuration/#processors) with [OTTL](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/transformprocessor) to remap attributes to the GenAI semantic conventions. For non-OpenTelemetry sources, a custom SDK-level bridge is needed to convert to OpenTelemetry spans first.
+
 ## Context Propagation
 
 Use [W3C Trace Context](https://www.w3.org/TR/trace-context/) for distributed tracing and [W3C Baggage](https://www.w3.org/TR/baggage/) to propagate:
