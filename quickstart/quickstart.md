@@ -55,7 +55,8 @@ graph TD
 
 Before you begin, ensure you have the following tools installed and configured:
 
-- **A Kubernetes cluster**: You can use a local cluster like `kind` or `minikube`, or a cloud-based one.
+- **A Kubernetes cluster**: Minimum version v1.35.0, with the PodCertificateRequest and ClusterTrustBundle features enabled. You can use a local cluster like `kind` or `minikube`, or a cloud-based one.
+  - `kind create cluster --config=quickstart/kind-config.yaml`
 - **`kubectl`**: The Kubernetes command-line tool. See the [official installation guide](https://kubernetes.io/docs/tasks/tools/#kubectl).
 - **A configured `kubectl` context**: Your `kubectl` should be pointing to the cluster you intend to use.
   ```shell
@@ -113,10 +114,15 @@ Deploy the controller to the `agentic-net-system` namespace:
 kubectl apply -f k8s/deploy/deployment.yaml
 ```
 
+Create the root CA certificate that will be used to issue agent identies to your agents:
+```shell
+go run ./cmd/agentic-net-tool -- make-ca-pool-secret --ca-id=v1 --namespace=agentic-net-system --name=agentic-identity-ca-pool
+```
+
 Wait for the controller deployment to be ready:
 
 ```shell
-kubectl wait --timeout=5m -n agentic-net-system deployment/agentic-net-gw-controller --for=condition=Available
+kubectl wait --timeout=5m -n agentic-net-system deployment/agentic-net-controller --for=condition=Available
 ```
 
 The controller will start running but won't do anything yet until we create a `Gateway` resource for it to manage.
