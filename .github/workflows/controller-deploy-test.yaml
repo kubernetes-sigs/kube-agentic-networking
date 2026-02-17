@@ -13,10 +13,24 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Setup Go
+      uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # tag=v5.5.0
+      with:
+        go-version: 1.25
+
+    - name: "Build controller image from the current commit"
+      run: |
+        docker build . --tag us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main --label "runnumber=${GITHUB_RUN_ID}"
+
     - name: Create kind cluster
-      uses: helm/kind-action@v1.12.0
+      uses: helm/kind-action@v1.13.0
       with:
         cluster_name: kind
+        config: quickstart/kind-config.yaml
+
+    - name: Load controller image into cluster
+      run: |
+        kind load docker-image us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main
 
     - name: Install Gateway API CRDs
       run: |
@@ -30,14 +44,33 @@ jobs:
       run: |
         kubectl apply -f k8s/deploy/deployment.yaml
 
-    - name: Wait for Controller to be ready
+    - name: Create agentic identity CA
       run: |
-        kubectl wait --for=condition=available --timeout=300s deployment/agentic-net-gw-controller -n agentic-net-system
+        go run ./cmd/agentic-net-tool -- make-ca-pool-secret --ca-id=v1 --namespace=agentic-net-system --name=agentic-identity-ca-pool
+
+    - name: Wait for controller to be ready
+      run: |
+        kubectl wait --for=condition=available --timeout=300s deployment/agentic-net-controller -n agentic-net-system
 
     - name: Debug on failure
       if: failure()
       run: |
         kubectl get all -A
         kubectl get events -A
-        kubectl describe deployment agentic-net-gw-controller -n agentic-net-system
-        kubectl logs deployment/agentic-net-gw-controller -n agentic-net-system --all-containers
+        kubectl describe deployment agentic-net-controller -n agentic-net-system
+        kubectl logs deployment/agentic-net-controller -n agentic-net-system --all-containers
+
+    - name: Create client pod with agent identity
+      run: |
+        kubectl apply -f quickstart/agent-identity-demo/agent-identity-demo.yaml
+      
+    - name: Wait for agent identity client pod to be ready (indicates that cert issuance works)
+      run: |
+        kubectl wait --for=condition=available --timeout=300s deployment/client -n agent-identity-demo
+
+    - name: Debug client pod failure
+      if: failure()
+      run: |
+        kubectl get pods -n agent-identity-demo -l app=client -o yaml
+        kubectl get podcertificaterequests -n agent-identity-demo -o yaml
+        kubectl get clustertrustbundles -f 'spec.signerName=kube-agentic-networking.sigs.k8s.io/identity'
