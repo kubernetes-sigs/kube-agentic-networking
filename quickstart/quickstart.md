@@ -275,7 +275,44 @@ Congratulations! You have successfully:
 - Observed the controller automatically provision and configure an Envoy proxy to enforce those policies.
 - Verified that the agent's access to tools is controlled at the network level.
 
-## 8. Clean Up
+## 8. Bring Your Own Agent
+
+You can also integrate your own agent by following these steps:
+
+### Prerequisites
+- Your agent deployment, service, and MCP tools are running
+- Your agent can communicate with MCP tool servers
+
+### Integration Steps
+
+1. **Ensure your agent has a ServiceAccount**:
+   - If your agent already has a `ServiceAccount`, note its name for use in access policies
+   - Otherwise, create one and update your deployment:
+     ```shell
+     kubectl create serviceaccount <your-agent-sa> -n <your-namespace>
+     kubectl set serviceaccount deployment/<your-agent-deployment> <your-agent-sa> -n <your-namespace>
+     ```
+
+3. **Configure your agent to route through Envoy**:
+   - Find the Envoy proxy service name: `kubectl get svc -n <your-namespace> | grep envoy`
+   - Update your agent's configuration to use the Envoy proxy endpoint instead of connecting directly to tools
+   - Example using environment variable:
+     ```shell
+     kubectl set env deployment/<your-agent-deployment> \
+       TOOL_ENDPOINT=http://envoy-proxy-<hash>.<your-namespace>.svc.cluster.local:10001/local/mcp \
+       -n <your-namespace>
+     ```
+   - The exact configuration method depends on how your agent connects to MCP tools
+
+4. **Ensure your agent sends the ServiceAccount token**:
+   - Your agent must send the service account token in a `x-k8s-sa-token` header when making MCP requests
+   - See [`quickstart/adk-agent/mcp_agent/agent.py`](adk-agent/mcp_agent/agent.py) for an example
+
+5. **Define or update access policies** (see [Step 4](#4-define-and-apply-network-policies) for details):
+   - Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your agent's ServiceAccount and tool endpoints
+   - Apply the policies: `kubectl apply -f <your-policy-file>.yaml`
+
+## 9. Clean Up
 
 To remove all the resources created during this quickstart, run the following commands:
 
