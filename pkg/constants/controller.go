@@ -25,4 +25,13 @@ const (
 
 	// XDSServerServiceName is the name of the Service that exposes the xDS server.
 	XDSServerServiceName = "agentic-net-xds-server"
+
+	// Finalizers: block deletion until no dependents reference the resource.
+
+	// GatewayClassFinalizer is set on GatewayClass; removed when no Gateways use this class.
+	GatewayClassFinalizer = "agentic.prototype.x-k8s.io/gatewayclass"
+	// GatewayFinalizer is set on Gateway; removed when no HTTPRoutes reference it and proxy is cleaned up.
+	GatewayFinalizer = "agentic.prototype.x-k8s.io/gateway"
+	// XBackendFinalizer is set on XBackend; removed when no XAccessPolicy targets it.
+	XBackendFinalizer = "agentic.prototype.x-k8s.io/xbackend"
 )

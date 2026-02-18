@@ -29,6 +29,9 @@ import (
 )
 
 const (
+	// allowAllPolicyName is the name of the RBAC policy that allows all requests (used when no XAccessPolicy targets the backend).
+	allowAllPolicyName = "allow-all"
+
 	// allowMCPSessionClosePolicyName is the name of the RBAC policy that allows agents to close MCP sessions.
 	allowMCPSessionClosePolicyName = "allow-mcp-session-close"
 
@@ -47,22 +50,25 @@ const (
 )
 
 // rbacConfigFromAccessPolicy generates all RBAC policies for a given backend, including common policies
-// and those derived from AccessPolicy resources.
+// and those derived from AccessPolicy resources. When no XAccessPolicy targets the backend, we allow
+// all tool calls (allow-all policy) so that deleting an AccessPolicy removes RBAC restrictions for that backend.
 func rbacConfigFromAccessPolicy(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (*rbacv3.RBAC, error) {
 	var rbacPolicies = make(map[string]*rbacconfigv3.Policy)
 
-	// Add AuthPolicy-derived RBAC policies.
-	// Currently, we assume only one AuthPolicy targets a given backend.
+	// Add AccessPolicy-derived RBAC policies when one targets this backend.
+	// Currently, we assume only one AccessPolicy targets a given backend.
 	accessPolicy, err := findAccessPolicyForBackend(backend, accessPolicyLister)
 	if err != nil {
 		return nil, err
 	}
 	if accessPolicy != nil {
 		rbacPolicies = translateAccessPolicyToRBAC(accessPolicy, backend)
+	} else {
+		// No AccessPolicy targets this backend: allow all requests (e.g. allow all tool calls).
+		// This handles the case where the XAccessPolicy was deleted.
+		rbacPolicies[allowAllPolicyName] = buildAllowAllPolicy()
 	}
-	// It's deny-by-default (a.k.a ALLOW action), we explicitly allow necessary
-	// MCP operations for all backends. These policies are essential for MCP
-	// session management and tool initialization.
+	// These policies are essential for MCP session management and tool initialization on all backends.
 	rbacPolicies[allowMCPSessionClosePolicyName] = buildAllowMCPSessionClosePolicy()
 	rbacPolicies[allowAnyoneToInitializeAndListToolsPolicyName] = buildAllowAnyoneToInitializeAndListToolsPolicy()
 	rbacPolicies[allowHTTPGet] = buildAllowHTTPGetPolicy()
@@ -214,6 +220,19 @@ func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permissi
 					},
 				},
 			},
+		},
+	}
+}
+
+// buildAllowAllPolicy creates the RBAC policy that allows any principal for any permission.
+// Used when no XAccessPolicy targets the backend (e.g. after the policy is deleted).
+func buildAllowAllPolicy() *rbacconfigv3.Policy {
+	return &rbacconfigv3.Policy{
+		Principals: []*rbacconfigv3.Principal{
+			{Identifier: &rbacconfigv3.Principal_Any{Any: true}},
+		},
+		Permissions: []*rbacconfigv3.Permission{
+			{Rule: &rbacconfigv3.Permission_Any{Any: true}},
 		},
 	}
 }
