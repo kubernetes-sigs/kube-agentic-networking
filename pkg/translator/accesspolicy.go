@@ -53,20 +53,21 @@ const (
 // rbacConfigFromAccessPolicy generates all RBAC policies for a given backend, including common policies
 // and those derived from AccessPolicy resources.
 func (t *Translator) rbacConfigFromAccessPolicy(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (*rbacv3.RBAC, error) {
-	var rbacPolicies = make(map[string]*rbacconfigv3.Policy)
-
-	// Add AuthPolicy-derived RBAC policies.
-	// Currently, we assume only one AuthPolicy targets a given backend.
+	// Add AccessPolicy-derived RBAC policies when one targets this backend.
+	// Currently, we assume only one AccessPolicy targets a given backend.
 	accessPolicy, err := findAccessPolicyForBackend(backend, accessPolicyLister)
 	if err != nil {
 		return nil, err
 	}
+	var rbacPolicies map[string]*rbacconfigv3.Policy
 	if accessPolicy != nil {
 		rbacPolicies = t.translateAccessPolicyToRBAC(accessPolicy)
+	} else {
+		// No AccessPolicy targets this backend. Per Envoy RBAC docs, when rules are absent, no RBAC enforcement occurs (allow all).
+		// See https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/rbac/v3/rbac.proto
+		return &rbacv3.RBAC{}, nil
 	}
-	// It's deny-by-default (a.k.a ALLOW action), we explicitly allow necessary
-	// MCP operations for all backends. These policies are essential for MCP
-	// session management and tool initialization.
+	// These policies are essential for MCP session management and tool initialization on all backends.
 	rbacPolicies[allowMCPSessionClosePolicyName] = buildAllowMCPSessionClosePolicy()
 	rbacPolicies[allowAnyoneToInitializeAndListToolsPolicyName] = buildAllowAnyoneToInitializeAndListToolsPolicy()
 	rbacPolicies[allowHTTPGet] = buildAllowHTTPGetPolicy()

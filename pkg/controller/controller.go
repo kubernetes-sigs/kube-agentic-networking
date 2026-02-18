@@ -36,9 +36,14 @@ import (
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/envoy"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/xds"
 	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
@@ -89,9 +94,10 @@ type Controller struct {
 	agenticIdentityTrustDomain string
 	envoyImage                 string
 
-	gatewayqueue workqueue.TypedRateLimitingInterface[string]
-	xdsServer    *xds.Server
-	translator   *translator.Translator
+	gatewayqueue            workqueue.TypedRateLimitingInterface[string]
+	backendFinalizerQueue   workqueue.TypedRateLimitingInterface[string]
+	xdsServer               *xds.Server
+	translator              *translator.Translator
 }
 
 // New returns a new *Controller with the event handlers setup for types we are interested in.
@@ -143,6 +149,10 @@ func New(
 			workqueue.DefaultTypedControllerRateLimiter[string](),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "gateway"},
 		),
+		backendFinalizerQueue: workqueue.NewTypedRateLimitingQueueWithConfig(
+			workqueue.DefaultTypedControllerRateLimiter[string](),
+			workqueue.TypedRateLimitingQueueConfig[string]{Name: "backend-finalizer"},
+		),
 		xdsServer: xds.NewServer(ctx),
 	}
 
@@ -188,6 +198,7 @@ func New(
 func (c *Controller) Run(ctx context.Context, workers int) error {
 	defer runtime.HandleCrashWithContext(ctx)
 	defer c.gatewayqueue.ShutDown()
+	defer c.backendFinalizerQueue.ShutDown()
 
 	// start the xDS server
 	klog.Info("Starting the Envoy xDS server")
@@ -208,9 +219,13 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		return errors.New("failed to wait for caches to sync")
 	}
 
-	klog.InfoS("Starting workers", "count", workers)
+	klog.InfoS("Starting gateway workers", "count", workers)
 	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
+	}
+	klog.InfoS("Starting backend finalizer workers", "count", workers)
+	for i := 0; i < workers; i++ {
+		go wait.UntilWithContext(ctx, c.runBackendFinalizerWorker, time.Second)
 	}
 
 	klog.Info("Started workers")
@@ -252,6 +267,26 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 	return true
 }
 
+func (c *Controller) runBackendFinalizerWorker(ctx context.Context) {
+	for c.processNextBackendFinalizerItem(ctx) {
+	}
+}
+
+func (c *Controller) processNextBackendFinalizerItem(ctx context.Context) bool {
+	obj, shutdown := c.backendFinalizerQueue.Get()
+	if shutdown {
+		return false
+	}
+	defer c.backendFinalizerQueue.Done(obj)
+	if err := c.syncBackendFinalizer(ctx, obj); err != nil {
+		c.backendFinalizerQueue.AddRateLimited(obj)
+		klog.ErrorS(err, "Error syncing backend finalizer", "key", obj)
+		return true
+	}
+	c.backendFinalizerQueue.Forget(obj)
+	return true
+}
+
 // syncHandler compares the actual state with the desired, and attempts to
 // converge the two.
 func (c *Controller) syncHandler(ctx context.Context, key string) error {
@@ -283,6 +318,33 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 		return nil
 	}
 
+	// If Gateway is being deleted, block until no HTTPRoutes reference it, then clean up and remove finalizer.
+	if gateway.DeletionTimestamp != nil {
+		if hasHTTPRoutesReferencingGateway(c, gateway) {
+			logger.V(4).Info("Gateway has HTTPRoutes still referencing it, blocking deletion")
+			return nil
+		}
+		if err := envoy.DeleteProxy(ctx, c.core.client, namespace, name); err != nil {
+			return err
+		}
+		newGW := gateway.DeepCopy()
+		if removeFinalizer(&newGW.ObjectMeta, constants.GatewayFinalizer) {
+			if _, err := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("failed to remove finalizer from Gateway: %w", err)
+			}
+		}
+		return nil
+	}
+
+	newGW := gateway.DeepCopy()
+	if ensureFinalizer(&newGW.ObjectMeta, constants.GatewayFinalizer) {
+		if _, err := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("failed to add finalizer to Gateway: %w", err)
+		}
+		c.gatewayqueue.Add(key)
+		return nil
+	}
+
 	logger.Info("Syncing gateway")
 
 	// Ensure Envoy proxy deployment and service exist.
@@ -301,7 +363,7 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 		logger.Error(err, "Failed to update gateway status")
 	}
 
-	// Translate Gateway to xDS resources.
+	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
 	resources, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
 		// TODO: Update Gateway status with the error.
@@ -317,4 +379,29 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 
 	logger.Info("Updated xDS server with new resources", "nodeID", rm.NodeID())
 	return nil
+}
+
+// hasHTTPRoutesReferencingGateway returns true if any HTTPRoute has a ParentRef to the given Gateway.
+func hasHTTPRoutesReferencingGateway(c *Controller, gw *gatewayv1.Gateway) bool {
+	routes, err := c.gateway.httprouteLister.List(labels.Everything())
+	if err != nil {
+		klog.V(4).ErrorS(err, "failed to list HTTPRoutes for Gateway finalizer")
+		return true // conservatively block
+	}
+	for _, route := range routes {
+		for _, parentRef := range route.Spec.ParentRefs {
+			if (parentRef.Group != nil && string(*parentRef.Group) != gatewayv1.GroupName) ||
+				(parentRef.Kind != nil && string(*parentRef.Kind) != "Gateway") {
+				continue
+			}
+			refNamespace := route.Namespace
+			if parentRef.Namespace != nil {
+				refNamespace = string(*parentRef.Namespace)
+			}
+			if string(parentRef.Name) == gw.Name && refNamespace == gw.Namespace {
+				return true
+			}
+		}
+	}
+	return false
 }

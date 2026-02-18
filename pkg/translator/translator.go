@@ -211,7 +211,10 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 			switch listener.Protocol {
 			case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-				// 5. For each accepted HTTPRoute for this listener -> translate to Envoy routes
+				// For each accepted HTTPRoute for this listener -> translate to Envoy routes.
+				// Backends are only included when referenced by an HTTPRoute BackendRef. If an XBackend
+				// (and optionally XAccessPolicy) exists but no HTTPRoute routes traffic to it, no cluster
+				// or RBAC config is generated for that backend.
 				for _, httpRoute := range routesByListener[listener.Name] {
 					routes, allValidBackends, resolvedRefsCondition := t.translateHTTPRouteToEnvoyRoutes(httpRoute)
 
