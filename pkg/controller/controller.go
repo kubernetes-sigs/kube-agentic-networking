@@ -275,6 +275,14 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 		return err
 	}
 
+	// Only reconcile Gateways whose spec.gatewayClassName refers to a GatewayClass
+	if !c.isGatewayOwnedByController(gateway) {
+		logger.V(4).Info("Skipping Gateway: not owned by this controller (GatewayClass controllerName mismatch or GatewayClass not found)",
+			"gateway", klog.KRef(gateway.Namespace, gateway.Name),
+			"gatewayClassName", string(gateway.Spec.GatewayClassName))
+		return nil
+	}
+
 	logger.Info("Syncing gateway")
 
 	// Ensure Envoy proxy deployment and service exist.
