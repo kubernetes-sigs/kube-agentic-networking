@@ -70,8 +70,8 @@ func (c *Controller) onHTTPRouteDelete(obj interface{}) {
 	c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
 }
 
-// TODO: When an HTTPRoute is deleted, we need to consider how to handle the gateway reconcile
-// i.e. recalculating the xDS configuration without this HTTPRoute.
+// enqueueGatewaysForHTTPRoute enqueues Gateways so they are reconciled; when an HTTPRoute
+// is deleted this ensures stale rules for that route are removed from Envoy/xDS config.
 func (c *Controller) enqueueGatewaysForHTTPRoute(references []gatewayv1.ParentReference, localNamespace string) {
 	gatewaysToEnqueue := make(map[string]struct{})
 	for _, ref := range references {
