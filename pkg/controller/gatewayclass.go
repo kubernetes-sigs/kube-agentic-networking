@@ -92,3 +92,17 @@ func (c *Controller) syncGatewayClass(key string) {
 		klog.InfoS("GatewayClass status updated", "gatewayclass", key)
 	}
 }
+
+// gateway class validation
+func (c *Controller) isGatewayOwnedByController(gateway *gatewayv1.Gateway) bool {
+	gwc, err := c.gateway.gatewayClassLister.Get(string(gateway.Spec.GatewayClassName))
+	if err != nil || gwc == nil {
+		if err != nil {
+			klog.V(4).ErrorS(err, "GatewayClass lookup failed for Gateway",
+				"gateway", klog.KObj(gateway),
+				"gatewayClassName", string(gateway.Spec.GatewayClassName))
+		}
+		return false
+	}
+	return gwc.Spec.ControllerName == constants.ControllerName
+}
