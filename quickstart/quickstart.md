@@ -66,7 +66,6 @@ Before you begin, ensure you have the following tools installed and configured:
   ```shell
   git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
   cd kube-agentic-networking
-  git switch mvp-quickstart
   ```
 
 ## 2. Set Up the Kubernetes Environment
