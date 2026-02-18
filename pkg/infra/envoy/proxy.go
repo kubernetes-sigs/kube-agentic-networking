@@ -38,22 +38,24 @@ import (
 
 // ResourceManager manages the Envoy proxy resources for a given Gateway.
 type ResourceManager struct {
-	client     kubernetes.Interface
-	gw         *gatewayv1.Gateway
-	nodeID     string
-	envoyImage string
-	namespace  string
+	client                     kubernetes.Interface
+	gw                         *gatewayv1.Gateway
+	nodeID                     string
+	envoyImage                 string
+	namespace                  string
+	agenticIdentityTrustDomain string
 }
 
 // NewResourceManager creates a new ResourceManager.
 // The nodeID is generated based on the Gateway's namespace and name and is not exposed to the controller.
-func NewResourceManager(client kubernetes.Interface, gw *gatewayv1.Gateway, envoyImage string) *ResourceManager {
+func NewResourceManager(client kubernetes.Interface, gw *gatewayv1.Gateway, envoyImage string, agenticIdentityTrustDomain string) *ResourceManager {
 	return &ResourceManager{
-		client:     client,
-		gw:         gw,
-		nodeID:     proxyName(gw.Namespace, gw.Name),
-		envoyImage: envoyImage,
-		namespace:  gw.Namespace,
+		client:                     client,
+		gw:                         gw,
+		nodeID:                     proxyName(gw.Namespace, gw.Name),
+		envoyImage:                 envoyImage,
+		namespace:                  gw.Namespace,
+		agenticIdentityTrustDomain: agenticIdentityTrustDomain,
 	}
 }
 

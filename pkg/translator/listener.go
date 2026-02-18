@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,15 +17,10 @@ limitations under the License.
 package translator
 
 import (
-	"context"
-	"encoding/pem"
 	"fmt"
-	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	jwt_authnv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
@@ -36,20 +31,12 @@ import (
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
-	corev1 "k8s.io/api/core/v1"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
-)
-
-const (
-	standardK8sOIDCJWKSURI = "https://kubernetes.default.svc/openid/v1/jwks"
-	// Cache the keys for 1 hour to avoid spamming the API server
-	jwksCacheDuration = 1 * time.Hour
-	uriTimeout        = 5 * time.Second
 )
 
 // setListenerCondition is a helper to safely set a condition on a listener's status
@@ -141,85 +128,25 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 			continue
 		}
 
-		if listener.TLS == nil {
-			// No TLS config, so no secrets to resolve. This listener is considered resolved.
-			setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
-				Type:    string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:  metav1.ConditionTrue,
-				Reason:  string(gatewayv1.ListenerReasonResolvedRefs),
-				Message: "All references resolved",
-			})
-			continue
-		}
-
-		for _, certRef := range listener.TLS.CertificateRefs {
-			if certRef.Group != nil && *certRef.Group != "" {
-				setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
-					Type:    string(gatewayv1.ListenerConditionResolvedRefs),
-					Status:  metav1.ConditionFalse,
-					Reason:  string(gatewayv1.ListenerReasonInvalidCertificateRef),
-					Message: fmt.Sprintf("unsupported certificate ref grup: %s", *certRef.Group),
-				})
-				break
-			}
-
-			if certRef.Kind != nil && *certRef.Kind != "Secret" {
-				setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
-					Type:    string(gatewayv1.ListenerConditionResolvedRefs),
-					Status:  metav1.ConditionFalse,
-					Reason:  string(gatewayv1.ListenerReasonInvalidCertificateRef),
-					Message: fmt.Sprintf("unsupported certificate ref kind: %s", *certRef.Kind),
-				})
-				break
-			}
-
-			secretNamespace := gateway.Namespace
-			if certRef.Namespace != nil {
-				secretNamespace = string(*certRef.Namespace)
-			}
-
-			secret, err := t.secretLister.Secrets(secretNamespace).Get(string(certRef.Name))
-			if err != nil {
-				setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
-					Type:    string(gatewayv1.ListenerConditionResolvedRefs),
-					Status:  metav1.ConditionFalse,
-					Reason:  string(gatewayv1.ListenerReasonInvalidCertificateRef),
-					Message: fmt.Sprintf("reference to Secret %s/%s not found", secretNamespace, certRef.Name),
-				})
-				break
-			}
-			if err := validateSecretCertificate(secret); err != nil {
-				setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
-					Type:    string(gatewayv1.ListenerConditionResolvedRefs),
-					Status:  metav1.ConditionFalse,
-					Reason:  string(gatewayv1.ListenerReasonInvalidCertificateRef),
-					Message: fmt.Sprintf("malformed Secret %s/%s : %v", secretNamespace, certRef.Name, err.Error()),
-				})
-				break
-			}
-		}
-
-		// Set the ResolvedRefs condition based on the outcome of the secret validation.
-		if !meta.IsStatusConditionFalse(listenerConditions[listener.Name], string(gatewayv1.ListenerConditionResolvedRefs)) {
-			setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
-				Type:    string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:  metav1.ConditionTrue,
-				Reason:  string(gatewayv1.ListenerReasonResolvedRefs),
-				Message: "All references resolved",
-			})
-		}
+		setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
+			Message:            "All references resolved",
+			ObservedGeneration: gateway.Generation,
+		})
 	}
 
 	return listenerConditions
 }
 
-func (t *Translator) translateListenerToFilterChain(gateway *gatewayv1.Gateway, lis gatewayv1.Listener, routeName string) (*listener.FilterChain, error) {
+func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string) (*listener.FilterChain, error) {
 	var filterChain *listener.FilterChain
 	var err error
 
 	switch lis.Protocol {
 	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		filterChain, err = buildHTTPFilterChain(lis, routeName, t.jwtIssuer)
+		filterChain, err = buildHTTPFilterChain(lis, routeName)
 	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType:
 		filterChain, err = buildTCPFilterChain(lis)
 	case gatewayv1.UDPProtocolType:
@@ -229,15 +156,11 @@ func (t *Translator) translateListenerToFilterChain(gateway *gatewayv1.Gateway, 
 		return nil, err
 	}
 
-	// Add SNI matching for applicable protocols
+	// Add TLS transport socket config if the listener uses HTTPS or TLS protocol.
+	// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/95
 	if lis.Protocol == gatewayv1.HTTPSProtocolType || lis.Protocol == gatewayv1.TLSProtocolType {
-		if lis.Hostname != nil && *lis.Hostname != "" {
-			filterChain.FilterChainMatch = &listener.FilterChainMatch{
-				ServerNames: []string{string(*lis.Hostname)},
-			}
-		}
-		// Configure TLS context
-		tlsContext, err := t.buildDownstreamTLSContext(context.Background(), gateway, lis)
+
+		tlsContext, err := buildDownstreamTLSContext()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS context for listener %s: %w", lis.Name, err)
 		}
@@ -254,8 +177,8 @@ func (t *Translator) translateListenerToFilterChain(gateway *gatewayv1.Gateway, 
 	return filterChain, nil
 }
 
-func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, jwtIssuer string) (*listener.FilterChain, error) {
-	httpFilters, err := buildHTTPFilters(jwtIssuer)
+func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string) (*listener.FilterChain, error) {
+	httpFilters, err := buildHTTPFilters()
 	if err != nil {
 		return nil, err
 	}
@@ -332,13 +255,7 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
-func buildHTTPFilters(issuer string) ([]*hcm.HttpFilter, error) {
-	// Configure JWT filter globally as it's needed for all routes to establish identity.
-	jwtAuthnFilter, err := buildJwtAuthnFilter(issuer)
-	if err != nil {
-		return nil, err
-	}
-
+func buildHTTPFilters() ([]*hcm.HttpFilter, error) {
 	mcpFilter, err := buildMCPFilter()
 	if err != nil {
 		return nil, err
@@ -355,72 +272,11 @@ func buildHTTPFilters(issuer string) ([]*hcm.HttpFilter, error) {
 
 	return []*hcm.HttpFilter{
 		// IMPORTANT: Order matters here!
-		// JWT filter must come before RBAC to populate claims for evaluation.
 		// RBAC filter must come before the router filter to enforce access control before routing.
 		// Router filter must come last to handle routing after all other filters have processed the request.
-		jwtAuthnFilter,
 		mcpFilter,
 		rbacFilter,
 		routerFilter,
-	}, nil
-}
-
-func buildJwtAuthnFilter(issuer string) (*hcm.HttpFilter, error) {
-	jwtProto := &jwt_authnv3.JwtAuthentication{
-		Providers: map[string]*jwt_authnv3.JwtProvider{
-			"kubernetes_provider": {
-				Issuer: issuer, // Dynamically set issuer
-				JwksSourceSpecifier: &jwt_authnv3.JwtProvider_RemoteJwks{
-					RemoteJwks: &jwt_authnv3.RemoteJwks{
-						HttpUri: &corev3.HttpUri{
-							Uri: standardK8sOIDCJWKSURI,
-							HttpUpstreamType: &corev3.HttpUri_Cluster{
-								Cluster: constants.K8sAPIClusterName,
-							},
-							Timeout: durationpb.New(uriTimeout),
-						},
-						CacheDuration: durationpb.New(jwksCacheDuration),
-					},
-				},
-				FromHeaders: []*jwt_authnv3.JwtHeader{
-					{
-						Name: constants.SAAuthTokenHeader,
-					},
-				},
-				ClaimToHeaders: []*jwt_authnv3.JwtClaimToHeader{
-					{
-						ClaimName:  "sub",
-						HeaderName: constants.UserRoleHeader,
-					},
-				},
-			},
-		},
-		Rules: []*jwt_authnv3.RequirementRule{
-			{
-				Match: &routev3.RouteMatch{
-					PathSpecifier: &routev3.RouteMatch_Prefix{Prefix: "/"},
-				},
-				RequirementType: &jwt_authnv3.RequirementRule_Requires{
-					Requires: &jwt_authnv3.JwtRequirement{
-						RequiresType: &jwt_authnv3.JwtRequirement_ProviderName{
-							ProviderName: "kubernetes_provider",
-						},
-					},
-				},
-			},
-		},
-	}
-	jwtAny, err := anypb.New(jwtProto)
-	if err != nil {
-		klog.Errorf("Failed to marshal jwt_authn config: %v", err)
-		return nil, err
-	}
-
-	return &hcm.HttpFilter{
-		Name: "envoy.filters.http.jwt_authn",
-		ConfigType: &hcm.HttpFilter_TypedConfig{
-			TypedConfig: jwtAny,
-		},
 	}, nil
 }
 
@@ -472,46 +328,39 @@ func buildRouterFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-func (t *Translator) buildDownstreamTLSContext(ctx context.Context, gateway *gatewayv1.Gateway, lis gatewayv1.Listener) (*anypb.Any, error) {
-	if lis.TLS == nil {
-		return nil, nil
-	}
-	if len(lis.TLS.CertificateRefs) == 0 {
-		return nil, fmt.Errorf("TLS is configured, but no certificate refs are provided")
-	}
-
+// TODO: We may want to optimize this in the future by supporting both listener's TLS config and the shared TLS context.
+// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/94
+func buildDownstreamTLSContext() (*anypb.Any, error) {
 	tlsContext := &tlsv3.DownstreamTlsContext{
 		CommonTlsContext: &tlsv3.CommonTlsContext{
-			TlsCertificates: []*tlsv3.TlsCertificate{},
+			TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{
+				{
+					Name: constants.SpiffeIdentitySdsConfigName,
+					SdsConfig: &corev3.ConfigSource{
+						ResourceApiVersion: corev3.ApiVersion_V3,
+						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
+							PathConfigSource: &corev3.PathConfigSource{
+								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeIdentitySdsFileName),
+							},
+						},
+					},
+				},
+			},
+			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
+				ValidationContextSdsSecretConfig: &tlsv3.SdsSecretConfig{
+					Name: constants.SpiffeTrustSdsConfigName,
+					SdsConfig: &corev3.ConfigSource{
+						ResourceApiVersion: corev3.ApiVersion_V3,
+						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
+							PathConfigSource: &corev3.PathConfigSource{
+								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeTrustSdsFileName),
+							},
+						},
+					},
+				},
+			},
 		},
-	}
-
-	for _, certRef := range lis.TLS.CertificateRefs {
-		if certRef.Group != nil && *certRef.Group != "" {
-			return nil, fmt.Errorf("unsupported certificate ref group: %s", *certRef.Group)
-		}
-		if certRef.Kind != nil && *certRef.Kind != "Secret" {
-			return nil, fmt.Errorf("unsupported certificate ref kind: %s", *certRef.Kind)
-		}
-
-		secretNamespace := gateway.Namespace
-		if certRef.Namespace != nil {
-			secretNamespace = string(*certRef.Namespace)
-		}
-
-		secretName := string(certRef.Name)
-		secret, err := t.secretLister.Secrets(secretNamespace).Get(secretName)
-		if err != nil {
-			// Per the spec, if the grant was missing, we must not reveal that the secret doesn't exist.
-			// The error from the grant check above takes precedence.
-			return nil, fmt.Errorf("failed to get secret %s/%s: %w", secretNamespace, secretName, err)
-		}
-
-		tlsCert, err := toEnvoyTlsCertificate(secret)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert secret to tls certificate: %v", err)
-		}
-		tlsContext.CommonTlsContext.TlsCertificates = append(tlsContext.CommonTlsContext.TlsCertificates, tlsCert)
+		RequireClientCertificate: wrapperspb.Bool(true),
 	}
 
 	any, err := anypb.New(tlsContext)
@@ -519,60 +368,6 @@ func (t *Translator) buildDownstreamTLSContext(ctx context.Context, gateway *gat
 		return nil, err
 	}
 	return any, nil
-}
-
-func validateSecretCertificate(secret *corev1.Secret) error {
-	privateKey, ok := secret.Data[corev1.TLSPrivateKeyKey]
-	if !ok {
-		return fmt.Errorf("secret %s/%s does not contain key %s", secret.Namespace, secret.Name, corev1.TLSPrivateKeyKey)
-	}
-	block, _ := pem.Decode(privateKey)
-	if block == nil {
-		return fmt.Errorf("secret %s/%s key %s does not contain a valid PEM-encoded private key", secret.Namespace, secret.Name, corev1.TLSPrivateKeyKey)
-	}
-
-	certChain, ok := secret.Data[corev1.TLSCertKey]
-	if !ok {
-		return fmt.Errorf("secret %s/%s does not contain key %s", secret.Namespace, secret.Name, corev1.TLSCertKey)
-	}
-	block, _ = pem.Decode(certChain)
-	if block == nil {
-		return fmt.Errorf("secret %s/%s key %s does not contain a valid PEM-encoded certificate chain", secret.Namespace, secret.Name, corev1.TLSCertKey)
-	}
-	return nil
-}
-
-func toEnvoyTlsCertificate(secret *corev1.Secret) (*tlsv3.TlsCertificate, error) {
-	privateKey, ok := secret.Data[corev1.TLSPrivateKeyKey]
-	if !ok {
-		return nil, fmt.Errorf("secret %s/%s does not contain key %s", secret.Namespace, secret.Name, corev1.TLSPrivateKeyKey)
-	}
-	block, _ := pem.Decode(privateKey)
-	if block == nil {
-		return nil, fmt.Errorf("secret %s/%s key %s does not contain a valid PEM-encoded private key", secret.Namespace, secret.Name, corev1.TLSPrivateKeyKey)
-	}
-
-	certChain, ok := secret.Data[corev1.TLSCertKey]
-	if !ok {
-		return nil, fmt.Errorf("secret %s/%s does not contain key %s", secret.Namespace, secret.Name, corev1.TLSCertKey)
-	}
-	block, _ = pem.Decode(certChain)
-	if block == nil {
-		return nil, fmt.Errorf("secret %s/%s key %s does not contain a valid PEM-encoded certificate chain", secret.Namespace, secret.Name, corev1.TLSCertKey)
-	}
-
-	return &tlsv3.TlsCertificate{
-		CertificateChain: &corev3.DataSource{
-			Specifier: &corev3.DataSource_InlineBytes{
-				InlineBytes: certChain,
-			},
-		},
-		PrivateKey: &corev3.DataSource{
-			Specifier: &corev3.DataSource_InlineBytes{
-				InlineBytes: privateKey,
-			},
-		},
-	}, nil
 }
 
 func createEnvoyAddress(port uint32) *corev3.Address {

@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,19 +26,40 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/agenticidentitysigner"
 )
 
-//go:embed bootstrap.yaml
+const (
+	envoyBootstrapConfigVolumeName = "envoy-bootstrap-config"
+	envoySdsConfigVolumeName       = "envoy-sds-config"
+	envoyIdentityMtlsVolumeName    = "envoy-identity-mtls"
+)
+
+//go:embed templates/bootstrap.yaml
 var bootstrapTemplate string
 
-type configData struct {
+//go:embed templates/spiffe_identity.yaml
+var spiffeIdentityTemplate string
+
+//go:embed templates/spiffe_trust.yaml
+var spiffeTrustTemplate string
+
+type bootstrapConfigData struct {
 	Cluster             string
 	ID                  string
 	ControlPlaneAddress string
 	ControlPlanePort    int
+}
+
+type sdsConfigData struct {
+	SdsConfigName                  string
+	SpiffeMountPath                string
+	SpiffeCredentialBundleFileName string
+	SpiffeTrustBundleFileName      string
 }
 
 // generateEnvoyBootstrapConfig returns an envoy config generated from config data
@@ -47,7 +68,7 @@ func generateEnvoyBootstrapConfig(cluster, id string) (string, error) {
 		return "", fmt.Errorf("missing parameters for envoy config")
 	}
 
-	data := &configData{
+	data := &bootstrapConfigData{
 		Cluster:             cluster,
 		ID:                  id,
 		ControlPlaneAddress: fmt.Sprintf("%s.%s.svc.cluster.local", constants.XDSServerServiceName, constants.AgenticNetSystemNamespace),
@@ -67,12 +88,40 @@ func generateEnvoyBootstrapConfig(cluster, id string) (string, error) {
 	return buff.String(), nil
 }
 
-// renderConfigMap creates a ConfigMap for envoy bootstrap config.
+func generateSdsConfig(tmpl, sdsConfigName, trustDomain string) (string, error) {
+	data := &sdsConfigData{
+		SdsConfigName:                  sdsConfigName,
+		SpiffeMountPath:                constants.SpiffeMountPath,
+		SpiffeCredentialBundleFileName: constants.SpiffeCredentialBundleFileName,
+		SpiffeTrustBundleFileName:      constants.SpiffeTrustBundleFileName(trustDomain),
+	}
+	t, err := template.New("sds-config").Parse(tmpl)
+	if err != nil {
+		return "", err
+	}
+	var buff bytes.Buffer
+	if err := t.Execute(&buff, data); err != nil {
+		return "", err
+	}
+	return buff.String(), nil
+}
+
+// renderConfigMap creates a ConfigMap for envoy bootstrap config and SDS configs.
 func (r *ResourceManager) renderConfigMap() (*corev1.ConfigMap, error) {
 	bootstrap, err := generateEnvoyBootstrapConfig(types.NamespacedName{
 		Namespace: r.gw.Namespace,
 		Name:      r.gw.Name,
 	}.String(), r.nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	identitySds, err := generateSdsConfig(spiffeIdentityTemplate, constants.SpiffeIdentitySdsConfigName, r.agenticIdentityTrustDomain)
+	if err != nil {
+		return nil, err
+	}
+
+	trustSds, err := generateSdsConfig(spiffeTrustTemplate, constants.SpiffeTrustSdsConfigName, r.agenticIdentityTrustDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +134,8 @@ func (r *ResourceManager) renderConfigMap() (*corev1.ConfigMap, error) {
 		},
 		Data: map[string]string{
 			constants.EnvoyBootstrapCfgFileName: bootstrap,
+			constants.SpiffeIdentitySdsFileName: identitySds,
+			constants.SpiffeTrustSdsFileName:    trustSds,
 		},
 	}, nil
 }
@@ -116,22 +167,95 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 						{
 							Name:    "envoy-proxy",
 							Image:   r.envoyImage,
-							Command: []string{"envoy", "-c", fmt.Sprintf("/etc/envoy/%s", constants.EnvoyBootstrapCfgFileName), "--log-level", "debug"},
+							Command: []string{"envoy", "-c", fmt.Sprintf("%s/%s", constants.EnvoyBootstrapMountPath, constants.EnvoyBootstrapCfgFileName), "--log-level", "debug"},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "envoy-config",
-									MountPath: "/etc/envoy",
+									Name:      envoyBootstrapConfigVolumeName,
+									MountPath: constants.EnvoyBootstrapMountPath,
+									ReadOnly:  true,
+								},
+								{
+									Name:      envoySdsConfigVolumeName,
+									MountPath: constants.EnvoySdsMountPath,
+									ReadOnly:  true,
+								},
+								{
+									Name:      envoyIdentityMtlsVolumeName,
+									MountPath: constants.SpiffeMountPath,
+									ReadOnly:  true,
 								},
 							},
 						},
 					},
 					Volumes: []corev1.Volume{
 						{
-							Name: "envoy-config",
+							// envoy-bootstrap-config holds the static Envoy startup configuration.
+							Name: envoyBootstrapConfigVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
 										Name: r.nodeID,
+									},
+									Items: []corev1.KeyToPath{
+										{
+											Key:  constants.EnvoyBootstrapCfgFileName,
+											Path: constants.EnvoyBootstrapCfgFileName,
+										},
+									},
+								},
+							},
+						},
+						{
+							// envoy-sds-config holds the dynamic SDS configuration files.
+							// These files act as a bridge, pointing Envoy's TLS configuration to the physical
+							// certificate files mounted in the 'envoy-identity-mtls' volume below.
+							//
+							// Note:
+							// 	Loading the certificate chain and private key separately can cause
+							//	problems during certificate rotation.
+							// 	https://github.com/kubernetes-sigs/kube-agentic-networking/issues/101
+							Name: envoySdsConfigVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: r.nodeID,
+									},
+									Items: []corev1.KeyToPath{
+										{
+											Key:  constants.SpiffeIdentitySdsFileName,
+											Path: constants.SpiffeIdentitySdsFileName,
+										},
+										{
+											Key:  constants.SpiffeTrustSdsFileName,
+											Path: constants.SpiffeTrustSdsFileName,
+										},
+									},
+								},
+							},
+						},
+						{
+							// envoy-identity-mtls holds the actual secret material (certificates and keys)
+							// generated by the Kubernetes Pod Certificate Signer.
+							Name: envoyIdentityMtlsVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								Projected: &corev1.ProjectedVolumeSource{
+									Sources: []corev1.VolumeProjection{
+										{
+											ClusterTrustBundle: &corev1.ClusterTrustBundleProjection{
+												SignerName: ptr.To(agenticidentitysigner.Name),
+												LabelSelector: &metav1.LabelSelector{
+													MatchLabels: agenticidentitysigner.CTBLabels(r.agenticIdentityTrustDomain),
+												},
+												Path: constants.SpiffeTrustBundleFileName(r.agenticIdentityTrustDomain),
+											},
+										},
+										{
+											PodCertificate: &corev1.PodCertificateProjection{
+												SignerName:           agenticidentitysigner.Name,
+												KeyType:              constants.DefaultKeyType,
+												CredentialBundlePath: constants.SpiffeCredentialBundleFileName,
+											},
+										},
 									},
 								},
 							},

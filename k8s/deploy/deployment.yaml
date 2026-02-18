@@ -90,25 +90,6 @@ subjects:
   namespace: agentic-net-system
   name: agentic-net-controller-sa
 ---
-# TODO: Remove this ClusterRoleBinding once we migrate away from K8s JWTs for
-# authentication.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: agentic-net-controller-discovery
-roleRef:
-  roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:service-account-issuer-discovery
-subjects:
-  - apiGroup: rbac.authorization.k8s.io
-    kind: Group
-    name: system:unauthenticated
-  - apiGroup: rbac.authorization.k8s.io
-    kind: Group
-    name: system:authenticated
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

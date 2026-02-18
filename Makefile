@@ -55,6 +55,10 @@ test-cel: ;$(info $(M)...Running CEL tests.) @ ## Run CEL tests.
 test-crd: ;$(info $(M)...Running CRD tests.) @ ## Run CRD tests.
 	cd tests && go test -v ./crd/...
 
+.PHONY: test-e2e
+test-e2e: ;$(info $(M)...Running E2E tests.) @ ## Run E2E tests. Requirements: K8s v1.35+, PodCertificateRequest/ClusterTrustBundle enabled, and KAN Controller running with --enable-agentic-identity-signer=true.
+	cd tests && go test -v ./e2e/...
+
 
 # Run static analysis.
 .PHONY: verify

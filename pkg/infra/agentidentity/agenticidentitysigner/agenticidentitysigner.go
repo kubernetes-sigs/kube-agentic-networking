@@ -35,9 +35,24 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/signercontroller"
 )
 
-const Name = "kube-agentic-networking.sigs.k8s.io/identity"
+const (
+	Name      = "kube-agentic-networking.sigs.k8s.io/identity"
+	CTBPrefix = "kube-agentic-networking.sigs.k8s.io:identity:"
 
-const CTBPrefix = "kube-agentic-networking.sigs.k8s.io:identity:"
+	CanaryingLabel           = "kube-agentic-networking.sigs.k8s.io/canarying"
+	WorkloadTrustDomainLabel = "kube-agentic-networking.sigs.k8s.io/workload-trust-domain"
+	PeerTrustDomainLabel     = "kube-agentic-networking.sigs.k8s.io/peer-trust-domain"
+)
+
+// CTBLabels returns the standard labels used for identifying and selecting
+// ClusterTrustBundles created by this signer.
+func CTBLabels(trustDomain string) map[string]string {
+	return map[string]string{
+		CanaryingLabel:           "live",
+		WorkloadTrustDomainLabel: trustDomain,
+		PeerTrustDomainLabel:     trustDomain,
+	}
+}
 
 type caSource interface {
 	Pool() *localca.Pool
@@ -79,12 +94,8 @@ func (h *Impl) DesiredClusterTrustBundles() []*certsv1beta1.ClusterTrustBundle {
 
 	wantCTB := &certsv1beta1.ClusterTrustBundle{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				"kube-agentic-networking.sigs.k8s.io/canarying":             "live",
-				"kube-agentic-networking.sigs.k8s.io/workload-trust-domain": h.spiffeTrustDomain,
-				"kube-agentic-networking.sigs.k8s.io/peer-trust-domain":     h.spiffeTrustDomain,
-			},
+			Name:   name,
+			Labels: CTBLabels(h.spiffeTrustDomain),
 		},
 		Spec: certsv1beta1.ClusterTrustBundleSpec{
 			SignerName:  Name,
