@@ -17,10 +17,14 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
@@ -67,4 +71,33 @@ func (c *Controller) onGatewayDelete(obj interface{}) {
 		c.gatewayqueue.Add(key)
 	}
 	klog.V(4).InfoS("Gateway deleted", "gateway", key)
+}
+
+func (c *Controller) updateGatewayStatus(ctx context.Context, gateway *gatewayv1.Gateway, ip string) error {
+	if ip == "" {
+		return nil
+	}
+
+	// Check if the IP is already present in the status to avoid redundant updates.
+	for _, addr := range gateway.Status.Addresses {
+		if addr.Type != nil && *addr.Type == gatewayv1.IPAddressType && addr.Value == ip {
+			return nil
+		}
+	}
+
+	gatewayCopy := gateway.DeepCopy()
+	gatewayCopy.Status.Addresses = []gatewayv1.GatewayStatusAddress{
+		{
+			Type:  ptr.To(gatewayv1.IPAddressType),
+			Value: ip,
+		},
+	}
+
+	_, err := c.gateway.client.GatewayV1().Gateways(gateway.Namespace).UpdateStatus(ctx, gatewayCopy, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update gateway status: %w", err)
+	}
+
+	klog.V(2).InfoS("Updated gateway status with proxy IP", "gateway", klog.KObj(gateway), "ip", ip)
+	return nil
 }

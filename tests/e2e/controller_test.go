@@ -56,7 +56,6 @@ func TestControllerE2E(t *testing.T) {
 	runKubectl(t, "wait", "--for=condition=available", "deployment/mcp-everything", "-n", "e2e-test-ns", "--timeout=2m")
 
 	// Wait for Gateway to be programmed and proxy to be up
-	// Note: We need to find the dynamic proxy name.
 	var proxyPodName string
 	err := retry(20, 5*time.Second, func() error {
 		// List all pods and find the one that has the envoy-proxy label/name pattern
@@ -75,10 +74,23 @@ func TestControllerE2E(t *testing.T) {
 	}
 	runKubectl(t, "wait", "--for=condition=Ready", "pod/"+proxyPodName, "-n", "e2e-test-ns", "--timeout=2m")
 
-	gatewaySvcName := strings.TrimPrefix(proxyPodName, "envoy-proxy-")
-	gatewaySvcName = "envoy-proxy-" + gatewaySvcName[:12] // Match service name logic
+	// 3. Obtain Gateway Address from status
+	t.Log("Verifying Gateway status address and capturing IP...")
+	var gatewayIP string
+	err = retry(20, 2*time.Second, func() error {
+		out := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", "e2e-test-ns", "-o", "jsonpath={.status.addresses[0].value}")
+		if out == "" {
+			return fmt.Errorf("gateway status address not found")
+		}
+		gatewayIP = out
+		t.Logf("Found Gateway status address: %s", gatewayIP)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Gateway status verification failed: %v", err)
+	}
 
-	// 3. Allow proxy to complete cold start and initialize MCP session
+	// 4. Initialize MCP session
 	t.Log("Initializing MCP session...")
 	time.Sleep(10 * time.Second)
 
@@ -93,7 +105,7 @@ func TestControllerE2E(t *testing.T) {
 			"-H", "Accept: application/json, text/event-stream",
 			"-H", "mcp-protocol-version: 2025-11-25",
 			"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
-			fmt.Sprintf("https://%s.e2e-test-ns.svc.cluster.local:10001/mcp", gatewaySvcName))
+			fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
 
 		// Extract mcp-session-id from headers
 		lines := strings.Split(out, "\r\n")
@@ -111,15 +123,15 @@ func TestControllerE2E(t *testing.T) {
 	}
 	t.Logf("Obtained MCP Session ID: %s", mcpSessionID)
 
-	// 4. Test Phase 1: get-sum allowed, echo denied
+	// 5. Test Phase 1: get-sum allowed, echo denied
 	t.Log("Verifying initial policy (get-sum: OK, echo: DENY)...")
 
 	// get-sum should be 200
-	assertToolCall(t, mcpSessionID, gatewaySvcName, "get-sum", `{"a":2,"b":3}`, 200)
+	assertToolCall(t, mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`, 200)
 	// echo should be 403
-	assertToolCall(t, mcpSessionID, gatewaySvcName, "echo", `{"message":"hello"}`, 403)
+	assertToolCall(t, mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`, 403)
 
-	// 5. Update Policy
+	// 6. Update Policy
 	t.Log("Updating XAccessPolicy (swap permissions)...")
 	runKubectl(t, "apply", "-f", "testdata/policy-update.yaml")
 
@@ -127,13 +139,13 @@ func TestControllerE2E(t *testing.T) {
 	t.Log("Waiting for xDS propagation...")
 	time.Sleep(10 * time.Second)
 
-	// 6. Test Phase 2: get-sum denied, echo allowed
+	// 7. Test Phase 2: get-sum denied, echo allowed
 	t.Log("Verifying updated policy (get-sum: DENY, echo: OK)...")
 
 	// get-sum should now be 403
-	assertToolCall(t, mcpSessionID, gatewaySvcName, "get-sum", `{"a":2,"b":3}`, 403)
+	assertToolCall(t, mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`, 403)
 	// echo should now be 200
-	assertToolCall(t, mcpSessionID, gatewaySvcName, "echo", `{"message":"hello"}`, 200)
+	assertToolCall(t, mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`, 200)
 
 	t.Log("E2E Test Passed!")
 }
@@ -172,7 +184,7 @@ func retry(attempts int, sleep time.Duration, f func() error) error {
 	return fmt.Errorf("after %d attempts", attempts)
 }
 
-func assertToolCall(t *testing.T, sessionID, svcName, toolName, toolArgs string, expectedStatus int) {
+func assertToolCall(t *testing.T, sessionID, gatewayAddr, toolName, toolArgs string, expectedStatus int) {
 	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, toolName, toolArgs)
 
 	out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
@@ -185,7 +197,7 @@ func assertToolCall(t *testing.T, sessionID, svcName, toolName, toolArgs string,
 		"-H", "mcp-protocol-version: 2025-11-25",
 		"-H", fmt.Sprintf("mcp-session-id: %s", sessionID),
 		"--data-raw", data,
-		fmt.Sprintf("https://%s.e2e-test-ns.svc.cluster.local:10001/mcp", svcName))
+		fmt.Sprintf("https://%s:10001/mcp", gatewayAddr))
 
 	gotStatus, err := strconv.Atoi(strings.TrimSpace(out))
 	if err != nil {

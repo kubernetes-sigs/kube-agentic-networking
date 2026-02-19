@@ -287,11 +287,19 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 
 	// Ensure Envoy proxy deployment and service exist.
 	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
-	if err := rm.EnsureProxyExist(ctx); err != nil {
+	proxyIP, err := rm.EnsureProxyExist(ctx)
+	if err != nil {
 		return err
 	}
 
-	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID())
+	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
+
+	// Update Gateway status with the proxy IP.
+	if err := c.updateGatewayStatus(ctx, gateway, proxyIP); err != nil {
+		// TODO: Holistic retry on error
+		// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/100
+		logger.Error(err, "Failed to update gateway status")
+	}
 
 	// Translate Gateway to xDS resources.
 	resources, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
