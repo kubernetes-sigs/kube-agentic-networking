@@ -42,6 +42,15 @@ Where OpenTelemetry does not define attributes for permission enforcement outcom
 
 These can be considered for inclusion in an existing or new OpenTelemetry semantic convention registry.
 
+### Per-Rule Evaluation Spans
+
+For authorization and guardrail checks, emit an `mcp.authorization.rule` or `mcp.guardrail.rule` child span for each rule evaluated within the parent span. Each child span records:
+- `security_rule.name` — the rule identifier
+- `security_rule.match` — whether the rule matched (`true`/`false`)
+- `event.action` — the action the rule would take (`allow`/`deny`)
+
+Evaluation stops at the determining rule. For authorization, if no allow rule matches, emit an explicit `default-deny` rule span (`security_rule.name: default-deny`, `security_rule.match: true`, `event.action: deny`) to make the implicit default-deny behavior visible in traces.
+
 ## Retries
 
 Agentic retries often involve changed parameters (different tool arguments, altered prompts, or alternate tools). Use a common trace ID to link retry attempts. Reference prompts by hash to avoid full logging.
@@ -130,17 +139,20 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
     │   ├─► Span: mcp.authorization.rule         [span_id: 9c1d2e3f]
     │   │   ├─ security_rule.name: read_only_support
     │   │   ├─ security_rule.match: false
-    │   │   └─ event.action: allow
+    │   │   ├─ event.action: allow
+    │   │   └─ event.outcome: success
     │   │
     │   ├─► Span: mcp.authorization.rule         [span_id: 1d2e3f4a]
     │   │   ├─ security_rule.name: admin_only_delete
     │   │   ├─ security_rule.match: false
-    │   │   └─ event.action: allow
+    │   │   ├─ event.action: allow
+    │   │   └─ event.outcome: success
     │   │
     │   └─► Span: mcp.authorization.rule         [span_id: 2e3f4a5b]
     │       ├─ security_rule.name: default-deny
     │       ├─ security_rule.match: true
-    │       └─ event.action: deny
+    │       ├─ event.action: allow
+    │       └─ event.outcome: success
     │
     │
     └─► Span: mcp.audit.log                     [span_id: 8b9c1d2e]
@@ -237,19 +249,27 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
     │   ├─ parent_span_id: 5e6f7a8b
     │   │
     │   ├─ security_rule.ruleset.name: pii_detection_policy
-    │   ├─ security_rule.name: block_sensitive_pii
-    │   ├─ security_rule.category: guardrail
-    │   ├─ security_rule.denial_reason: sensitive_pii_present
     │   ├─ event.action: deny
     │   ├─ event.outcome: success
     │   │
-    │   ├─ guardrail.pii.types_detected: [ssn, credit_card]
-    │   ├─ guardrail.pii.confidence: high
-    │   ├─ guardrail.pii.field: arguments.body
-    │   │
-    │   ├─ error.type: PIIDetectedError
+    │   ├─ error.type: GuardrailViolationError
     │   ├─ error.message: "PII detected: SSN, Credit Card"
-    │   └─ status: ERROR
+    │   ├─ status: ERROR
+    │   │
+    │   ├─► Span: mcp.guardrail.rule             [span_id: 9c1d2e3f]
+    │   │   ├─ security_rule.name: block_profanity
+    │   │   ├─ security_rule.match: false
+    │   │   ├─ event.action: deny
+    │   │   └─ event.outcome: success
+    │   │
+    │   └─► Span: mcp.guardrail.rule             [span_id: 1d2e3f4a]
+    │       ├─ security_rule.name: block_sensitive_pii
+    │       ├─ security_rule.match: true
+    │       ├─ event.action: deny
+    │       ├─ event.outcome: success
+    │       ├─ guardrail.pii.types_detected: [ssn, credit_card]
+    │       ├─ guardrail.pii.confidence: high
+    │       └─ guardrail.pii.field: arguments.body
     │
     └─► Span: mcp.audit.log                     [span_id: 8b9c1d2e]
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5ms ━━━━━━━━━━━
