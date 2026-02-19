@@ -120,15 +120,27 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
     │   ├─ parent_span_id: 5e6f7a8b
     │   │
     │   ├─ security_rule.ruleset.name: crm_data_access_policy
-    │   ├─ security_rule.name: admin_only_delete
-    │   ├─ security_rule.category: permission
-    │   ├─ security_rule.denial_reason: insufficient_privileges
     │   ├─ event.action: deny
     │   ├─ event.outcome: success
     │   │
     │   ├─ error.type: PermissionDeniedError
     │   ├─ error.message: "User role 'support_agent' lacks privileges for customer_data.delete"
-    │   └─ status: ERROR
+    │   ├─ status: ERROR
+    │   │
+    │   ├─► Span: mcp.authorization.rule         [span_id: 9c1d2e3f]
+    │   │   ├─ security_rule.name: read_only_support
+    │   │   ├─ security_rule.match: false
+    │   │   └─ event.action: allow
+    │   │
+    │   ├─► Span: mcp.authorization.rule         [span_id: 1d2e3f4a]
+    │   │   ├─ security_rule.name: admin_only_delete
+    │   │   ├─ security_rule.match: false
+    │   │   └─ event.action: allow
+    │   │
+    │   └─► Span: mcp.authorization.rule         [span_id: 2e3f4a5b]
+    │       ├─ security_rule.name: default-deny
+    │       ├─ security_rule.match: true
+    │       └─ event.action: deny
     │
     │
     └─► Span: mcp.audit.log                     [span_id: 8b9c1d2e]
