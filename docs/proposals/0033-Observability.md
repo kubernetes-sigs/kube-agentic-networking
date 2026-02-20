@@ -102,7 +102,16 @@ Span: gen_ai.agent.chat                         [span_id: 3d4e5f6a]
       │   traceparent: 00-f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8-4e5f6a7b-01
       │   Authorization: Bearer eyJhbGc...
       │   ...
-      │ tool: delete_customer_data
+      │ Body (JSON-RPC):
+      │ {
+      │   "jsonrpc": "2.0",
+      │   "method": "tools/call",
+      │   "params": {
+      │     "name": "delete_customer_data",
+      │     "arguments": { "customer_id": "12345" }
+      │   },
+      │   "id": 1
+      │ }
       ▼
 
 Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
@@ -214,7 +223,9 @@ Span: gen_ai.agent.chat                         [span_id: 3d4e5f6a]
       │ Headers:
       │   traceparent: 00-c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8-4e5f6a7b-01
       │   ...
+      │ Body (JSON-RPC):
       │ {
+      │   "jsonrpc": "2.0",
       │   "method": "tools/call",
       │   "params": {
       │     "name": "send_email",
@@ -222,7 +233,8 @@ Span: gen_ai.agent.chat                         [span_id: 3d4e5f6a]
       │       "to": "bob@example.com",
       │       "body": "SSN: 123-45-6789, CC: 4532-1234-5678-9010"
       │     }
-      │   }
+      │   },
+      │   "id": 2
       │ }
       ▼
 
