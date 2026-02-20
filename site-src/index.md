@@ -46,7 +46,7 @@ This subproject aims to deliver the following:
 
 ## API Resources
 
-### Tool Authorization API in Agentic Netowrking
+### Tool Authorization API in Agentic Networking
 
 This defines authorization policies for tool access from AI agents running inside a Kubernetes cluster to MCP servers running in the Kubernetes cluster or outside of the Kubernetes cluster.
 
