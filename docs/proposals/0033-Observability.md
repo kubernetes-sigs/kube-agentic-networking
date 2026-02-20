@@ -99,7 +99,7 @@ Span: gen_ai.agent.chat                         [span_id: 3d4e5f6a]
       │
       │ POST /mcp
       │ Headers:
-      │   traceparent: 00-f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8-5e6f7a8b9c1d2e3f-01
+      │   traceparent: 00-f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8-4e5f6a7b-01
       │   Authorization: Bearer eyJhbGc...
       │   ...
       │ tool: delete_customer_data
@@ -109,7 +109,7 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 17ms ━━━━━━━━━━━━
 ├─ trace_id: f5a9d214e6b8c7a9d1e2f3a4b5c6d7e8 ← Same trace_id
 ├─ span.kind: SERVER
-├─ parent_span_id: 3d4e5f6a
+├─ parent_span_id: 4e5f6a7b
 ├─ http.response.status_code: 403
 │
 ├─ gen_ai.operation.name: execute_tool
@@ -212,7 +212,7 @@ Span: gen_ai.agent.chat                         [span_id: 3d4e5f6a]
       │
       │ POST /mcp
       │ Headers:
-      │   traceparent: 00-c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8-9c1d2e3f4a5b6c7d-01
+      │   traceparent: 00-c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8-4e5f6a7b-01
       │   ...
       │ {
       │   "method": "tools/call",
@@ -230,7 +230,7 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 30ms ━━━━━━━━━━━━
 ├─ trace_id: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8 ← Same trace_id
 ├─ span.kind: SERVER
-├─ parent_span_id: 3d4e5f6a
+├─ parent_span_id: 4e5f6a7b
 ├─ http.response.status_code: 400
 │
 ├─ gen_ai.operation.name: execute_tool
