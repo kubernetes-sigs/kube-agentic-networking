@@ -56,7 +56,9 @@ graph TD
 Before you begin, ensure you have the following tools installed and configured:
 
 - **A Kubernetes cluster**: Minimum version v1.35.0, with the PodCertificateRequest and ClusterTrustBundle features enabled. You can use a local cluster like `kind` or `minikube`, or a cloud-based one.
-  - `kind create cluster --config=quickstart/kind-config.yaml`
+  ```shell
+  kind create cluster --config=quickstart/kind-config.yaml
+  ```
 - **`kubectl`**: The Kubernetes command-line tool. See the [official installation guide](https://kubernetes.io/docs/tasks/tools/#kubectl).
 - **A configured `kubectl` context**: Your `kubectl` should be pointing to the cluster you intend to use.
   ```shell
@@ -161,13 +163,37 @@ kubectl create secret generic hf-secret -n quickstart-ns --from-literal=hf-token
 
 > **Note** You can use other HuggingFace models that support chat and tool calling by modifying the `HF_MODEL` environment variable in the [agent deployment manifest](/quickstart/adk-agent/deployment.yaml). For details on configuring other generative AI models with ADK agents, refer to the [ADK documentation](https://google.github.io/adk-docs/agents/models/).
 
-### Step 5.2: Deploy the Agent
+### Step 5.2: Configure and Deploy the AI Agent
 
-Deploy the agent's `Deployment` and `Service` into the `quickstart-ns` namespace:
+The agent uses an Envoy sidecar to establish mTLS-secured connections to the Gateway. We'll discover Gateway address and identity from your cluster and "plumb" it into the sidecar's configuration using environment variables.
 
-```shell
-kubectl apply -f quickstart/adk-agent/deployment.yaml
-```
+1.  **Discover the Gateway address and identity**:
+    Run these commands to extract the dynamic values and export them to your shell:
+
+    ```shell
+    # 1. Get the Gateway's internal IP address from its status
+    export GATEWAY_ADDRESS=$(kubectl get gateway agentic-net-gateway -n quickstart-ns -o jsonpath='{.status.addresses[0].value}')
+
+    # 2. Get the Gateway's ServiceAccount name to construct its SPIFFE identity
+    export GATEWAY_SA=$(kubectl get sa -n quickstart-ns --no-headers -o custom-columns=":metadata.name" | grep "envoy-proxy-" | head -n 1)
+    export GATEWAY_SPIFFE_ID="spiffe://cluster.local/ns/quickstart-ns/sa/${GATEWAY_SA}"
+    
+    echo "Gateway Address: $GATEWAY_ADDRESS"
+    echo "Gateway SPIFFE ID: $GATEWAY_SPIFFE_ID"
+    ```
+
+1.  **Render and Apply the sidecar configuration**:
+    Use the exported variables to render the ConfigMap template and apply it to the cluster:
+
+    ```shell
+    # Using envsubst (standard on most systems)
+    envsubst < quickstart/adk-agent/sidecar/sidecar-configs.yaml | kubectl apply -f -
+    ```
+
+1.  **Deploy the agent**:
+    ```shell
+    kubectl apply -f quickstart/adk-agent/deployment.yaml
+    ```
 
 Wait for the deployment to complete and the agent to be ready:
 
@@ -175,7 +201,6 @@ Wait for the deployment to complete and the agent to be ready:
 kubectl wait --timeout=5m -n quickstart-ns deployment/adk-agent --for=condition=Available
 ```
 
-> **Note**: The agent connects to the proxy via `ENVOY_SERVICE` environment variable. The proxy service name is derived from a hash of the Gateway's namespace and name (e.g., `envoy-proxy-<hash>`). If these change, update the `ENVOY_SERVICE` value in the agent deployment manifest.
 
 ## 6. Interact with the Agent
 
@@ -237,12 +262,16 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
         - kind: XBackend
           name: local-mcp-backend
       rules:
-        - principals:
-            - serviceAccount:
-                name: adk-agent-sa
-          tools:
-            - "get-tiny-image"
-            - "echo" # Now allowed!
+        - name: updated-rule
+          source:
+            type: ServiceAccount
+            serviceAccount:
+              name: adk-agent-sa
+          authorization:
+            type: InlineTools
+            tools:
+              - "get-tiny-image"
+              - "echo" # Now allowed!
     ```
 
 2.  **Apply the updated policy**:

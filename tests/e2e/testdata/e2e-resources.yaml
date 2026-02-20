@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: e2e-test-ns
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kube-agentic-networking
+spec:
+  controllerName: sigs.k8s.io/kube-agentic-networking-controller
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: e2e-tester-sa
+  namespace: e2e-test-ns
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: e2e-gateway
+  namespace: e2e-test-ns
+spec:
+  gatewayClassName: kube-agentic-networking
+  listeners:
+    - protocol: HTTPS
+      port: 10001
+      name: https-listener
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XBackend
+metadata:
+  name: e2e-mcp-backend
+  namespace: e2e-test-ns
+spec:
+  mcp:
+    serviceName: mcp-everything-svc
+    port: 3001
+    path: /mcp
+---
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: e2e-policy
+  namespace: e2e-test-ns
+spec:
+  targetRefs:
+    - group: agentic.prototype.x-k8s.io
+      kind: XBackend
+      name: e2e-mcp-backend
+  rules:
+    - name: allow-get-sum
+      source:
+        type: ServiceAccount
+        serviceAccount:
+          name: e2e-tester-sa
+          namespace: e2e-test-ns
+      authorization:
+        type: InlineTools
+        tools:
+          - "get-sum"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: e2e-route
+  namespace: e2e-test-ns
+spec:
+  parentRefs:
+    - name: e2e-gateway
+      namespace: e2e-test-ns
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: e2e-mcp-backend
+          group: agentic.prototype.x-k8s.io
+          kind: XBackend
+          namespace: e2e-test-ns

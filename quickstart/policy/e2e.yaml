@@ -13,7 +13,7 @@ metadata:
 spec:
   gatewayClassName: kube-agentic-networking
   listeners:
-    - protocol: HTTP
+    - protocol: HTTPS
       port: 10001
       name: agentic-net-gateway-listener2
       allowedRoutes:

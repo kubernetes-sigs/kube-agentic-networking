@@ -38,22 +38,24 @@ import (
 
 // ResourceManager manages the Envoy proxy resources for a given Gateway.
 type ResourceManager struct {
-	client     kubernetes.Interface
-	gw         *gatewayv1.Gateway
-	nodeID     string
-	envoyImage string
-	namespace  string
+	client                     kubernetes.Interface
+	gw                         *gatewayv1.Gateway
+	nodeID                     string
+	envoyImage                 string
+	namespace                  string
+	agenticIdentityTrustDomain string
 }
 
 // NewResourceManager creates a new ResourceManager.
 // The nodeID is generated based on the Gateway's namespace and name and is not exposed to the controller.
-func NewResourceManager(client kubernetes.Interface, gw *gatewayv1.Gateway, envoyImage string) *ResourceManager {
+func NewResourceManager(client kubernetes.Interface, gw *gatewayv1.Gateway, envoyImage string, agenticIdentityTrustDomain string) *ResourceManager {
 	return &ResourceManager{
-		client:     client,
-		gw:         gw,
-		nodeID:     proxyName(gw.Namespace, gw.Name),
-		envoyImage: envoyImage,
-		namespace:  gw.Namespace,
+		client:                     client,
+		gw:                         gw,
+		nodeID:                     proxyName(gw.Namespace, gw.Name),
+		envoyImage:                 envoyImage,
+		namespace:                  gw.Namespace,
+		agenticIdentityTrustDomain: agenticIdentityTrustDomain,
 	}
 }
 
@@ -68,27 +70,24 @@ func proxyName(namespace, name string) string {
 }
 
 // EnsureProxyExist ensures that the Envoy proxy deployment, service, and other resources exist and are ready.
-func (r *ResourceManager) EnsureProxyExist(ctx context.Context) error {
+// It returns the ClusterIP of the proxy service.
+func (r *ResourceManager) EnsureProxyExist(ctx context.Context) (string, error) {
 	logger := klog.FromContext(ctx).WithValues("resourceName", klog.KRef(r.namespace, r.nodeID))
 	ctx = klog.NewContext(ctx, logger)
 
 	if err := r.ensureSA(ctx); err != nil {
-		return err
+		return "", err
 	}
 
 	if err := r.ensureConfigMap(ctx); err != nil {
-		return err
+		return "", err
 	}
 
 	if err := r.ensureDeployment(ctx); err != nil {
-		return err
+		return "", err
 	}
 
-	if err := r.ensureService(ctx); err != nil {
-		return err
-	}
-
-	return nil
+	return r.ensureService(ctx)
 }
 
 func (r *ResourceManager) NodeID() string {
@@ -160,26 +159,35 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	return nil
 }
 
-func (r *ResourceManager) ensureService(ctx context.Context) error {
+func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 	logger := klog.FromContext(ctx)
 	service := r.renderService()
-	_, err := r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
+	svc, err := r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			_, err = r.client.CoreV1().Services(service.Namespace).Create(ctx, service, metav1.CreateOptions{})
+			svc, err = r.client.CoreV1().Services(service.Namespace).Create(ctx, service, metav1.CreateOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to create envoy service: %w", err)
+				return "", fmt.Errorf("failed to create envoy service: %w", err)
 			}
 		} else {
-			return fmt.Errorf("failed to get envoy service: %w", err)
+			return "", fmt.Errorf("failed to get envoy service: %w", err)
 		}
 	}
 
 	if err := waitForServiceReady(ctx, r.client, service.Namespace, service.Name); err != nil {
-		return err
+		return "", err
 	}
 	logger.Info("Envoy proxy service is ready!")
-	return nil
+
+	// Refresh the service object to get the assigned ClusterIP if it was just created.
+	if svc.Spec.ClusterIP == "" {
+		svc, err = r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to refresh envoy service: %w", err)
+		}
+	}
+
+	return svc.Spec.ClusterIP, nil
 }
 
 func waitForServiceReady(ctx context.Context, client kubernetes.Interface, namespace, name string) error {

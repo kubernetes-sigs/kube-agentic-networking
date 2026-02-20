@@ -44,11 +44,15 @@ const (
 	mcpSessionIDHeader = "mcp-session-id"
 	toolsCallMethod    = "tools/call"
 	mcpProxyFilterName = "mcp_proxy"
+
+	// spiffeIDFormat is the standard SPIFFE ID format for Kubernetes workloads.
+	// Format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
+	spiffeIDFormat = "spiffe://%s/ns/%s/sa/%s"
 )
 
 // rbacConfigFromAccessPolicy generates all RBAC policies for a given backend, including common policies
 // and those derived from AccessPolicy resources.
-func rbacConfigFromAccessPolicy(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (*rbacv3.RBAC, error) {
+func (t *Translator) rbacConfigFromAccessPolicy(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (*rbacv3.RBAC, error) {
 	var rbacPolicies = make(map[string]*rbacconfigv3.Policy)
 
 	// Add AuthPolicy-derived RBAC policies.
@@ -58,7 +62,7 @@ func rbacConfigFromAccessPolicy(accessPolicyLister agenticlisters.XAccessPolicyL
 		return nil, err
 	}
 	if accessPolicy != nil {
-		rbacPolicies = translateAccessPolicyToRBAC(accessPolicy, backend)
+		rbacPolicies = t.translateAccessPolicyToRBAC(accessPolicy)
 	}
 	// It's deny-by-default (a.k.a ALLOW action), we explicitly allow necessary
 	// MCP operations for all backends. These policies are essential for MCP
@@ -99,45 +103,44 @@ func findAccessPolicyForBackend(backend *agenticv0alpha0.XBackend, accessPolicyL
 	return nil, nil // No AccessPolicy found for the backend.
 }
 
-func translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy, backend *agenticv0alpha0.XBackend) map[string]*rbacconfigv3.Policy {
+// convertSAtoSPIFFEID constructs a standard SPIFFE ID for a Kubernetes ServiceAccount.
+// Format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
+func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
+	return fmt.Sprintf(spiffeIDFormat, trustDomain, namespace, saName)
+}
+
+func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) map[string]*rbacconfigv3.Policy {
 	policies := make(map[string]*rbacconfigv3.Policy)
 
 	for _, rule := range accessPolicy.Spec.Rules {
 		policyName := rule.Name
 		var principalIDs []*rbacconfigv3.Principal
 
-		var allSources []string
-		if rule.Source.SPIFFE != nil {
-			allSources = append(allSources, string(*rule.Source.SPIFFE))
-		}
-		if rule.Source.ServiceAccount != nil {
-			ns := rule.Source.ServiceAccount.Namespace
-			if ns == "" {
-				ns = accessPolicy.Namespace
+		var source string
+		switch rule.Source.Type {
+		case agenticv0alpha0.AuthorizationSourceTypeSPIFFE:
+			if rule.Source.SPIFFE != nil {
+				source = string(*rule.Source.SPIFFE)
 			}
-			allSources = append(allSources, fmt.Sprintf("system:serviceaccount:%s:%s", ns, rule.Source.ServiceAccount.Name))
+		case agenticv0alpha0.AuthorizationSourceTypeServiceAccount:
+			if rule.Source.ServiceAccount != nil {
+				ns := rule.Source.ServiceAccount.Namespace
+				if ns == "" {
+					ns = accessPolicy.Namespace
+				}
+				// Convert K8s ServiceAccount to SPIFFE ID
+				source = convertSAtoSPIFFEID(t.agenticIdentityTrustDomain, ns, rule.Source.ServiceAccount.Name)
+			}
 		}
 
-		if len(allSources) > 0 {
-			var sourcePrincipals []*rbacconfigv3.Principal
-			for _, source := range allSources {
-				sourcePrincipal := &rbacconfigv3.Principal{
-					Identifier: &rbacconfigv3.Principal_Header{
-						Header: &routev3.HeaderMatcher{
-							Name: "x-user-role",
-							HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
-								StringMatch: &matcherv3.StringMatcher{
-									MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
-								},
-							},
+		if source != "" {
+			principalIDs = append(principalIDs, &rbacconfigv3.Principal{
+				Identifier: &rbacconfigv3.Principal_Authenticated_{
+					Authenticated: &rbacconfigv3.Principal_Authenticated{
+						PrincipalName: &matcherv3.StringMatcher{
+							MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
 						},
 					},
-				}
-				sourcePrincipals = append(sourcePrincipals, sourcePrincipal)
-			}
-			principalIDs = append(principalIDs, &rbacconfigv3.Principal{
-				Identifier: &rbacconfigv3.Principal_OrIds{
-					OrIds: &rbacconfigv3.Principal_Set{Ids: sourcePrincipals},
 				},
 			})
 		}

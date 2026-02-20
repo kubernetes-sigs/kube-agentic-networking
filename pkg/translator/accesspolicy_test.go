@@ -19,6 +19,7 @@ package translator
 import (
 	"testing"
 
+	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
@@ -100,19 +101,43 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			},
 			expectedKeys: []string{"rule-1", "rule-2"},
 		},
+		{
+			name: "service account mapping",
+			accessPolicy: &agenticv0alpha0.XAccessPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "ns-1",
+					Name:      "policy-sa",
+				},
+				Spec: agenticv0alpha0.AccessPolicySpec{
+					Rules: []agenticv0alpha0.AccessRule{
+						{
+							Name: "allow-sa",
+							Source: agenticv0alpha0.Source{
+								Type: agenticv0alpha0.AuthorizationSourceTypeServiceAccount,
+								ServiceAccount: &agenticv0alpha0.AuthorizationSourceServiceAccount{
+									Name:      "my-sa",
+									Namespace: "my-ns",
+								},
+							},
+						},
+					},
+				},
+			},
+			backend:      &agenticv0alpha0.XBackend{},
+			expectedKeys: []string{"allow-sa"},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			policies := translateAccessPolicyToRBAC(tc.accessPolicy, tc.backend)
+			tr := &Translator{agenticIdentityTrustDomain: "cluster.local"}
+			policies := tr.translateAccessPolicyToRBAC(tc.accessPolicy)
 			if len(policies) != len(tc.expectedKeys) {
 				t.Errorf("expected %d policies, got %d", len(tc.expectedKeys), len(policies))
 			}
 
 			for _, key := range tc.expectedKeys {
-				if _, ok := policies[key]; !ok {
-					t.Errorf("expected policy with key %q not found", key)
-				}
+				verifyAccessRulePolicy(t, tc.accessPolicy, policies, key, tr.agenticIdentityTrustDomain)
 			}
 
 			// Optional: print keys found if failure
@@ -124,5 +149,85 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				t.Logf("Found keys: %v", found)
 			}
 		})
+	}
+}
+
+func TestConvertSAtoSPIFFEID(t *testing.T) {
+	tests := []struct {
+		trustDomain string
+		namespace   string
+		name        string
+		want        string
+	}{
+		{
+			trustDomain: "cluster.local",
+			namespace:   "ns-1",
+			name:        "sa-1",
+			want:        "spiffe://cluster.local/ns/ns-1/sa/sa-1",
+		},
+		{
+			trustDomain: "example.com",
+			namespace:   "default",
+			name:        "builder",
+			want:        "spiffe://example.com/ns/default/sa/builder",
+		},
+	}
+
+	for _, tt := range tests {
+		got := convertSAtoSPIFFEID(tt.trustDomain, tt.namespace, tt.name)
+		if got != tt.want {
+			t.Errorf("convertSAtoSPIFFEID(%q, %q, %q) = %q, want %q", tt.trustDomain, tt.namespace, tt.name, got, tt.want)
+		}
+	}
+}
+
+func verifyAccessRulePolicy(t *testing.T, policy *agenticv0alpha0.XAccessPolicy, rbacPolicies map[string]*rbacconfigv3.Policy, ruleName, trustDomain string) {
+	rbacPolicy, ok := rbacPolicies[ruleName]
+	if !ok {
+		t.Errorf("expected policy with key %q not found", ruleName)
+		return
+	}
+
+	var rule *agenticv0alpha0.AccessRule
+	for i := range policy.Spec.Rules {
+		if policy.Spec.Rules[i].Name == ruleName {
+			rule = &policy.Spec.Rules[i]
+			break
+		}
+	}
+	if rule == nil {
+		t.Errorf("rule %q not found in AccessPolicy", ruleName)
+		return
+	}
+
+	expectedPrincipal := ""
+	switch rule.Source.Type {
+	case agenticv0alpha0.AuthorizationSourceTypeSPIFFE:
+		if rule.Source.SPIFFE != nil {
+			expectedPrincipal = string(*rule.Source.SPIFFE)
+		}
+	case agenticv0alpha0.AuthorizationSourceTypeServiceAccount:
+		if rule.Source.ServiceAccount != nil {
+			ns := rule.Source.ServiceAccount.Namespace
+			if ns == "" {
+				ns = policy.Namespace
+			}
+			// Convert K8s ServiceAccount to SPIFFE ID
+			expectedPrincipal = convertSAtoSPIFFEID(trustDomain, ns, rule.Source.ServiceAccount.Name)
+		}
+	}
+
+	if expectedPrincipal != "" {
+		found := false
+		for _, p := range rbacPolicy.Principals {
+			auth := p.GetAuthenticated()
+			if auth != nil && auth.PrincipalName.GetExact() == expectedPrincipal {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("rule %q: did not find expected principal %q", ruleName, expectedPrincipal)
+		}
 	}
 }

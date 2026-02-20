@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-tester
+  namespace: e2e-test-ns
+spec:
+  serviceAccountName: e2e-tester-sa
+  containers:
+  - name: tester
+    image: curlimages/curl:latest
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - name: agent-identity-mtls
+      mountPath: /run/agent-identity-mtls
+      readOnly: true
+  volumes:
+  - name: agent-identity-mtls
+    projected:
+      sources:
+      - clusterTrustBundle:
+          signerName: kube-agentic-networking.sigs.k8s.io/identity
+          labelSelector:
+            matchLabels:
+              "kube-agentic-networking.sigs.k8s.io/canarying":             "live"
+              "kube-agentic-networking.sigs.k8s.io/workload-trust-domain": "cluster.local"
+              "kube-agentic-networking.sigs.k8s.io/peer-trust-domain":     "cluster.local"
+          path: cluster.local.trust-bundle.pem
+      - podCertificate:
+          signerName: kube-agentic-networking.sigs.k8s.io/identity
+          keyType: ECDSAP256
+          credentialBundlePath: credential-bundle.pem

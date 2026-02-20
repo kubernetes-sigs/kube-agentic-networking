@@ -37,7 +37,6 @@ import (
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
 	"sigs.k8s.io/kube-agentic-networking/pkg/controller"
-	discovery "sigs.k8s.io/kube-agentic-networking/pkg/discovery"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/agenticidentitysigner"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/localca"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/signercontroller"
@@ -103,15 +102,9 @@ func main() {
 	sharedGwInformers := gatewayinformers.NewSharedInformerFactory(gatewayClientset, *resyncPeriod)
 	sharedAgenticInformers := agenticinformers.NewSharedInformerFactory(agenticClientset, *resyncPeriod)
 
-	jwtIssuer, err := discovery.JWTIssuer(cfg)
-	if err != nil {
-		klog.ErrorS(err, "Error while discovering JWT issuer")
-		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
-	}
-
 	c, err := controller.New(
 		ctx,
-		jwtIssuer,
+		*agenticIdentityTrustDomain,
 		*proxyImage,
 		kubeClient,
 		gatewayClientset,
