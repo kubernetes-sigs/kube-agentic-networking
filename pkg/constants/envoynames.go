@@ -38,4 +38,7 @@ const (
 
 	// EnvoyBootstrapMountPath is the path where the Envoy bootstrap configuration is mounted.
 	EnvoyBootstrapMountPath = "/etc/envoy/bootstrap"
+
+	// GatewayNameLabel is the label key used to identify resources associated with a specific Gateway.
+	GatewayNameLabel = "kube-agentic-networking.sigs.k8s.io/gateway-name"
 )

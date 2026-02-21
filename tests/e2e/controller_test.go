@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 const (
@@ -54,21 +56,18 @@ func TestControllerE2E(t *testing.T) {
 	t.Log("Waiting for resources to be ready...")
 	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=2m")
 	runKubectl(t, "wait", "--for=condition=available", "deployment/mcp-everything", "-n", "e2e-test-ns", "--timeout=2m")
-
 	// Wait for Gateway to be programmed and proxy to be up
 	var proxyPodName string
 	err := retry(20, 5*time.Second, func() error {
-		// List all pods and find the one that has the envoy-proxy label/name pattern
-		out := runKubectlOutput(t, "get", "pods", "-n", "e2e-test-ns", "-o", "jsonpath={.items[*].metadata.name}")
-		pods := strings.Split(out, " ")
-		for _, p := range pods {
-			if strings.HasPrefix(p, "envoy-proxy-") {
-				proxyPodName = p
-				return nil
-			}
+		// Find the pod using the standard gateway-name label
+		out := runKubectlOutput(t, "get", "pods", "-n", "e2e-test-ns", "-l", fmt.Sprintf("%s=e2e-gateway", constants.GatewayNameLabel), "-o", "jsonpath={.items[0].metadata.name}")
+		if out == "" {
+			return fmt.Errorf("envoy proxy pod not found")
 		}
-		return fmt.Errorf("envoy proxy pod not found")
+		proxyPodName = out
+		return nil
 	})
+
 	if err != nil {
 		t.Fatalf("Failed to find envoy proxy pod: %v", err)
 	}

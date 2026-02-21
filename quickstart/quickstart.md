@@ -143,7 +143,15 @@ Apply these resources to the `quickstart-ns` namespace:
 kubectl apply -f quickstart/policy/e2e.yaml
 ```
 
-Once you apply these resources, the Agentic Networking controller will detect the new `Gateway` and automatically provision an Envoy proxy `Deployment` and `Service` in the Gateway namespace (`quickstart-ns`). This Envoy proxy is dynamically configured via xDS to enforce the `XAccessPolicy` rules you defined.
+Once you apply these resources, the Agentic Networking controller will detect the new `Gateway` and automatically provision an Envoy proxy `Deployment` and `Service` in the Gateway namespace (`quickstart-ns`).
+
+Wait for the Envoy proxy to be ready:
+
+```shell
+kubectl wait --timeout=5m -n quickstart-ns deployment -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" --for=condition=Available
+```
+
+This Envoy proxy is dynamically configured via xDS to enforce the `XAccessPolicy` rules you defined.
 
 ## 5. Deploy the AI Agent
 
@@ -175,7 +183,7 @@ The agent uses an Envoy sidecar to establish mTLS-secured connections to the Gat
     export GATEWAY_ADDRESS=$(kubectl get gateway agentic-net-gateway -n quickstart-ns -o jsonpath='{.status.addresses[0].value}')
 
     # 2. Get the Gateway's ServiceAccount name to construct its SPIFFE identity
-    export GATEWAY_SA=$(kubectl get sa -n quickstart-ns --no-headers -o custom-columns=":metadata.name" | grep "envoy-proxy-" | head -n 1)
+    export GATEWAY_SA=$(kubectl get sa -n quickstart-ns -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" -o jsonpath='{.items[0].metadata.name}')
     export GATEWAY_SPIFFE_ID="spiffe://cluster.local/ns/quickstart-ns/sa/${GATEWAY_SA}"
     
     echo "Gateway Address: $GATEWAY_ADDRESS"
