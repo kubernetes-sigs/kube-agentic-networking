@@ -21,6 +21,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
@@ -76,6 +77,28 @@ func (c *Controller) syncGatewayClass(key string) {
 	}
 
 	newGwc := gwc.DeepCopy()
+
+	if newGwc.DeletionTimestamp != nil {
+		if hasGatewaysReferencingClass(c, string(newGwc.Name)) {
+			klog.V(4).InfoS("GatewayClass has Gateways still referencing it, blocking deletion", "gatewayclass", key)
+			return
+		}
+		if removeFinalizer(&newGwc.ObjectMeta, constants.GatewayClassFinalizer) {
+			if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
+				klog.Errorf("failed to remove finalizer from GatewayClass: %v", err)
+			}
+		}
+		return
+	}
+
+	if ensureFinalizer(&newGwc.ObjectMeta, constants.GatewayClassFinalizer) {
+		if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
+			klog.Errorf("failed to add finalizer to GatewayClass: %v", err)
+			return
+		}
+		return
+	}
+
 	// Set the "Accepted" condition to True and update the observedGeneration.
 	meta.SetStatusCondition(&newGwc.Status.Conditions, metav1.Condition{
 		Type:               string(gatewayv1.GatewayClassConditionStatusAccepted),
@@ -91,6 +114,21 @@ func (c *Controller) syncGatewayClass(key string) {
 	} else {
 		klog.InfoS("GatewayClass status updated", "gatewayclass", key)
 	}
+}
+
+// hasGatewaysReferencingClass returns true if any Gateway exists with spec.gatewayClassName equal to className.
+func hasGatewaysReferencingClass(c *Controller, className string) bool {
+	gateways, err := c.gateway.gatewayLister.List(labels.Everything())
+	if err != nil {
+		klog.V(4).ErrorS(err, "failed to list Gateways for GatewayClass finalizer")
+		return true // conservatively block
+	}
+	for _, gw := range gateways {
+		if string(gw.Spec.GatewayClassName) == className {
+			return true
+		}
+	}
+	return false
 }
 
 // gateway class validation
