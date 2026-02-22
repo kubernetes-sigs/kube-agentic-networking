@@ -49,7 +49,7 @@ To address these challenges, the `TelemetryPolicy` proposal targets four core ob
 
 ## The TelemetryPolicy Specification
 
-We propose the `TelemetryPolicy` as a direct policy attachment in the `gateway.networking.k8s.io` API group.
+We propose the `TelemetryPolicy` as a direct policy attachment in the `gateway.networking.k8s.io` API group. See [GEP-713](https://gateway-api.sigs.k8s.io/geps/gep-713/#classes-of-policies) for more information on Direct attachment.
 
 ### Resource Structure
 
