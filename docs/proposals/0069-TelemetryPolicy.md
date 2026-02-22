@@ -162,7 +162,7 @@ Attachment to a `Service` is deferred because a `Service` resource primarily def
 #### Agentic Telemetry
 
 * **Token Counting**: The `metrics.overrides` and `accessLogs.fields` sections allow extracting the values from headers (e.g., `x-usage-input-tokens`, `x-usage-output-tokens`) or request/response bodies (if supported by the data plane) into telemetry.
-* **Tool Use Auditing**: By attaching a `TelemetryPolicy` to a `Gateway` serving LLM traffic, operators can enforce 100% access logging for specific routes (e.g., `/tool/execute`) to create an immutable audit trafil of agent actions.
+* **Tool Use Auditing**: By attaching a `TelemetryPolicy` to a `Gateway` serving LLM traffic, operators can enforce 100% access logging for specific routes (e.g., `/tool/execute`) to create an immutable audit trail of agent actions.
 * **Latency Tracking**: Latency histograms can be configured to track "Time to First Token" (TTFT) if exposed by the backend protocol.
 
 #### Tracing
