@@ -88,7 +88,7 @@ spec:
 
   # 2. Metrics Configuration
   metrics:
-    enable: true
+    enabled: true
     provider:
       type: Prometheus
     overrides:
