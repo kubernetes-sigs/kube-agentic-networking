@@ -153,7 +153,8 @@ The final piece is the AI agent itself. We'll use a sample agent built with the 
 
 The agent's ability to understand requests and generate responses is powered by a Large Language Model (LLM). This guide uses a HuggingFace model ([deepseek-ai/DeepSeek-R1-0528](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528)) accessed via `LiteLLM` for vendor neutrality.
 
-To authenticate with the external HuggingFace model, you'll need a HuggingFace token. Obtain one by following [this guide](https://huggingface.co/docs/hub/en/security-tokens) and store it in a Kubernetes secret:
+To authenticate with the external HuggingFace model, you'll need a HuggingFace token with ***"Make calls to Inference Providers"*** permission enabled. Obtain one by following [this guide](https://huggingface.co/docs/hub/en/security-tokens) and store it in a Kubernetes secret:
+
 
 ```shell
 kubectl create secret generic hf-secret -n quickstart-ns --from-literal=hf-token-key='<YOUR-HUGGINGFACE-TOKEN>'
