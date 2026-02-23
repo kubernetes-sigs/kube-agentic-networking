@@ -82,7 +82,7 @@ spec:
     context:
       - W3C
       - B3
-    customSpanAttributes:
+    customAttributes:
       - attributeName: "env"
         literalValue: "production"
 
@@ -137,25 +137,125 @@ Attachment to a `Service` is deferred because a `Service` resource primarily def
 
 ### Detailed Resource Description
 
-| Field Name                        | Type         | Description |
-| --------------------------------- | ------------ | ----------- |
-| spec.targetRef                    | Object       | *Required.* Identifies the target resource (Gateway or Namespace) to which this policy attaches, following GEP-713 compliance. |
-| spec.tracing                      | Object       | Configuration for distributed tracing options. |
-| spec.tracing.provider             | Object       | Specifies the tracing backend. Includes type (e.g., "OTLP") and endpoint (e.g., collector URL). |
-| spec.tracing.samplingRate         | Fraction     | The base sampling probability for traces. |
-| spec.tracing.parentBasedSampling  | Object       | Configures whether to respect the sampling decision of the parent span, with an optional fallback sampling rate. |
-| spec.tracing.context              | List<String> | Specifies the context propagation formats to use (e.g., W3C, B3, Jaeger). |
-| spec.tracing.customAttributes     | List<Object> | Allows appending custom tags/attributes to spans. Supports literal values (e.g., env: production). |
-| spec.metrics                      | Object       | Configuration for metric generation and exports. |
-| spec.metrics.enable               | Boolean      | Global switch to enable or disable metric generation. |
-| spec.metrics.provider             | Object       | Specifies the metrics backend (e.g., Prometheus). |
-| spec.metrics.overrides            | List<Object> | List of configurations to customize specific metric families (e.g., request_count). |
-| spec.metrics.overrides.dimensions | List<Object> | Defines custom dimensions (labels). Can extract values from headers (e.g., x-model-id) for Agentic telemetry. |
-| spec.accessLogs                   | Object       | Configuration for access log generation. |
-| spec.accessLogs.enable            | Boolean      | Global switch to enable or disable access logging. |
-| spec.accessLogs.format            | String       | The format of the logs (e.g., JSON, Text). |
-| spec.accessLogs.matches           | List<Object> | Conditions for logging, allowing filtering to specific paths (e.g., /api/v1/sensitive) or events. |
-| spec.accessLogs.fields            | List<String> | A list of specific fields or headers to include in the logs (e.g., x-token-usage, start_time). |
+The following are the Go structs modeling the proposed specification:
+
+```Go
+// TelemetryPolicy defines a direct policy attachment to configure observability
+// signals for Gateway API resources and Service Mesh resources.
+type TelemetryPolicy struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec TelemetryPolicySpec `json:"spec"`
+}
+
+type TelemetryPolicySpec struct {
+	// Identifies the target resource (Gateway or Namespace) to which this policy attaches.
+	TargetRef TargetRef `json:"targetRef"`
+
+	// Configuration for distributed tracing options.
+	Tracing *TracingConfig `json:"tracing,omitempty"`
+
+	// Configuration for metric generation and exports.
+	Metrics *MetricsConfig `json:"metrics,omitempty"`
+
+	// Configuration for access log generation.
+	AccessLogs *AccessLogsConfig `json:"accessLogs,omitempty"`
+}
+
+type TargetRef struct {
+	Group string `json:"group"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+}
+
+// --- Tracing Types ---
+
+type TracingConfig struct {
+	// Specifies the tracing backend. Includes type (e.g., "OTLP") and endpoint.
+	Provider *TracingProvider `json:"provider,omitempty"`
+
+	// The base sampling probability for traces.
+	SamplingRate *Fraction `json:"samplingRate,omitempty"`
+
+	// Configures whether to respect the sampling decision of the parent span.
+	ParentBasedSampling *ParentBasedSampling `json:"parentBasedSampling,omitempty"`
+
+	// Specifies the context propagation formats to use (e.g., W3C, B3, Jaeger).
+	Context []string `json:"context,omitempty"`
+
+	// Allows appending custom tags/attributes to spans.
+	CustomAttributes []CustomAttribute `json:"customAttributes,omitempty"`
+}
+
+type TracingProvider struct {
+	Type     string `json:"type"`
+	Endpoint string `json:"endpoint,omitempty"`
+}
+
+type Fraction struct {
+	Percent int32 `json:"percent,omitempty"`
+}
+
+type ParentBasedSampling struct {
+	Enabled      bool      `json:"enabled"`
+	SamplingRate *Fraction `json:"samplingRate,omitempty"`
+}
+
+type CustomAttribute struct {
+	AttributeName string `json:"attributeName"`
+	LiteralValue  string `json:"literalValue"`
+}
+
+// --- Metrics Types ---
+
+type MetricsConfig struct {
+	// Global switch to enable or disable metric generation.
+	Enabled bool `json:"enabled"`
+
+	// Specifies the metrics backend (e.g., Prometheus).
+	Provider *MetricsProvider `json:"provider,omitempty"`
+
+	// List of configurations to customize specific metric families.
+	Overrides []MetricOverride `json:"overrides,omitempty"`
+}
+
+type MetricsProvider struct {
+	Type string `json:"type"`
+}
+
+type MetricOverride struct {
+	Name       string      `json:"name"`
+	Type       string      `json:"type,omitempty"`
+	// Defines custom dimensions (labels). Can extract values from headers.
+	Dimensions []Dimension `json:"dimensions,omitempty"`
+}
+
+type Dimension struct {
+	Key        string `json:"key"`
+	FromHeader string `json:"fromHeader,omitempty"`
+}
+
+// --- Access Logs Types ---
+
+type AccessLogsConfig struct {
+	// Global switch to enable or disable access logging.
+	Enabled bool `json:"enabled"`
+
+	// The format of the logs (e.g., JSON, Text).
+	Format string `json:"format,omitempty"`
+
+	// Conditions for logging, allowing filtering to specific paths or events.
+	Matches []MatchCondition `json:"matches,omitempty"`
+
+	// A list of specific fields or headers to include in the logs.
+	Fields []string `json:"fields,omitempty"`
+}
+
+type MatchCondition struct {
+	Path string `json:"path,omitempty"`
+}
+```
 
 ### Alignment with Requirements
 
