@@ -55,6 +55,11 @@ graph TD
 
 Before you begin, ensure you have the following tools installed and configured:
 
+- **A local clone of this repository**:
+  ```shell
+  git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
+  cd kube-agentic-networking
+  ```
 - **A Kubernetes cluster**: Minimum version v1.35.0, with the PodCertificateRequest and ClusterTrustBundle features enabled. You can use a local cluster like `kind` or `minikube`, or a cloud-based one.
   ```shell
   kind create cluster --config=quickstart/kind-config.yaml
@@ -63,11 +68,6 @@ Before you begin, ensure you have the following tools installed and configured:
 - **A configured `kubectl` context**: Your `kubectl` should be pointing to the cluster you intend to use.
   ```shell
   kubectl config use-context <YOUR-CLUSTER-NAME>
-  ```
-- A local clone of this repository:
-  ```shell
-  git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
-  cd kube-agentic-networking
   ```
 
 ## 2. Set Up the Kubernetes Environment
@@ -103,6 +103,12 @@ Deploy the `everything` MCP reference server, which will act as the local tool p
 
 ```shell
 kubectl apply -f quickstart/mcpserver/deployment.yaml
+```
+
+Wait for the MCP server deployment to be ready:
+
+```shell
+kubectl wait --timeout=5m -n quickstart-ns deployment/mcp-everything --for=condition=Available
 ```
 
 ## 3. Deploy the Agentic Networking Controller
