@@ -143,118 +143,118 @@ The following are the Go structs modeling the proposed specification:
 // TelemetryPolicy defines a direct policy attachment to configure observability
 // signals for Gateway API resources and Service Mesh resources.
 type TelemetryPolicy struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec TelemetryPolicySpec `json:"spec"`
+    Spec TelemetryPolicySpec `json:"spec"`
 }
 
 type TelemetryPolicySpec struct {
-	// Identifies the target resource (Gateway or Namespace) to which this policy attaches.
-	TargetRef TargetRef `json:"targetRef"`
+    // Identifies the target resource (Gateway or Namespace) to which this policy attaches.
+    TargetRef TargetRef `json:"targetRef"`
 
-	// Configuration for distributed tracing options.
-	Tracing *TracingConfig `json:"tracing,omitempty"`
+    // Configuration for distributed tracing options.
+    Tracing *TracingConfig `json:"tracing,omitempty"`
 
-	// Configuration for metric generation and exports.
-	Metrics *MetricsConfig `json:"metrics,omitempty"`
+    // Configuration for metric generation and exports.
+    Metrics *MetricsConfig `json:"metrics,omitempty"`
 
-	// Configuration for access log generation.
-	AccessLogs *AccessLogsConfig `json:"accessLogs,omitempty"`
+    // Configuration for access log generation.
+    AccessLogs *AccessLogsConfig `json:"accessLogs,omitempty"`
 }
 
 type TargetRef struct {
-	Group string `json:"group"`
-	Kind  string `json:"kind"`
-	Name  string `json:"name"`
+    Group string `json:"group"`
+    Kind  string `json:"kind"`
+    Name  string `json:"name"`
 }
 
 // --- Tracing Types ---
 
 type TracingConfig struct {
-	// Specifies the tracing backend. Includes type (e.g., "OTLP") and endpoint.
-	Provider *TracingProvider `json:"provider,omitempty"`
+    // Specifies the tracing backend. Includes type (e.g., "OTLP") and endpoint.
+    Provider *TracingProvider `json:"provider,omitempty"`
 
-	// The base sampling probability for traces.
-	SamplingRate *Fraction `json:"samplingRate,omitempty"`
+    // The base sampling probability for traces.
+    SamplingRate *Fraction `json:"samplingRate,omitempty"`
 
-	// Configures whether to respect the sampling decision of the parent span.
-	ParentBasedSampling *ParentBasedSampling `json:"parentBasedSampling,omitempty"`
+    // Configures whether to respect the sampling decision of the parent span.
+    ParentBasedSampling *ParentBasedSampling `json:"parentBasedSampling,omitempty"`
 
-	// Specifies the context propagation formats to use (e.g., W3C, B3, Jaeger).
-	Context []string `json:"context,omitempty"`
+    // Specifies the context propagation formats to use (e.g., W3C, B3, Jaeger).
+    Context []string `json:"context,omitempty"`
 
-	// Allows appending custom tags/attributes to spans.
-	CustomAttributes []CustomAttribute `json:"customAttributes,omitempty"`
+    // Allows appending custom tags/attributes to spans.
+    CustomAttributes []CustomAttribute `json:"customAttributes,omitempty"`
 }
 
 type TracingProvider struct {
-	Type     string `json:"type"`
-	Endpoint string `json:"endpoint,omitempty"`
+    Type     string `json:"type"`
+    Endpoint string `json:"endpoint,omitempty"`
 }
 
 type Fraction struct {
-	Percent int32 `json:"percent,omitempty"`
+    Percent int32 `json:"percent,omitempty"`
 }
 
 type ParentBasedSampling struct {
-	Enabled      bool      `json:"enabled"`
-	SamplingRate *Fraction `json:"samplingRate,omitempty"`
+    Enabled      bool      `json:"enabled"`
+    SamplingRate *Fraction `json:"samplingRate,omitempty"`
 }
 
 type CustomAttribute struct {
-	AttributeName string `json:"attributeName"`
-	LiteralValue  string `json:"literalValue"`
+    AttributeName string `json:"attributeName"`
+    LiteralValue  string `json:"literalValue"`
 }
 
 // --- Metrics Types ---
 
 type MetricsConfig struct {
-	// Global switch to enable or disable metric generation.
-	Enabled bool `json:"enabled"`
+    // Global switch to enable or disable metric generation.
+    Enabled bool `json:"enabled"`
 
-	// Specifies the metrics backend (e.g., Prometheus).
-	Provider *MetricsProvider `json:"provider,omitempty"`
+    // Specifies the metrics backend (e.g., Prometheus).
+    Provider *MetricsProvider `json:"provider,omitempty"`
 
-	// List of configurations to customize specific metric families.
-	Overrides []MetricOverride `json:"overrides,omitempty"`
+    // List of configurations to customize specific metric families.
+    Overrides []MetricOverride `json:"overrides,omitempty"`
 }
 
 type MetricsProvider struct {
-	Type string `json:"type"`
+    Type string `json:"type"`
 }
 
 type MetricOverride struct {
-	// The metric name to override (e.g., "http_requests_total" or "gateway.networking.k8s.io/http/request_count").
-	Name       string      `json:"name"`
-	Type       string      `json:"type,omitempty"`
-	// Defines custom dimensions (labels). Can extract values from headers.
-	Dimensions []Dimension `json:"dimensions,omitempty"`
+    // The metric name to override (e.g., "http_requests_total" or "gateway.networking.k8s.io/http/request_count").
+    Name       string      `json:"name"`
+    Type       string      `json:"type,omitempty"`
+    // Defines custom dimensions (labels). Can extract values from headers.
+    Dimensions []Dimension `json:"dimensions,omitempty"`
 }
 
 type Dimension struct {
-	Key        string `json:"key"`
-	FromHeader string `json:"fromHeader,omitempty"`
+    Key        string `json:"key"`
+    FromHeader string `json:"fromHeader,omitempty"`
 }
 
 // --- Access Logs Types ---
 
 type AccessLogsConfig struct {
-	// Global switch to enable or disable access logging.
-	Enabled bool `json:"enabled"`
+    // Global switch to enable or disable access logging.
+    Enabled bool `json:"enabled"`
 
-	// The format of the logs (e.g., JSON, Text).
-	Format string `json:"format,omitempty"`
+    // The format of the logs (e.g., JSON, Text).
+    Format string `json:"format,omitempty"`
 
-	// Conditions for logging, allowing filtering to specific paths or events.
-	Matches []MatchCondition `json:"matches,omitempty"`
+    // Conditions for logging, allowing filtering to specific paths or events.
+    Matches []MatchCondition `json:"matches,omitempty"`
 
-	// A list of specific fields or headers to include in the logs.
-	Fields []string `json:"fields,omitempty"`
+    // A list of specific fields or headers to include in the logs.
+    Fields []string `json:"fields,omitempty"`
 }
 
 type MatchCondition struct {
-	Path string `json:"path,omitempty"`
+    Path string `json:"path,omitempty"`
 }
 ```
 
