@@ -92,7 +92,7 @@ spec:
     provider:
       type: Prometheus
     overrides:
-      - name: "request_count"
+      - name: "gateway.networking.k8s.io/http/request_count"
         type: Counter
         dimensions: # Custom labels/dimensions
           - key: "model_id"
@@ -225,6 +225,7 @@ type MetricsProvider struct {
 }
 
 type MetricOverride struct {
+	// The metric name to override (e.g., "http_requests_total" or "gateway.networking.k8s.io/http/request_count").
 	Name       string      `json:"name"`
 	Type       string      `json:"type,omitempty"`
 	// Defines custom dimensions (labels). Can extract values from headers.
