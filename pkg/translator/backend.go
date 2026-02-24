@@ -25,11 +25,9 @@ import (
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
-	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -38,7 +36,7 @@ const (
 	defaultConnectTimeout = 5 * time.Second
 )
 
-func fetchBackend(namespace string, backendRef gatewayv1.BackendRef, backendLister agenticlisters.XBackendLister, serviceLister corev1listers.ServiceLister) (*agenticv0alpha0.XBackend, error) {
+func (t *Translator) fetchBackend(namespace string, backendRef gatewayv1.BackendRef) (*agenticv0alpha0.XBackend, error) {
 	// 1. Validate that the Kind is Backend.
 	if backendRef.Kind != nil && *backendRef.Kind != "XBackend" {
 		return nil, &ControllerError{
@@ -53,7 +51,7 @@ func fetchBackend(namespace string, backendRef gatewayv1.BackendRef, backendList
 	}
 
 	// 2. Fetch the Backend resource.
-	backend, err := backendLister.XBackends(ns).Get(string(backendRef.Name))
+	backend, err := t.backendLister.XBackends(ns).Get(string(backendRef.Name))
 	if err != nil {
 		return nil, &ControllerError{
 			Reason:  string(gatewayv1.RouteReasonBackendNotFound),
@@ -63,7 +61,7 @@ func fetchBackend(namespace string, backendRef gatewayv1.BackendRef, backendList
 
 	// 3. Check if the referenced Service exists.
 	if svcName := backend.Spec.MCP.ServiceName; svcName != nil {
-		if _, err := serviceLister.Services(ns).Get(*svcName); err != nil {
+		if _, err := t.serviceLister.Services(ns).Get(*svcName); err != nil {
 			fmt.Printf("Service lookup error for backend %s/%s, error: %v\n", ns, backendRef.Name, err)
 			return nil, &ControllerError{
 				Reason:  string(gatewayv1.RouteReasonBackendNotFound),

@@ -1,0 +1,11 @@
+resources:
+- "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret"
+  name: "{{.SdsConfigName}}"
+  tls_certificate:
+    # Note: Loading the certificate chain and private key separately can cause
+    # problems during certificate rotation.
+    # https://github.com/kubernetes-sigs/kube-agentic-networking/issues/101
+    certificate_chain:
+      filename: "{{.SpiffeMountPath}}/{{.SpiffeCredentialBundleFileName}}"
+    private_key:
+      filename: "{{.SpiffeMountPath}}/{{.SpiffeCredentialBundleFileName}}"

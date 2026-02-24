@@ -3,7 +3,7 @@
 
 
 approvers:
-  - kube-agentic-networking-maintainers
+  - kan-reference-implementation-approvers
 
 reviewers:
-  - kube-agentic-networking-maintainers
+  - kan-reference-implementation-approvers

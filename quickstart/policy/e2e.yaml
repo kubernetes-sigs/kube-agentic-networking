@@ -1,12 +1,19 @@
 apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kube-agentic-networking
+spec:
+  controllerName: sigs.k8s.io/kube-agentic-networking-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: agentic-net-gateway
   namespace: quickstart-ns
 spec:
-  gatewayClassName: cloud-provider-kind
+  gatewayClassName: kube-agentic-networking
   listeners:
-    - protocol: HTTP
+    - protocol: HTTPS
       port: 10001
       name: agentic-net-gateway-listener2
       allowedRoutes:

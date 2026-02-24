@@ -53,20 +53,20 @@ func (e *ControllerError) Error() string {
 
 // Translator holds the xDS cache and version for generating snapshots.
 type Translator struct {
-	jwtIssuer          string
-	client             kubernetes.Interface
-	gwClient           gatewayclient.Interface
-	namespaceLister    corev1listers.NamespaceLister
-	serviceLister      corev1listers.ServiceLister
-	secretLister       corev1listers.SecretLister
-	gatewayLister      gatewaylisters.GatewayLister
-	httprouteLister    gatewaylisters.HTTPRouteLister
-	accessPolicyLister agenticlisters.XAccessPolicyLister
-	backendLister      agenticlisters.XBackendLister
+	agenticIdentityTrustDomain string
+	client                     kubernetes.Interface
+	gwClient                   gatewayclient.Interface
+	namespaceLister            corev1listers.NamespaceLister
+	serviceLister              corev1listers.ServiceLister
+	secretLister               corev1listers.SecretLister
+	gatewayLister              gatewaylisters.GatewayLister
+	httprouteLister            gatewaylisters.HTTPRouteLister
+	accessPolicyLister         agenticlisters.XAccessPolicyLister
+	backendLister              agenticlisters.XBackendLister
 }
 
 func New(
-	jwtIssuer string,
+	agenticIdentityTrustDomain string,
 	client kubernetes.Interface,
 	gwClient gatewayclient.Interface,
 	namespaceLister corev1listers.NamespaceLister,
@@ -78,7 +78,7 @@ func New(
 	backendLister agenticlisters.XBackendLister,
 ) *Translator {
 	return &Translator{
-		jwtIssuer,
+		agenticIdentityTrustDomain,
 		client,
 		gwClient,
 		namespaceLister,
@@ -213,7 +213,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
 				// 5. For each accepted HTTPRoute for this listener -> translate to Envoy routes
 				for _, httpRoute := range routesByListener[listener.Name] {
-					routes, allValidBackends, resolvedRefsCondition := translateHTTPRouteToEnvoyRoutes(httpRoute, t.serviceLister, t.accessPolicyLister, t.backendLister)
+					routes, allValidBackends, resolvedRefsCondition := t.translateHTTPRouteToEnvoyRoutes(httpRoute)
 
 					key := types.NamespacedName{Name: httpRoute.Name, Namespace: httpRoute.Namespace}
 					currentParentStatuses := httpRouteStatuses[key]
@@ -267,7 +267,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			}
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
-			filterChain, err := t.translateListenerToFilterChain(gateway, listener, routeName)
+			filterChain, err := t.translateListenerToFilterChain(listener, routeName)
 			if err != nil {
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
@@ -327,7 +327,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			// For HTTPS, we create one filter chain per listener because they have unique
 			// SNI matches and TLS settings.
 			if listeners[0].Protocol == gatewayv1.HTTPProtocolType {
-				filterChain, _ := t.translateListenerToFilterChain(gateway, listeners[0], routeName)
+				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName)
 				envoyListener.FilterChains = []*listenerv3.FilterChain{filterChain}
 			}
 			finalEnvoyListeners = append(finalEnvoyListeners, envoyListener)

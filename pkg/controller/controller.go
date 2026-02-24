@@ -86,8 +86,8 @@ type Controller struct {
 	gateway gatewayResources
 	agentic agenticNetResources
 
-	jwtIssuer  string
-	envoyImage string
+	agenticIdentityTrustDomain string
+	envoyImage                 string
 
 	gatewayqueue workqueue.TypedRateLimitingInterface[string]
 	xdsServer    *xds.Server
@@ -97,7 +97,7 @@ type Controller struct {
 // New returns a new *Controller with the event handlers setup for types we are interested in.
 func New(
 	ctx context.Context,
-	jwtIssuer string,
+	agenticIdentityTrustDomain string,
 	envoyImage string,
 	kubeClientSet kubernetes.Interface,
 	gwClientSet gatewayclient.Interface,
@@ -137,8 +137,8 @@ func New(
 			accessPolicyLister: accessPolicyInformer.Lister(),
 			accessPolicySynced: accessPolicyInformer.Informer().HasSynced,
 		},
-		jwtIssuer:  jwtIssuer,
-		envoyImage: envoyImage,
+		agenticIdentityTrustDomain: agenticIdentityTrustDomain,
+		envoyImage:                 envoyImage,
 		gatewayqueue: workqueue.NewTypedRateLimitingQueueWithConfig(
 			workqueue.DefaultTypedControllerRateLimiter[string](),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "gateway"},
@@ -147,7 +147,7 @@ func New(
 	}
 
 	c.translator = translator.New(
-		jwtIssuer,
+		agenticIdentityTrustDomain,
 		kubeClientSet,
 		gwClientSet,
 		namespaceInformer.Lister(),
@@ -275,15 +275,31 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 		return err
 	}
 
+	// Only reconcile Gateways whose spec.gatewayClassName refers to a GatewayClass
+	if !c.isGatewayOwnedByController(gateway) {
+		logger.V(4).Info("Skipping Gateway: not owned by this controller (GatewayClass controllerName mismatch or GatewayClass not found)",
+			"gateway", klog.KRef(gateway.Namespace, gateway.Name),
+			"gatewayClassName", string(gateway.Spec.GatewayClassName))
+		return nil
+	}
+
 	logger.Info("Syncing gateway")
 
 	// Ensure Envoy proxy deployment and service exist.
-	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage)
-	if err := rm.EnsureProxyExist(ctx); err != nil {
+	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
+	proxyIP, err := rm.EnsureProxyExist(ctx)
+	if err != nil {
 		return err
 	}
 
-	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID())
+	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
+
+	// Update Gateway status with the proxy IP.
+	if err := c.updateGatewayStatus(ctx, gateway, proxyIP); err != nil {
+		// TODO: Holistic retry on error
+		// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/100
+		logger.Error(err, "Failed to update gateway status")
+	}
 
 	// Translate Gateway to xDS resources.
 	resources, err := c.translator.TranslateGatewayToXDS(ctx, gateway)

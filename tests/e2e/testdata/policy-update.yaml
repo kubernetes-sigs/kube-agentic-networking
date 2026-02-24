@@ -1,0 +1,21 @@
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: e2e-policy
+  namespace: e2e-test-ns
+spec:
+  targetRefs:
+    - group: agentic.prototype.x-k8s.io
+      kind: XBackend
+      name: e2e-mcp-backend
+  rules:
+    - name: allow-echo
+      source:
+        type: ServiceAccount
+        serviceAccount:
+          name: e2e-tester-sa
+          namespace: e2e-test-ns
+      authorization:
+        type: InlineTools
+        tools:
+          - "echo"

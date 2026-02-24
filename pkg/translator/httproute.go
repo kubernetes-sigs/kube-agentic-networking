@@ -30,7 +30,6 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -40,11 +39,8 @@ import (
 
 // translateHTTPRouteToEnvoyRoutes translates a full HTTPRoute into a slice of Envoy Routes.
 // It now correctly handles RequestHeaderModifier filters.
-func translateHTTPRouteToEnvoyRoutes(
+func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 	httpRoute *gatewayv1.HTTPRoute,
-	serviceLister corev1listers.ServiceLister,
-	accessPolicyLister agenticlisters.XAccessPolicyLister,
-	backendLister agenticlisters.XBackendLister,
 ) ([]*routev3.Route, []*agenticv0alpha0.XBackend, metav1.Condition) {
 
 	var envoyRoutes []*routev3.Route
@@ -100,12 +96,9 @@ func translateHTTPRouteToEnvoyRoutes(
 				}
 			} else {
 				// Build the forwarding action with backend clusters and per-cluster security policies.
-				routeAction, validBackends, err := buildHTTPRouteAction(
+				routeAction, validBackends, err := t.buildHTTPRouteAction(
 					httpRoute.Namespace,
 					rule.BackendRefs,
-					serviceLister,
-					accessPolicyLister,
-					backendLister,
 				)
 				var controllerErr *ControllerError
 				if errors.As(err, &controllerErr) {
@@ -265,17 +258,14 @@ func processRequestHeaderModifierFilter(f *gatewayv1.HTTPHeaderFilter) ([]*corev
 }
 
 // buildHTTPRouteAction returns an action, a list of *valid* BackendRefs, and a structured error.
-func buildHTTPRouteAction(namespace string,
-	backendRefs []gatewayv1.HTTPBackendRef,
-	serviceLister corev1listers.ServiceLister,
-	accessPolicyLister agenticlisters.XAccessPolicyLister,
-	backendLister agenticlisters.XBackendLister) (*routev3.RouteAction, []*agenticv0alpha0.XBackend, error) {
+func (t *Translator) buildHTTPRouteAction(namespace string,
+	backendRefs []gatewayv1.HTTPBackendRef) (*routev3.RouteAction, []*agenticv0alpha0.XBackend, error) {
 
 	weightedClusters := &routev3.WeightedCluster{}
 	var validBackends []*agenticv0alpha0.XBackend
 
 	for _, httpBackendRef := range backendRefs {
-		backend, err := fetchBackend(namespace, httpBackendRef.BackendRef, backendLister, serviceLister)
+		backend, err := t.fetchBackend(namespace, httpBackendRef.BackendRef)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -302,7 +292,7 @@ func buildHTTPRouteAction(namespace string,
 			}
 		}
 
-		clusterWeight.TypedPerFilterConfig, err = buildPerClusterRBACFilterConfig(accessPolicyLister, backend)
+		clusterWeight.TypedPerFilterConfig, err = t.buildPerClusterRBACFilterConfig(t.accessPolicyLister, backend)
 		if err != nil {
 			klog.Errorf("Failed to build per-cluster RBAC config for backend %s/%s: %v", backend.Namespace, backend.Name, err)
 			// Continue without RBAC config for this cluster if it fails to build.
@@ -320,12 +310,12 @@ func buildHTTPRouteAction(namespace string,
 }
 
 // buildPerClusterRBACFilterConfig creates the TypedPerFilterConfig for a cluster, specifically for the RBAC filter.
-func buildPerClusterRBACFilterConfig(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (map[string]*anypb.Any, error) {
+func (t *Translator) buildPerClusterRBACFilterConfig(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (map[string]*anypb.Any, error) {
 	perFilterConfig := make(map[string]*anypb.Any)
 
 	// Envoy's per-cluster configuration requires an RBACPerRoute message containing
 	// RBAC rules derived from AuthPolicy resources targeting this backend.
-	rbacConfig, err := rbacConfigFromAccessPolicy(accessPolicyLister, backend)
+	rbacConfig, err := t.rbacConfigFromAccessPolicy(accessPolicyLister, backend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate RBAC policies: %w", err)
 	}

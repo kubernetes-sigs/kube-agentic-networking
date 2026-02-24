@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -35,8 +35,7 @@ const (
 	ClusterNameFormat = "%s-%s"
 	// K8sAPIClusterName is the name of the cluster that points to the Kubernetes API server.
 	K8sAPIClusterName = "kubernetes_api_cluster"
-	// SAAuthTokenHeader is the header used to carry the Kubernetes service account token.
-	SAAuthTokenHeader = "x-k8s-sa-token"
-	// UserRoleHeader is the header populated with the subject claim from the JWT.
-	UserRoleHeader = "x-user-role"
+
+	// EnvoyBootstrapMountPath is the path where the Envoy bootstrap configuration is mounted.
+	EnvoyBootstrapMountPath = "/etc/envoy/bootstrap"
 )

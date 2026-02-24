@@ -1,4 +1,4 @@
-name: Controller Deployment Test
+name: Controller E2E Test
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  deploy:
+  e2e-test:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -63,7 +63,7 @@ jobs:
     - name: Create client pod with agent identity
       run: |
         kubectl apply -f quickstart/agent-identity-demo/agent-identity-demo.yaml
-      
+
     - name: Wait for agent identity client pod to be ready (indicates that cert issuance works)
       run: |
         kubectl wait --for=condition=available --timeout=300s deployment/client -n agent-identity-demo
@@ -74,3 +74,18 @@ jobs:
         kubectl get pods -n agent-identity-demo -l app=client -o yaml
         kubectl get podcertificaterequests -n agent-identity-demo -o yaml
         kubectl get clustertrustbundles -f 'spec.signerName=kube-agentic-networking.sigs.k8s.io/identity'
+
+    - name: Run E2E tests
+      run: |
+        make test-e2e
+
+    - name: Debug E2E failure
+      if: failure()
+      run: |
+        kubectl get all -n e2e-test-ns
+        kubectl get gateway -n e2e-test-ns
+        kubectl get xaccesspolicies -n e2e-test-ns
+        kubectl get xbackends -n e2e-test-ns
+        kubectl logs -n e2e-test-ns -l app=mcp-everything --tail=100
+        # Log for the envoy proxy
+        kubectl logs -n e2e-test-ns -l "kube-agentic-networking.sigs.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100
