@@ -76,6 +76,84 @@ try:
     logger.info("McpToolset remote_mcp initialized successfully.")
 except Exception as e:
     logger.error(f"Error initializing McpToolset remote_mcp: {e}")
+# Get tracer for custom spans
+tracer = trace.get_tracer(__name__)
+
+# Initialize trace context propagator
+propagator = TraceContextTextMapPropagator()
+
+
+def get_trace_headers():
+    """
+    Get headers with trace context (traceparent) for propagating traces to downstream services.
+
+    Returns:
+        dict: Headers containing traceparent and tracestate if a span is active
+    """
+    headers = {}
+    # Inject current trace context into headers
+    propagator.inject(headers)
+    return headers
+
+# Initialize local MCP with tracing
+with tracer.start_as_current_span("initialize_local_mcp") as span:
+    try:
+        span.set_attribute("mcp.type", "local")
+        span.set_attribute("mcp.url", f"http://{envoy_service}/local/mcp")
+
+        # Get trace context headers to propagate to MCP
+        trace_headers = get_trace_headers()
+        logger.debug(f"Trace headers for local MCP: {trace_headers}")
+
+        # Merge trace headers with authentication headers
+        headers = {
+            "x-k8s-sa-token": sa_token,
+            **trace_headers,  # Include traceparent and tracestate
+        }
+
+        local_mcp = McpToolset(
+            connection_params=StreamableHTTPConnectionParams(
+                url=f"http://{envoy_service}/local/mcp",
+                headers=headers,
+            ),
+        )
+        logger.info("McpToolset local_mcp initialized successfully.")
+        span.set_status(Status(StatusCode.OK))
+    except Exception as e:
+        logger.error(f"Error initializing McpToolset local_mcp: {e}")
+        span.set_status(Status(StatusCode.ERROR, str(e)))
+        span.record_exception(e)
+        raise
+
+# Initialize remote MCP with tracing
+with tracer.start_as_current_span("initialize_remote_mcp") as span:
+    try:
+        span.set_attribute("mcp.type", "remote")
+        span.set_attribute("mcp.url", f"http://{envoy_service}/remote/mcp")
+
+        # Get trace context headers to propagate to MCP
+        trace_headers = get_trace_headers()
+        logger.debug(f"Trace headers for remote MCP: {trace_headers}")
+
+        # Merge trace headers with authentication headers
+        headers = {
+            "x-k8s-sa-token": sa_token,
+            **trace_headers,  # Include traceparent and tracestate
+        }
+
+        remote_mcp = McpToolset(
+            connection_params=StreamableHTTPConnectionParams(
+                url=f"http://{envoy_service}/remote/mcp",
+                headers=headers,
+            ),
+        )
+        logger.info("McpToolset remote_mcp initialized successfully.")
+        span.set_status(Status(StatusCode.OK))
+    except Exception as e:
+        logger.error(f"Error initializing McpToolset remote_mcp: {e}")
+        span.set_status(Status(StatusCode.ERROR, str(e)))
+        span.record_exception(e)
+        raise
 
 root_agent = LlmAgent(
     model=model,

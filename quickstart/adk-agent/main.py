@@ -15,10 +15,25 @@
 # This file sets up the FastAPI application using get_fast_api_app() from ADK
 
 import os
+import logging
 
 import uvicorn
 from fastapi import FastAPI
 from google.adk.cli.fast_api import get_fast_api_app
+
+# Import OpenTelemetry instrumentation
+from otel_instrumentation import setup_otel_tracing, instrument_fastapi
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Set up OpenTelemetry tracing before creating the app
+logger.info("Initializing OpenTelemetry tracing...")
+setup_otel_tracing(service_name="adk-agent")
 
 # Get the directory where main.py is located
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,6 +52,10 @@ app: FastAPI = get_fast_api_app(
     allow_origins=ALLOWED_ORIGINS,
     web=SERVE_WEB_INTERFACE,
 )
+
+# Instrument the FastAPI app with OpenTelemetry
+logger.info("Instrumenting FastAPI application with OpenTelemetry...")
+instrument_fastapi(app)
 
 # You can add more FastAPI routes or configurations below if needed
 # Example:
