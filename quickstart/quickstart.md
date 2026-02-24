@@ -174,7 +174,18 @@ kubectl create secret generic hf-secret -n quickstart-ns --from-literal=hf-token
 
 The agent uses an Envoy sidecar to establish mTLS-secured connections to the Gateway. We'll discover Gateway address and identity from your cluster and "plumb" it into the sidecar's configuration using environment variables.
 
-1.  **Discover the Gateway address and identity**:
+1.  **Verify the Envoy proxy (Gateway) is running**:
+    Before deploying the agent, ensure the Gateway's Envoy proxy is ready.
+
+    ```shell
+    # Wait for the Envoy proxy deployment to be ready
+    kubectl wait --timeout=2m -n quickstart-ns deployment/$(kubectl get deployment -n quickstart-ns -o name | grep envoy-proxy | cut -d'/' -f2) --for=condition=Available
+
+    # Verify the Gateway status is ready
+    kubectl get gateway agentic-net-gateway -n quickstart-ns
+    ```
+
+2.  **Discover the Gateway address and identity**:
     Run these commands to extract the dynamic values and export them to your shell:
 
     ```shell
@@ -184,7 +195,7 @@ The agent uses an Envoy sidecar to establish mTLS-secured connections to the Gat
     # 2. Get the Gateway's ServiceAccount name to construct its SPIFFE identity
     export GATEWAY_SA=$(kubectl get sa -n quickstart-ns --no-headers -o custom-columns=":metadata.name" | grep "envoy-proxy-" | head -n 1)
     export GATEWAY_SPIFFE_ID="spiffe://cluster.local/ns/quickstart-ns/sa/${GATEWAY_SA}"
-    
+
     echo "Gateway Address: $GATEWAY_ADDRESS"
     echo "Gateway SPIFFE ID: $GATEWAY_SPIFFE_ID"
     ```
