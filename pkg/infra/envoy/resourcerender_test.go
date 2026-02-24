@@ -79,6 +79,17 @@ func TestRenderDeployment(t *testing.T) {
 
 	dep := rm.renderDeployment()
 
+	// Verify Identification Labels
+	if dep.Labels[constants.GatewayNameLabel] != gw.Name {
+		t.Errorf("Deployment missing gateway name label: got %s, want %s", dep.Labels[constants.GatewayNameLabel], gw.Name)
+	}
+	if dep.Spec.Selector.MatchLabels[constants.GatewayNameLabel] != gw.Name {
+		t.Errorf("Deployment selector missing gateway name label: got %s, want %s", dep.Spec.Selector.MatchLabels[constants.GatewayNameLabel], gw.Name)
+	}
+	if dep.Spec.Template.Labels[constants.GatewayNameLabel] != gw.Name {
+		t.Errorf("Pod template missing gateway name label: got %s, want %s", dep.Spec.Template.Labels[constants.GatewayNameLabel], gw.Name)
+	}
+
 	// Verify Volume Mounts are ReadOnly
 	for _, m := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
 		if !m.ReadOnly {
@@ -133,5 +144,37 @@ func TestRenderDeployment(t *testing.T) {
 
 	if !foundCTB || !foundPC {
 		t.Errorf("Deployment projected volume missing sources: CTB=%v, PC=%v", foundCTB, foundPC)
+	}
+}
+
+func TestRenderService(t *testing.T) {
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gw",
+			Namespace: "test-ns",
+		},
+	}
+	rm := NewResourceManager(nil, gw, "envoy-image", "cluster.local")
+
+	svc := rm.renderService()
+
+	if svc.Labels[constants.GatewayNameLabel] != gw.Name {
+		t.Errorf("Service missing gateway name label: got %s, want %s", svc.Labels[constants.GatewayNameLabel], gw.Name)
+	}
+}
+
+func TestRenderServiceAccount(t *testing.T) {
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gw",
+			Namespace: "test-ns",
+		},
+	}
+	rm := NewResourceManager(nil, gw, "envoy-image", "cluster.local")
+
+	sa := rm.renderServiceAccount()
+
+	if sa.Labels[constants.GatewayNameLabel] != gw.Name {
+		t.Errorf("ServiceAccount missing gateway name label: got %s, want %s", sa.Labels[constants.GatewayNameLabel], gw.Name)
 	}
 }

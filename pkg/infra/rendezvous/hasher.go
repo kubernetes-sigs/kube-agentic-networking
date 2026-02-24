@@ -42,9 +42,11 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
+
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
-const labelKey = "rendezvous.kube-agentic-networking.sigs.k8s.io"
+const labelKey = "rendezvous." + constants.ProjectName
 
 var (
 	leaseDuration      = 15 * time.Second

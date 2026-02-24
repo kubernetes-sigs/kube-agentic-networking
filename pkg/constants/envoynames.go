@@ -38,4 +38,7 @@ const (
 
 	// EnvoyBootstrapMountPath is the path where the Envoy bootstrap configuration is mounted.
 	EnvoyBootstrapMountPath = "/etc/envoy/bootstrap"
+
+	// GatewayNameLabel is the label key used to identify resources associated with a specific Gateway.
+	GatewayNameLabel = ProjectName + "/gateway-name"
 )
