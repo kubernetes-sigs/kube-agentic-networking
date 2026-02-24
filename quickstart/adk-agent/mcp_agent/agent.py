@@ -19,25 +19,6 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
-# The standard path where the service account token is mounted.
-TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-
-
-def get_sa_token():
-    """Reads the service account token from the default location."""
-    try:
-        with open(TOKEN_PATH, "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        print(f"Service account token file not found at {TOKEN_PATH}.")
-        print(f"This script is likely not running inside a Kubernetes pod.")
-        return None
-    except Exception as e:
-        print(f"An error occurred while reading the token: {e}")
-        return None
-
-
-sa_token = get_sa_token()
 envoy_service = os.environ.get("ENVOY_SERVICE")
 hf_model = os.environ.get("HF_MODEL")
 
@@ -51,9 +32,6 @@ try:
     local_mcp = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
             url=f"http://{envoy_service}/local/mcp",
-            headers={
-                "x-k8s-sa-token": sa_token,
-            },
         ),
     )
     logger.info("McpToolset local_mcp initialized successfully.")
@@ -64,9 +42,6 @@ try:
     remote_mcp = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
             url=f"http://{envoy_service}/remote/mcp",
-            headers={
-                "x-k8s-sa-token": sa_token,
-            },
         ),
     )
     logger.info("McpToolset remote_mcp initialized successfully.")
