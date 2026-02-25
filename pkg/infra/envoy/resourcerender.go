@@ -144,21 +144,25 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 	replicas := int32(1)
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            r.nodeID,
-			Namespace:       r.namespace,
+			Name:      r.nodeID,
+			Namespace: r.namespace,
+			Labels: map[string]string{
+				constants.GatewayNameLabel: r.gw.Name,
+			},
 			OwnerReferences: ownerRef(r.gw),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app": r.nodeID,
+					constants.GatewayNameLabel: r.gw.Name,
 				},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app": r.nodeID,
+						"app":                      r.nodeID,
+						constants.GatewayNameLabel: r.gw.Name,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -279,8 +283,11 @@ func (r *ResourceManager) renderService() *corev1.Service {
 
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            r.nodeID,
-			Namespace:       r.namespace,
+			Name:      r.nodeID,
+			Namespace: r.namespace,
+			Labels: map[string]string{
+				constants.GatewayNameLabel: r.gw.Name,
+			},
 			OwnerReferences: ownerRef(r.gw),
 		},
 		Spec: corev1.ServiceSpec{
@@ -296,8 +303,11 @@ func (r *ResourceManager) renderService() *corev1.Service {
 func (r *ResourceManager) renderServiceAccount() *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            r.nodeID,
-			Namespace:       r.namespace,
+			Name:      r.nodeID,
+			Namespace: r.namespace,
+			Labels: map[string]string{
+				constants.GatewayNameLabel: r.gw.Name,
+			},
 			OwnerReferences: ownerRef(r.gw),
 		},
 	}

@@ -31,17 +31,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/localca"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/signercontroller"
 )
 
 const (
-	Name      = "kube-agentic-networking.sigs.k8s.io/identity"
-	CTBPrefix = "kube-agentic-networking.sigs.k8s.io:identity:"
+	Name      = constants.ProjectName + "/identity"
+	CTBPrefix = constants.ProjectName + ":identity:"
 
-	CanaryingLabel           = "kube-agentic-networking.sigs.k8s.io/canarying"
-	WorkloadTrustDomainLabel = "kube-agentic-networking.sigs.k8s.io/workload-trust-domain"
-	PeerTrustDomainLabel     = "kube-agentic-networking.sigs.k8s.io/peer-trust-domain"
+	CanaryingLabel           = constants.ProjectName + "/canarying"
+	WorkloadTrustDomainLabel = constants.ProjectName + "/workload-trust-domain"
+	PeerTrustDomainLabel     = constants.ProjectName + "/peer-trust-domain"
 )
 
 // CTBLabels returns the standard labels used for identifying and selecting

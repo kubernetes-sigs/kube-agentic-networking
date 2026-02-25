@@ -38,6 +38,8 @@ As an AI Engineer I want to:
 
 * Understand why my agent is getting denied when calling a certain tool
 
+* Audit agent actions in the context of the user who delegated authority, so that I can attribute outcomes to both human intent and agent behaviour.
+
 As an AI Platform Engineer I want to:
 
 * Have an aggregated way of seeing failures/denials across the platform

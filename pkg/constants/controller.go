@@ -17,6 +17,9 @@ limitations under the License.
 package constants
 
 const (
+	// ProjectName is the name of the project.
+	ProjectName = "kube-agentic-networking.sigs.k8s.io"
+
 	// ControllerName is the name of the controller used in GatewayClass resources.
 	ControllerName = "sigs.k8s.io/kube-agentic-networking-controller"
 
