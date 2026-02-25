@@ -19,7 +19,7 @@ import os
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
@@ -50,10 +50,11 @@ def setup_otel_tracing(service_name: str = "adk-agent"):
     # Set up the tracer provider
     tracer_provider = TracerProvider(resource=resource)
 
-    # Configure OTLP exporter
+    # Configure OTLP HTTP exporter
+    # The HTTP exporter expects the full URL including the traces path
+    traces_endpoint = f"{otel_endpoint}/v1/traces"
     otlp_exporter = OTLPSpanExporter(
-        endpoint=otel_endpoint,
-        insecure=True,  # Use insecure connection for simplicity
+        endpoint=traces_endpoint,
     )
 
     # Add span processor

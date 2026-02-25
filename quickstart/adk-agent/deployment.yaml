@@ -72,7 +72,7 @@ spec:
             #   value: "qwen2.5:7b"
             # OpenTelemetry configuration
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://otel-collector:4317"
+              value: "http://otel-collector.quickstart-ns.svc.cluster.local:4318"
             - name: OTEL_SERVICE_NAME
               value: "adk-agent"
             - name: NAMESPACE

@@ -17,64 +17,50 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: otel-collector-config
-  namespace: team1
+  namespace: quickstart-ns
 data:
-  otel-collector-config.yaml: |
+  base.yaml: |
     receivers:
       otlp:
         protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
           http:
             endpoint: 0.0.0.0:4318
 
     processors:
-      batch:
-        timeout: 10s
-        send_batch_size: 1024
-
       memory_limiter:
         check_interval: 1s
-        limit_mib: 512
+        limit_mib: 1000
+
+      batch: {}
 
     exporters:
-      # Export to console for debugging
-      logging:
-        loglevel: debug
+      debug:
+        verbosity: detailed
 
-      # Export to Jaeger (optional - uncomment if you have Jaeger running)
-      # otlp/jaeger:
-      #   endpoint: jaeger-collector:4317
+      # Export to a trace backend (e.g. Phoenix, Jaeger)
+      # Uncomment and configure the endpoint for your backend:
+      # otlp/traces:
+      #   endpoint: <trace-backend>:4317
       #   tls:
       #     insecure: true
 
-      # Export to Prometheus (optional - uncomment if you have Prometheus)
-      # prometheus:
-      #   endpoint: "0.0.0.0:8889"
+    extensions:
+      health_check: {}
 
     service:
+      extensions: [health_check]
       pipelines:
         traces:
           receivers: [otlp]
           processors: [memory_limiter, batch]
-          exporters: [logging]
-
-        metrics:
-          receivers: [otlp]
-          processors: [memory_limiter, batch]
-          exporters: [logging]
-
-        logs:
-          receivers: [otlp]
-          processors: [memory_limiter, batch]
-          exporters: [logging]
+          exporters: [debug]
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: otel-collector
-  namespace: team1
+  namespace: quickstart-ns
 spec:
   replicas: 1
   selector:
@@ -87,20 +73,16 @@ spec:
     spec:
       containers:
       - name: otel-collector
-        image: otel/opentelemetry-collector:latest
+        image: otel/opentelemetry-collector-contrib:0.122.1
         command:
-          - "/otelcol"
-          - "--config=/conf/otel-collector-config.yaml"
+          - "/otelcol-contrib"
+          - "--config=/etc/otelcol-config/base.yaml"
         ports:
-        - containerPort: 4317  # OTLP gRPC receiver
-          name: otlp-grpc
-        - containerPort: 4318  # OTLP HTTP receiver
+        - containerPort: 4318
           name: otlp-http
-        - containerPort: 8889  # Prometheus metrics exporter
-          name: prometheus
         volumeMounts:
         - name: otel-collector-config
-          mountPath: /conf
+          mountPath: /etc/otelcol-config
         resources:
           limits:
             memory: "512Mi"
@@ -112,30 +94,19 @@ spec:
       - name: otel-collector-config
         configMap:
           name: otel-collector-config
-          items:
-          - key: otel-collector-config.yaml
-            path: otel-collector-config.yaml
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: otel-collector
-  namespace: team1
+  namespace: quickstart-ns
 spec:
   type: ClusterIP
   ports:
-  - port: 4317
-    targetPort: 4317
-    protocol: TCP
-    name: otlp-grpc
   - port: 4318
     targetPort: 4318
     protocol: TCP
     name: otlp-http
-  - port: 8889
-    targetPort: 8889
-    protocol: TCP
-    name: prometheus
   selector:
     app: otel-collector
