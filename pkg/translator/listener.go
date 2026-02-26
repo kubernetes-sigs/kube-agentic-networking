@@ -356,26 +356,7 @@ func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister)
 				continue // Skip if we've already created a filter for this config
 			}
 			hashes[hash] = struct{}{}
-			extAuthzProto := &ext_authzv3.ExtAuthz{
-				FailureModeAllow: false,
-				FilterEnabledMetadata: &matcherv3.MetadataMatcher{
-					Filter: wellknown.HTTPRoleBasedAccessControl,
-					Path: []*matcherv3.MetadataMatcher_PathSegment{
-						{
-							Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
-								Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", externalAuthzShadowRulePrefix, hash),
-							},
-						},
-					},
-					Value: &matcherv3.ValueMatcher{
-						MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
-					},
-				},
-				MetadataContextNamespaces: []string{
-					mcpProxyFilterName,
-					wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
-				},
-			}
+			extAuthzProto := buildExtAuthzConfig(hash)
 			backendRef := extAuthz.BackendRef
 			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuthz.ExternalAuthProtocol))
 			switch extAuthz.ExternalAuthProtocol {
@@ -463,6 +444,29 @@ func buildRouterFilter() (*hcm.HttpFilter, error) {
 			TypedConfig: routerAny,
 		},
 	}, nil
+}
+
+func buildExtAuthzConfig(hash string) *ext_authzv3.ExtAuthz {
+	return &ext_authzv3.ExtAuthz{
+		FailureModeAllow: false,
+		FilterEnabledMetadata: &matcherv3.MetadataMatcher{
+			Filter: wellknown.HTTPRoleBasedAccessControl,
+			Path: []*matcherv3.MetadataMatcher_PathSegment{
+				{
+					Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
+						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", externalAuthzShadowRulePrefix, hash),
+					},
+				},
+			},
+			Value: &matcherv3.ValueMatcher{
+				MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
+			},
+		},
+		MetadataContextNamespaces: []string{
+			mcpProxyFilterName,
+			wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
+		},
+	}
 }
 
 // TODO: We may want to optimize this in the future by supporting both listener's TLS config and the shared TLS context.
