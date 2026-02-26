@@ -372,6 +372,7 @@ func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister)
 					},
 				},
 				MetadataContextNamespaces: []string{
+					mcpProxyFilterName,
 					wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
 				},
 			}
