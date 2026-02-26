@@ -46,6 +46,11 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
+const (
+	// The default port for external authorization services if not specified in the BackendRef.
+	defaultExternalAuthPort = 5000
+)
+
 type ControllerError struct {
 	Reason  string
 	Message string
@@ -570,7 +575,7 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 				continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
 			}
 			serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
-			servicePort := uint32(5000) // default port if not specified
+			servicePort := uint32(defaultExternalAuthPort)
 			if backendRef.Port != nil {
 				servicePort = uint32(*backendRef.Port)
 			}
