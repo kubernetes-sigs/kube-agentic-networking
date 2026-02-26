@@ -73,9 +73,9 @@ func (t *Translator) rbacConfigFromAccessPolicy(accessPolicyLister agenticlister
 	// It's deny-by-default (a.k.a ALLOW action), we explicitly allow necessary
 	// MCP operations for all backends. These policies are essential for MCP
 	// session management and tool initialization.
-	addBuiltPolicyToRBACRules(rbacConfig, allowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
-	addBuiltPolicyToRBACRules(rbacConfig, allowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
-	addBuiltPolicyToRBACRules(rbacConfig, allowHTTPGet, buildAllowHTTPGetPolicy())
+	addPolicyToRBACRules(rbacConfig, allowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
+	addPolicyToRBACRules(rbacConfig, allowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
+	addPolicyToRBACRules(rbacConfig, allowHTTPGet, buildAllowHTTPGetPolicy())
 
 	return rbacConfig, nil
 }
@@ -167,19 +167,19 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 					}
 					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash)
 					policy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
-					addBuiltPolicyToRBACShadowRules(rbacConfig, policyName, policy)
+					addPolicyToRBACShadowRules(rbacConfig, policyName, policy)
 				}
 			}
 		}
 
-		addBuiltPolicyToRBACRules(rbacConfig, policyName, policy)
+		addPolicyToRBACRules(rbacConfig, policyName, policy)
 	}
 
 	return rbacConfig
 }
 
-// addBuiltPolicyToRBACRules mutates the RBAC config by adding the given policy to the Rules section with the specified name.
-func addBuiltPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
+// addPolicyToRBACRules mutates the RBAC config by adding the given policy to the Rules section with the specified name.
+func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
 	if rbacConfig.Rules == nil {
 		rbacConfig.Rules = &rbacconfigv3.RBAC{
 			Action:   rbacconfigv3.RBAC_ALLOW,
@@ -189,8 +189,8 @@ func addBuiltPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, polic
 	rbacConfig.Rules.Policies[policyName] = policy
 }
 
-// addBuiltPolicyToRBACRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
-func addBuiltPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
+// addPolicyToRBACRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
+func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
 	if rbacConfig.ShadowRules == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
 			Action:   rbacconfigv3.RBAC_DENY,
