@@ -34,6 +34,7 @@ const GroupName = "agentic.prototype.x-k8s.io"
 var GroupVersion = v1.GroupVersion{Group: GroupName, Version: "v0alpha0"}
 
 // SchemeGroupVersion is group version used to register these objects
+//
 // Deprecated: use GroupVersion instead.
 var SchemeGroupVersion = schema.GroupVersion{Group: GroupName, Version: "v0alpha0"}
 
