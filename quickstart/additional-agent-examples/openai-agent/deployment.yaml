@@ -1,0 +1,139 @@
+# Copyright The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: adk-agent-sa
+  namespace: quickstart-ns
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openai-agent
+  namespace: quickstart-ns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openai-agent
+  template:
+    metadata:
+      labels:
+        app: openai-agent
+    spec:
+      serviceAccountName: adk-agent-sa
+      initContainers:
+        - name: proxy-init
+          image: alpine:latest
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+          command:
+            - sh
+            - -c
+            - |
+              apk add iptables
+              # Redirect all outbound TCP traffic on port 10001 to Envoy (localhost:10001)
+              # EXCEPT traffic coming from Envoy itself (UID 1337) to avoid infinite loops.
+              iptables -t nat -A OUTPUT -p tcp --dport 10001 -m owner ! --uid-owner 1337 -j REDIRECT --to-ports 10001
+      containers:
+        - name: openai-agent
+          # TODO: Replace with the image from registry.k8s.io/agentic-net registry 
+          image: <PLACEHOLDER_FOR_ADK_AGENT_IMAGE>
+          imagePullPolicy: Always
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "1"
+              ephemeral-storage: "128Mi"
+            requests:
+              memory: "512Mi"
+              cpu: "1"
+              ephemeral-storage: "128Mi"
+          ports:
+            - containerPort: 7860
+          env:
+            - name: PORT
+              value: "7860"
+            - name: ENVOY_SERVICE
+              # This is the address of the Envoy sidecar
+              value: "127.0.0.1:10001"
+            - name: HF_MODEL
+              value: "deepseek-ai/DeepSeek-R1-0528"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-secret
+                  key: hf-token-key
+        - name: envoy
+          image: envoyproxy/envoy:v1.36-latest
+          imagePullPolicy: Always
+          securityContext:
+            runAsUser: 1337
+          command: ["/usr/local/bin/envoy"]
+          args: ["-c", "/etc/envoy/bootstrap/envoy.yaml", "-l", "trace", "--log-path", "/dev/stderr"]
+          ports:
+          - name: envoy
+            containerPort: 10001
+          volumeMounts:
+          - name: envoy-sidecar-configs
+            mountPath: /etc/envoy
+            readOnly: true
+          - name: agent-identity-mtls
+            mountPath: /run/agent-identity-mtls
+            readOnly: true
+      volumes:
+      - name: envoy-sidecar-configs
+        configMap:
+          name: sidecar-envoy-configs
+          items:
+            - key: envoy.yaml
+              path: bootstrap/envoy.yaml
+            - key: spiffe_identity.yaml
+              path: sds/spiffe_identity.yaml
+            - key: spiffe_trust.yaml
+              path: sds/spiffe_trust.yaml
+      - name: agent-identity-mtls
+        projected:
+          sources:
+          - clusterTrustBundle:
+              signerName: kube-agentic-networking.sigs.k8s.io/identity
+              labelSelector:
+                matchLabels:
+                  "kube-agentic-networking.sigs.k8s.io/canarying":             "live"
+                  "kube-agentic-networking.sigs.k8s.io/workload-trust-domain": "cluster.local"
+                  "kube-agentic-networking.sigs.k8s.io/peer-trust-domain":     "cluster.local"
+              path: cluster.local.trust-bundle.pem
+          - podCertificate:
+              signerName: kube-agentic-networking.sigs.k8s.io/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openai-agent-svc
+  namespace: quickstart-ns
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 7860
+      name: openai-agent
+    - port: 10001
+      targetPort: 10001
+      name: envoy
+  selector:
+    app: openai-agent
