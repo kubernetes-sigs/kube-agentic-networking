@@ -59,4 +59,32 @@ The API introduces 2 new CRDs:
 
 ## Who is working on this project?
 
-TODO
+This project is part of [SIG Network](https://github.com/kubernetes/community/tree/master/sig-network).
+
+### Maintainers
+
+| Name | GitHub |
+|------|--------|
+| Lior Lieberman | [@LiorLieberman](https://github.com/LiorLieberman) |
+| David Martin | [@david-martin](https://github.com/david-martin) |
+
+### Emeritus Maintainers
+
+| Name | GitHub |
+|------|--------|
+| Guilherme Cassolato | [@guicassolato](https://github.com/guicassolato) |
+
+### Contributors
+
+| Name | GitHub |
+|------|--------|
+| Haiyan Meng | [@haiyanmeng](https://github.com/haiyanmeng) |
+| Chuang Wang | [@chuangw6](https://github.com/chuangw6) |
+| Evaline Ju | [@evaline-ju](https://github.com/evaline-ju) |
+| Rohit Ramkumar | [@rramkumar1](https://github.com/rramkumar1) |
+| Taahir Ahmed | [@ahmedtd](https://github.com/ahmedtd) |
+| Priyanka Saggu | [@Priyankasaggu11929](https://github.com/Priyankasaggu11929) |
+| Ziyue Yan | [@ziyue-101](https://github.com/ziyue-101) |
+| Ian Rudie | [@ilrudie](https://github.com/ilrudie) |
+| Harshitha | [@HarshithaMS005](https://github.com/HarshithaMS005) |
+| Gloire Rubambiza | [@rubambiza](https://github.com/rubambiza) |
