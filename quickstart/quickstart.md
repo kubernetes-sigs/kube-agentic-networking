@@ -192,7 +192,7 @@ The agent uses an Envoy sidecar to establish mTLS-secured connections to the Gat
     # 2. Get the Gateway's ServiceAccount name to construct its SPIFFE identity
     export GATEWAY_SA=$(kubectl get sa -n quickstart-ns -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" -o jsonpath='{.items[0].metadata.name}')
     export GATEWAY_SPIFFE_ID="spiffe://cluster.local/ns/quickstart-ns/sa/${GATEWAY_SA}"
-    
+
     echo "Gateway Address: $GATEWAY_ADDRESS"
     echo "Gateway SPIFFE ID: $GATEWAY_SPIFFE_ID"
     ```
@@ -254,12 +254,12 @@ Try the following prompts and observe the results. The outcomes are determined b
 | "Read the structure of the `modelcontextprotocol/servers` repo." | `read_wiki_structure` on remote MCP | ✅ **Success**  | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
 | "Read the wiki content of that repo."                            | `read_wiki_content` on remote MCP   | ❌ **Failure**  | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
 
-<details>
+<details markdown="1">
 <summary style="font-size: 1.5em; font-weight: bold;">🧪 Try Dynamic Policy Updates in Action</summary>
 
 Want to see policy changes in action? Let's flip the script for the `local-mcp-backend`!
 
-1.  **Edit the `XAccessPolicy`**: Open `quickstart/policy/e2e.yaml` and modify the `auth-policy-local-mcp` resource to:
+1. **Edit the `XAccessPolicy`**: Open `quickstart/policy/e2e.yaml` and modify the `auth-policy-local-mcp` resource to:
 
     - **Remove** the `"get-sum"` tool.
     - **Add** the `"echo"` tool.
@@ -289,24 +289,24 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
               - "echo" # Now allowed!
     ```
 
-2.  **Apply the updated policy**:
+2. **Apply the updated policy**:
 
     ```shell
     kubectl apply -n quickstart-ns -f quickstart/policy/e2e.yaml
     ```
 
-3.  **The controller will automatically update Envoy**: The Agentic Networking controller will detect the change to the `XAccessPolicy` and dynamically update the running Envoy proxy with the new rules via xDS. No restart is needed!
+3. **Wait for the controller to update Envoy**: The Agentic Networking controller will detect the change to the `XAccessPolicy` and dynamically update the running Envoy proxy with the new rules via xDS. No restart is needed!
 
-4.  **Interact with the Agent again**: Go back to `http://localhost:8081` and try these prompts:
+4. **Interact with the Agent again**: Go back to `http://localhost:8081` and try these prompts:
 
-    | Prompt                       | Tool Invoked        | Expected Result | Why?                                                               |
-    | :--------------------------- | :------------------ | :-------------- | :----------------------------------------------------------------- |
-    | "Can you do 2+3?"            | `get-sum` on local MCP  | ❌ **Failure**  | The `get-sum` tool is now _disallowed_ by the updated `XAccessPolicy`. |
-    | "Can you echo back 'hello'?" | `echo` on local MCP | ✅ **Success**  | The `echo` tool is now _allowed_ by the updated `XAccessPolicy`.   |
+    | Prompt                       | Tool Invoked             | Expected Result | Why?                                                                    |
+    | :--------------------------- | :----------------------- | :-------------- | :---------------------------------------------------------------------- |
+    | "Can you do 2+3?"            | `get-sum` on local MCP   | ❌ **Failure**  | The `get-sum` tool is now _disallowed_ by the updated `XAccessPolicy`.  |
+    | "Can you echo back 'hello'?" | `echo` on local MCP      | ✅ **Success**  | The `echo` tool is now _allowed_ by the updated `XAccessPolicy`.        |
 
     Observe how the agent's behavior changes instantly based on your policy modifications!
 
-    </details>
+</details>
 
 ## 7. Recap
 
