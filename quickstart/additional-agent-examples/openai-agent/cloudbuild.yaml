@@ -1,0 +1,27 @@
+# See
+# - https://github.com/kubernetes/test-infra/blob/master/config/jobs/image-pushing/README.md#build-example
+# - https://cloud.google.com/cloud-build/docs/build-config
+
+# this must be specified in seconds. If omitted, defaults to 600s (10 mins)
+timeout: 7200s
+# this prevents errors if you don't use both _GIT_TAG and _PULL_BASE_REF,
+# or any new substitutions added in the future.
+options:
+  substitution_option: ALLOW_LOOSE
+  # Using a more powerful machine type can speed up docker builds.
+  machineType: "E2_HIGHCPU_8"
+steps:
+  - name: gcr.io/k8s-staging-test-infra/gcb-docker-gcloud:latest
+    entrypoint: make
+    env:
+    - IMAGE_NAME=quickstart-openai-agent
+    - TAG=$_GIT_TAG
+    - BASE_REF=$_PULL_BASE_REF
+    args: ['-C', 'quickstart/openai-agent', 'push']
+substitutions:
+  # _GIT_TAG will be filled with a git-based tag for the image, of the form vYYYYMMDD-hash, and
+  # can be used as a substitution
+  _GIT_TAG: '12345'
+  # _PULL_BASE_REF will contain the ref that was pushed to to trigger this build -
+  # a branch like 'master' or 'release-0.2', or a tag like 'v0.2'.
+  _PULL_BASE_REF: 'main'
