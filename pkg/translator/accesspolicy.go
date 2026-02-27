@@ -166,7 +166,7 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 						continue
 					}
 					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash)
-					policy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
+					policy.Permissions = []*rbacconfigv3.Permission{buildTooslCallMethodPermission()}
 					addPolicyToRBACShadowRules(rbacConfig, policyName, policy)
 				}
 			}
@@ -229,17 +229,7 @@ func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permissi
 		Rule: &rbacconfigv3.Permission_AndRules{
 			AndRules: &rbacconfigv3.Permission_Set{
 				Rules: []*rbacconfigv3.Permission{
-					{
-						Rule: &rbacconfigv3.Permission_SourcedMetadata{
-							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
-								MetadataMatcher: &matcherv3.MetadataMatcher{
-									Filter: mcpProxyFilterName,
-									Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
-									Value:  &matcherv3.ValueMatcher{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: toolsCallMethod}}}},
-								},
-							},
-						},
-					},
+					buildTooslCallMethodPermission(),
 					{
 						Rule: &rbacconfigv3.Permission_SourcedMetadata{
 							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
@@ -295,6 +285,20 @@ func buildAnyPermission() *rbacconfigv3.Permission {
 	return &rbacconfigv3.Permission{
 		Rule: &rbacconfigv3.Permission_Any{
 			Any: true,
+		},
+	}
+}
+
+func buildTooslCallMethodPermission() *rbacconfigv3.Permission {
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_SourcedMetadata{
+			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+				MetadataMatcher: &matcherv3.MetadataMatcher{
+					Filter: mcpProxyFilterName,
+					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+					Value:  &matcherv3.ValueMatcher{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: toolsCallMethod}}}},
+				},
+			},
 		},
 	}
 }
