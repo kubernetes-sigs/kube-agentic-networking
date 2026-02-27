@@ -133,6 +133,7 @@ type AuthorizationSourceServiceAccount struct {
 
 // +kubebuilder:validation:XValidation:message="tools must be specified when type is set to 'InlineTools'",rule="self.type == 'InlineTools' ? has(self.tools) : true"
 // +kubebuilder:validation:XValidation:message="externalAuth must be specified when type is set to 'ExternalAuth'",rule="self.type == 'ExternalAuth' ? has(self.externalAuth) : true"
+// +kubebuilder:validation:XValidation:message="only one of tools or externalAuth can be specified",rule="!(has(self.tools) && has(self.externalAuth))"
 type AuthorizationRule struct {
 	// +unionDiscriminator
 	// +required

@@ -314,6 +314,8 @@ spec:
                           'ExternalAuth'
                         rule: 'self.type == ''ExternalAuth'' ? has(self.externalAuth)
                           : true'
+                      - message: only one of tools or externalAuth can be specified
+                        rule: '!(has(self.tools) && has(self.externalAuth))'
                     name:
                       description: Name specifies the name of the rule.
                       maxLength: 253
