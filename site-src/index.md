@@ -1,62 +1,36 @@
-# Introduction
+---
+hide:
+  - navigation
+  - toc
+---
 
-The continuous evolution of the AI ecosystem has led to the emergence of agent-based development, a paradigm in which autonomous AI agents execute intricate tasks. This transformation is fostering the development of "AI-first" protocols, such as the Model Context Protocol (MCP) and A2A, which diverge significantly from conventional protocols.
+<div class="landing-page">
+  <div class="hero-section">
+    <div class="hero-content">
+      <h1>Kubernetes Agentic Networking</h1>
+      <p class="hero-subtitle">Secure, governed communication for the next generation of AI agents.</p>
+      <div class="hero-buttons">
+        <a href="guides/" class="md-button md-button--primary">Get Started</a>
+        <a href="https://github.com/kubernetes-sigs/kube-agentic-networking" class="md-button">View on GitHub</a>
+      </div>
+    </div>
+  </div>
 
-Agents in a sense are microservices for AI. They are self-contained, autonomous units of work that can be composed to build complex applications. These agents, and the tools they use to perform their functions, are becoming ubiquitous. They can run anywhere: on-premises, in traditional hyperscaler cloud environments (like Kubernetes or serverless functions), on new cloud platforms (neoclouds), or across the public internet.
-
-This distributed nature, combined with the new communication patterns of "AI-first" protocols, introduces novel security and governance challenges. Unlike traditional REST APIs, these protocols require integration with AI safety and security models in addition to conventional security measures. This is because agents can act autonomously, potentially with significant impact. It is therefore essential for Kubernetes to provide a consistent API for a well-governed, secure, and auditable flow of communication:
-
-- From agents in Kubernetes to agents in the cluster and remote agents anywhere.
-
-- From agents running anywhere to agents in Kubernetes.
-
-- For agents in Kubernetes to access tools anywhere.
-
-## Goals
-
-This subproject aims to deliver the following:
-
-**Core Capabilities**
-
--   Provide standardized APIs for secure, governed communication between agents, tools, and potentially LLMs across Kubernetes cluster boundaries (ingress, egress, and east-west traffic)
-
--   Attempt to design APIs around user-facing goals (e.g., "Agent A can communicate with Tool B") rather than protocol-specific constructs, ensuring adaptability as new AI-first protocols emerge alongside MCP and A2A
-
--   Enable protocol-aware networking capabilities where necessary (e.g., MCP tool-level authorization) while keeping core APIs protocol-agnostic and future-proof
-
--   Establish agent identity and authentication mechanisms that allow agents to be uniquely identified and verified across network boundaries
-
-
-**Security & Governance**
-
--   Define authorization policies that control which agents can communicate with other agents, tools, and LLMs at a granular level (e.g., specific MCP tool functions)
-
--   Integrate AI safety and security extension points to support external authentication, authorization, and policy enforcement decisions
-
--   Provide auditable traffic management capabilities (rate limiting, access controls) suitable for autonomous agent workloads
-
-
-**Ecosystem Integration**
-
--   Maintain alignment and collaboration with Gateway API, Gateway Inference Extension, WG AI Gateway, and WG AI Integration
-
--   Design APIs extensible enough for diverse implementations (service meshes, gateways, future architectures)
-
-<img src="images/diagram.svg" alt="Architecture Diagram" class="center" />
-
-## API Resources
-
-### Tool Authorization API in Agentic Networking
-
-This defines authorization policies for tool access from AI agents running inside a Kubernetes cluster to MCP servers running in the Kubernetes cluster or outside of the Kubernetes cluster.
-
-- [API Proposal](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/a52a78a1665d3f036cdb3208fafbac7a85cddcf1/docs/proposals/0008-ToolAuthAPI.md)
-
-The API introduces 2 new CRDs:
-
-- [XBackend](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/a52a78a1665d3f036cdb3208fafbac7a85cddcf1/api/v0alpha0/backend_types.go): describes a backend in agentic networking
-- [XAccessPolicy](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/a52a78a1665d3f036cdb3208fafbac7a85cddcf1/api/v0alpha0/accesspolicy_types.go): describes who can access what (the permissions/grants) in relation to the agentic networking backends
-
-## Who is working on this project?
-
-TODO
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-icon">🚀</div>
+      <h3>Core Capabilities</h3>
+      <p>Standardized APIs for secure agent-to-agent and agent-to-tool communication across cluster boundaries. Protocol-agnostic design ready for MCP, A2A, and beyond.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🛡️</div>
+      <h3>Security & Governance</h3>
+      <p>Granular authorization policies, AI safety integration, and auditable traffic management. Control exactly which agents access what tools.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🌐</div>
+      <h3>Ecosystem Integration</h3>
+      <p>Seamlessly integrates with Gateway API and major AI protocols. Designed for extensibility across service meshes and future architectures.</p>
+    </div>
+  </div>
+</div>
