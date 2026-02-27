@@ -1497,7 +1497,9 @@
     text-align: center;
     padding: 6rem 1rem;
     margin-bottom: 4rem;
-    background: radial-gradient(circle at center, var(--md-primary-fg-color--light) 0%, transparent 70%);
+    background: radial-gradient(circle at center,
+          color-mix(in srgb, var(--md-primary-fg-color--light), transparent 80%) 0%,
+          transparent 100%);
 }
 
 .hero-content h1 {
@@ -1613,7 +1615,9 @@
 
 /* Dark Mode Adjustments */
 [data-md-color-scheme="slate"] .hero-section {
-    background: radial-gradient(circle at center, rgba(255,255,255,0.1) 0%, transparent 70%);
+    background: radial-gradient(circle at center,
+          color-mix(in srgb, white, transparent 90%) 0%,
+          transparent 100%);
 }
 
 [data-md-color-scheme="slate"] .diagram-container {
