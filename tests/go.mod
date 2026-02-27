@@ -10,7 +10,7 @@ require (
 	k8s.io/apimachinery v0.35.1
 	k8s.io/client-go v0.35.1
 	sigs.k8s.io/controller-runtime v0.23.0
-	sigs.k8s.io/gateway-api v1.5.0-rc.2
+	sigs.k8s.io/gateway-api v1.5.0
 	sigs.k8s.io/kube-agentic-networking v0.0.0-00010101000000-000000000000
 )
 

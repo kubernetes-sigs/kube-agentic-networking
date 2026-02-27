@@ -17,7 +17,7 @@ require (
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20260108192941-914a6e750570
 	sigs.k8s.io/controller-tools v0.19.0
-	sigs.k8s.io/gateway-api v1.5.0-rc.2
+	sigs.k8s.io/gateway-api v1.5.0
 )
 
 require (
