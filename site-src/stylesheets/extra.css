@@ -1489,7 +1489,8 @@
     max-width: 1200px;
     margin: 0 auto;
     padding: 2rem 1rem;
-    font-family: 'Roboto', sans-serif; /* Setup in mkdocs.yml or assume default material font */
+    font-family: 'Roboto', sans-serif;
+      /* Setup in mkdocs.yml or assume default material font */
 }
 
 /* Hero Section */
@@ -1497,9 +1498,6 @@
     text-align: center;
     padding: 6rem 1rem;
     margin-bottom: 4rem;
-    background: radial-gradient(circle at center,
-          color-mix(in srgb, var(--md-primary-fg-color--light), transparent 80%) 0%,
-          transparent 100%);
 }
 
 .hero-content h1 {
@@ -1583,11 +1581,4 @@
     color: var(--md-typeset-color);
     opacity: 0.8;
     line-height: 1.6;
-}
-
-/* Dark Mode Adjustments */
-[data-md-color-scheme="slate"] .hero-section {
-    background: radial-gradient(circle at center,
-          color-mix(in srgb, white, transparent 90%) 0%,
-          transparent 100%);
 }

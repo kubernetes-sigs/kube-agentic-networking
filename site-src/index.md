@@ -25,12 +25,12 @@ hide:
     <div class="feature-card">
       <div class="feature-icon">🛡️</div>
       <h3>Security & Governance</h3>
-      <p>Granular authorization policies, AI safety integration, and auditable traffic management. Control exactly which agents access what tools.</p>
+      <p>Granular authorization policies, AI safety integration, and auditable traffic management.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">🌐</div>
       <h3>Ecosystem Integration</h3>
-      <p>Seamlessly integrates with Gateway API and major AI protocols. Designed for extensibility across service meshes and future architectures.</p>
+      <p>Seamlessly integrates with Gateway API and major AI protocols. Designed for extensibility across service meshes, gateways, and future architectures.</p>
     </div>
   </div>
 </div>
