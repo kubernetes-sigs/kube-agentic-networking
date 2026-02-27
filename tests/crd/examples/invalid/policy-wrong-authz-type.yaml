@@ -1,0 +1,15 @@
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: invalid-policy-wrong-authz-type
+spec:
+  targetRefs:
+  - group: agentic.prototype.x-k8s.io
+    kind: XBackend
+    name: valid-backend
+  rules:
+  - name: authorized-tools
+    authorization:
+      type: ExternalAuth
+      tools:
+      - some-tool

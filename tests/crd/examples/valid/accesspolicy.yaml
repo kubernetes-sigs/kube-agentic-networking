@@ -13,3 +13,15 @@ spec:
       type: ServiceAccount
       serviceAccount:
         name: my-sa
+  - name: spiffe-triggers-ext-authz
+    source:
+      type: SPIFFE
+      spiffe: spiffe://example.com/my-service
+    authorization:
+      type: ExternalAuth
+      externalAuth:
+        protocol: GRPC
+        backendRef:
+          name: ext-authz-svc
+          port: 5000
+        grpc: {}
