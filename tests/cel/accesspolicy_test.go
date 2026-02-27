@@ -160,6 +160,41 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			},
 			wantErrors: []string{"must have at most 10 items"},
 		},
+		{
+			desc: "missing authorization for InlineTools type",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type: v0alpha0.AuthorizationRuleTypeInlineTools,
+				}
+			},
+			wantErrors: []string{"tools must be specified when type is set to 'InlineTools'"},
+		},
+		{
+			desc: "missing authorization for ExternalAuth type",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+					Tools: []string{"tool-1"},
+				}
+			},
+			wantErrors: []string{"externalAuth must be specified when type is set to 'ExternalAuth'"},
+		},
+		{
+			desc: "multiple authorization rule types specified",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type: v0alpha0.AuthorizationRuleTypeInlineTools,
+					Tools: []string{"tool-1"},
+					ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gwapiv1.BackendObjectReference{
+							Name: "ext-auth-svc",
+						},
+					},
+				}
+			},
+			wantErrors: []string{"only one of tools or externalAuth can be specified"},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
