@@ -59,4 +59,8 @@ The API introduces 2 new CRDs:
 
 ## Who is working on this project?
 
-TODO
+Kube Agentic Networking is a [SIG Network](https://github.com/kubernetes/community/tree/master/sig-network) project.
+In addition to the [evolving prototype](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/quickstart.md),
+we expect the set of APIs to be broadly implemented in the near future.
+If you are interested in becoming a [contributor](https://github.com/kubernetes-sigs/kube-agentic-networking/graphs/contributors)
+or building an implementation of the APIs, then don't hesitate to [get involved](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/CONTRIBUTING.md).
