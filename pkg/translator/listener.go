@@ -17,10 +17,14 @@ limitations under the License.
 package translator
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
 	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
@@ -29,14 +33,24 @@ import (
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	udpproxy "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/udp/udp_proxy/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+)
+
+const (
+	uriTimeout = 5 * time.Second
+
+	wellknownJWTAuthnFilter = "envoy.filters.http.jwt_authn"
 )
 
 // setListenerCondition is a helper to safely set a condition on a listener's status
@@ -140,13 +154,13 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 	return listenerConditions
 }
 
-func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string) (*listener.FilterChain, error) {
+func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, accessPolicyLister agenticlisters.XAccessPolicyLister) (*listener.FilterChain, error) {
 	var filterChain *listener.FilterChain
 	var err error
 
 	switch lis.Protocol {
 	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		filterChain, err = buildHTTPFilterChain(lis, routeName)
+		filterChain, err = buildHTTPFilterChain(lis, routeName, accessPolicyLister)
 	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType:
 		filterChain, err = buildTCPFilterChain(lis)
 	case gatewayv1.UDPProtocolType:
@@ -159,7 +173,6 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 	// Add TLS transport socket config if the listener uses HTTPS or TLS protocol.
 	// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/95
 	if lis.Protocol == gatewayv1.HTTPSProtocolType || lis.Protocol == gatewayv1.TLSProtocolType {
-
 		tlsContext, err := buildDownstreamTLSContext()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS context for listener %s: %w", lis.Name, err)
@@ -177,8 +190,8 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 	return filterChain, nil
 }
 
-func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string) (*listener.FilterChain, error) {
-	httpFilters, err := buildHTTPFilters()
+func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, accessPolicyLister agenticlisters.XAccessPolicyLister) (*listener.FilterChain, error) {
+	httpFilters, err := buildHTTPFilters(accessPolicyLister)
 	if err != nil {
 		return nil, err
 	}
@@ -255,12 +268,18 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
-func buildHTTPFilters() ([]*hcm.HttpFilter, error) {
+func buildHTTPFilters(accessPolicyLister agenticlisters.XAccessPolicyLister) ([]*hcm.HttpFilter, error) {
 	mcpFilter, err := buildMCPFilter()
 	if err != nil {
 		return nil, err
 	}
+
 	rbacFilter, err := buildRBACFilter()
+	if err != nil {
+		return nil, err
+	}
+
+	extAuthzFilters, err := buildExtAuthzFilters(accessPolicyLister)
 	if err != nil {
 		return nil, err
 	}
@@ -270,14 +289,16 @@ func buildHTTPFilters() ([]*hcm.HttpFilter, error) {
 		return nil, err
 	}
 
-	return []*hcm.HttpFilter{
+	filters := []*hcm.HttpFilter{
 		// IMPORTANT: Order matters here!
-		// RBAC filter must come before the router filter to enforce access control before routing.
+		// RBAC filter must come before the ext_authz filter to ensure evaluation of RBAC shadow rules that trigger ext_authz.
+		// Ext_authz filter must come before router filter to enforce access control before routing.
 		// Router filter must come last to handle routing after all other filters have processed the request.
 		mcpFilter,
 		rbacFilter,
-		routerFilter,
-	}, nil
+	}
+	filters = append(filters, extAuthzFilters...)
+	return append(filters, routerFilter), nil
 }
 
 func buildMCPFilter() (*hcm.HttpFilter, error) {
@@ -312,6 +333,103 @@ func buildRBACFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
+func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister) ([]*hcm.HttpFilter, error) {
+	accessPolicies, err := accessPolicyLister.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
+	}
+
+	var filters []*hcm.HttpFilter
+	hashes := make(map[string]struct{}) // To track unique externalAuth configs and avoid duplicate filters
+	for _, ap := range accessPolicies {
+		for _, rule := range ap.Spec.Rules {
+			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
+				continue
+			}
+			extAuthz := rule.Authorization.ExternalAuth
+			hash, err := externalAuthUniqueID(extAuthz)
+			if err != nil {
+				klog.Error(err)
+				continue
+			}
+			if _, exists := hashes[hash]; exists {
+				continue // Skip if we've already created a filter for this config
+			}
+			hashes[hash] = struct{}{}
+			extAuthzProto := buildExtAuthzConfig(hash)
+			backendRef := extAuthz.BackendRef
+			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuthz.ExternalAuthProtocol))
+			switch extAuthz.ExternalAuthProtocol {
+			case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
+				extAuthzProto.Services = &ext_authzv3.ExtAuthz_GrpcService{
+					GrpcService: &corev3.GrpcService{
+						TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
+							EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{
+								ClusterName: clusterName,
+								Authority:   fqdnFromBackendRef(backendRef, ap.GetNamespace()),
+							},
+						},
+					},
+				}
+				if extAuthz.GRPCAuthConfig != nil && len(extAuthz.GRPCAuthConfig.AllowedRequestHeaders) > 0 {
+					extAuthzProto.AllowedHeaders = &matcherv3.ListStringMatcher{
+						Patterns: toEnvoyExactStringMatchers(extAuthz.GRPCAuthConfig.AllowedRequestHeaders),
+					}
+				}
+			case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
+				if config := extAuthz.HTTPAuthConfig; config != nil {
+					if backendRef.Kind != nil && *backendRef.Kind != "Service" {
+						klog.Errorf("Unsupported backend ref kind for ext_authz HTTP protocol: %s", *backendRef.Kind)
+						continue
+					}
+					uri := fmt.Sprintf("http://%s", backendRef.Name)
+					if namespace := backendRef.Namespace; namespace != nil {
+						uri = fmt.Sprintf("%s.%s.svc.cluster.local", uri, *namespace)
+					}
+					if port := backendRef.Port; port != nil {
+						uri = fmt.Sprintf("%s:%d", uri, *port)
+					}
+					extAuthzProto.Services = &ext_authzv3.ExtAuthz_HttpService{
+						HttpService: &ext_authzv3.HttpService{
+							ServerUri: &corev3.HttpUri{
+								Uri:     uri,
+								Timeout: durationpb.New(uriTimeout),
+							},
+							PathPrefix: config.Path,
+						},
+					}
+					if len(config.AllowedRequestHeaders) > 0 {
+						extAuthzProto.AllowedHeaders = &matcherv3.ListStringMatcher{
+							Patterns: toEnvoyExactStringMatchers(config.AllowedRequestHeaders),
+						}
+					}
+					// We don't support AllowedResponseHeaders yet
+				}
+			}
+			if forwardRequestBody := extAuthz.ForwardBody; forwardRequestBody != nil {
+				extAuthzProto.WithRequestBody = &ext_authzv3.BufferSettings{
+					MaxRequestBytes:     uint32(forwardRequestBody.MaxSize),
+					AllowPartialMessage: true,
+				}
+			}
+			extAuthzAny, err := anypb.New(extAuthzProto)
+			if err != nil {
+				klog.Errorf("Failed to marshal ext_authz config: %v", err)
+				return nil, err
+			}
+			extAuthzFilter := &hcm.HttpFilter{
+				Name: wellknown.HTTPExternalAuthorization,
+				ConfigType: &hcm.HttpFilter_TypedConfig{
+					TypedConfig: extAuthzAny,
+				},
+			}
+			filters = append(filters, extAuthzFilter)
+		}
+	}
+
+	return filters, nil
+}
+
 func buildRouterFilter() (*hcm.HttpFilter, error) {
 	routerProto := &routerv3.Router{}
 	routerAny, err := anypb.New(routerProto)
@@ -326,6 +444,29 @@ func buildRouterFilter() (*hcm.HttpFilter, error) {
 			TypedConfig: routerAny,
 		},
 	}, nil
+}
+
+func buildExtAuthzConfig(hash string) *ext_authzv3.ExtAuthz {
+	return &ext_authzv3.ExtAuthz{
+		FailureModeAllow: false,
+		FilterEnabledMetadata: &matcherv3.MetadataMatcher{
+			Filter: wellknown.HTTPRoleBasedAccessControl,
+			Path: []*matcherv3.MetadataMatcher_PathSegment{
+				{
+					Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
+						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", externalAuthzShadowRulePrefix, hash),
+					},
+				},
+			},
+			Value: &matcherv3.ValueMatcher{
+				MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
+			},
+		},
+		MetadataContextNamespaces: []string{
+			mcpProxyFilterName,
+			wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
+		},
+	}
 }
 
 // TODO: We may want to optimize this in the future by supporting both listener's TLS config and the shared TLS context.
@@ -394,4 +535,25 @@ func createListenerFilters() []*listener.ListenerFilter {
 			},
 		},
 	}
+}
+
+func toEnvoyExactStringMatchers(s []string) []*matcherv3.StringMatcher {
+	var matchers []*matcherv3.StringMatcher
+	for _, str := range s {
+		matchers = append(matchers, &matcherv3.StringMatcher{
+			MatchPattern: &matcherv3.StringMatcher_Exact{
+				Exact: str,
+			},
+		})
+	}
+	return matchers
+}
+
+func externalAuthUniqueID(externalAuth *gatewayv1.HTTPExternalAuthFilter) (string, error) {
+	j, err := json.Marshal(externalAuth)
+	if err != nil {
+		return "", fmt.Errorf("Failed to marshal externalAuth config for unique ID generation: %v", err)
+	}
+	sha256sum := sha256.Sum256(j)
+	return fmt.Sprintf("%x", sha256sum), nil
 }
