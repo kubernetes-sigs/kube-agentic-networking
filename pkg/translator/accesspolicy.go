@@ -193,7 +193,7 @@ func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rb
 func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
 	if rbacConfig.ShadowRules == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
-			Action:   rbacconfigv3.RBAC_DENY,
+			Action:   rbacconfigv3.RBAC_DENY, // the action for the shadow rule doesn't really matter in this case since we only use it to trigger ext_authz from emitted stats
 			Policies: map[string]*rbacconfigv3.Policy{},
 		}
 	}
