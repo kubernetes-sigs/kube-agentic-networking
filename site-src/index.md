@@ -33,11 +33,4 @@ hide:
       <p>Seamlessly integrates with Gateway API and major AI protocols. Designed for extensibility across service meshes and future architectures.</p>
     </div>
   </div>
-
-  <div class="diagram-section">
-    <h2>Architecture Overview</h2>
-    <div class="diagram-container">
-      <img src="images/diagram.svg" alt="Architecture Diagram" />
-    </div>
-  </div>
 </div>
