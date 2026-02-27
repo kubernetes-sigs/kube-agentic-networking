@@ -59,32 +59,7 @@ The API introduces 2 new CRDs:
 
 ## Who is working on this project?
 
-This project is part of [SIG Network](https://github.com/kubernetes/community/tree/master/sig-network).
-
-### Maintainers
-
-| Name | GitHub |
-|------|--------|
-| Lior Lieberman | [@LiorLieberman](https://github.com/LiorLieberman) |
-| David Martin | [@david-martin](https://github.com/david-martin) |
-
-### Emeritus Maintainers
-
-| Name | GitHub |
-|------|--------|
-| Guilherme Cassolato | [@guicassolato](https://github.com/guicassolato) |
-
-### Contributors
-
-| Name | GitHub |
-|------|--------|
-| Haiyan Meng | [@haiyanmeng](https://github.com/haiyanmeng) |
-| Chuang Wang | [@chuangw6](https://github.com/chuangw6) |
-| Evaline Ju | [@evaline-ju](https://github.com/evaline-ju) |
-| Rohit Ramkumar | [@rramkumar1](https://github.com/rramkumar1) |
-| Taahir Ahmed | [@ahmedtd](https://github.com/ahmedtd) |
-| Priyanka Saggu | [@Priyankasaggu11929](https://github.com/Priyankasaggu11929) |
-| Ziyue Yan | [@ziyue-101](https://github.com/ziyue-101) |
-| Ian Rudie | [@ilrudie](https://github.com/ilrudie) |
-| Harshitha | [@HarshithaMS005](https://github.com/HarshithaMS005) |
-| Gloire Rubambiza | [@rubambiza](https://github.com/rubambiza) |
+Kube Agentic Networking is a [SIG Network](https://github.com/kubernetes/community/tree/master/sig-network) project.
+In addition to the evolving prototype, we expect the set of APIs to be broadly implemented in the near future.
+If you are interested in becoming a [contributor](https://github.com/kubernetes-sigs/kube-agentic-networking/graphs/contributors)
+or building an implementation of the APIs, then don't hesitate to [get involved](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/CONTRIBUTING.md).
