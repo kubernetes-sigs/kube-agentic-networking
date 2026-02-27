@@ -176,7 +176,7 @@ kubectl create secret generic hf-secret -n quickstart-ns --from-literal=hf-token
 
 ⚠️ **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
 
-> **Note** You can use other HuggingFace models that support chat and tool calling by modifying the `HF_MODEL` environment variable in the [agent deployment manifest](/quickstart/adk-agent/deployment.yaml). For details on configuring other generative AI models with ADK agents, refer to the [ADK documentation](https://google.github.io/adk-docs/agents/models/).
+> **Note** You can use other HuggingFace models that support chat and tool calling by modifying the `HF_MODEL` environment variable in the [agent deployment manifest](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/deployment.yaml). For details on configuring other generative AI models with ADK agents, refer to the [ADK documentation](https://google.github.io/adk-docs/agents/models/).
 
 ### Step 5.2: Configure and Deploy the AI Agent
 
@@ -351,7 +351,7 @@ You can also integrate your own agent by following these steps:
 
 3. **Create the Envoy sidecar ConfigMap**
 
-    The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Use the template at [`quickstart/adk-agent/sidecar/sidecar-configs.yaml`](/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
+    The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Refer to the [sidecar configs template](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
 
     a.  **Copy the template** and update `metadata.namespace` to your agent's namespace:
 
@@ -370,7 +370,7 @@ You can also integrate your own agent by following these steps:
 
 4. **Add the Envoy sidecar to your agent deployment**
 
-    Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
+    Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
 
     > **Note**: The ADK agent deployment also includes a `proxy-init` init container with iptables rules. This is **not required** — the Envoy sidecar already listens on port 10001 within the pod, so `127.0.0.1:10001` (configured in step 5) reaches it directly. Omitting it avoids the `NET_ADMIN` capability requirement and speeds up pod startup.
 
