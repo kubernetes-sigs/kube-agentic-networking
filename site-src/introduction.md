@@ -42,7 +42,10 @@ This subproject aims to deliver the following:
 
 -   Design APIs extensible enough for diverse implementations (service meshes, gateways, future architectures)
 
-<img src="images/diagram.svg" alt="Architecture Diagram" class="center" />
+<div style="display: flex; justify-content: center; margin: 2rem 0;">
+  <img src="../images/diagram.svg" alt="Architecture Diagram" style="max-width: 100%; height: auto;" />
+</div>
+
 
 ## API Resources
 
