@@ -1,5 +1,24 @@
-# Proposals Best Practices
+# Proposals
 
+Design proposals and enhancement documents for Kubernetes Agentic Networking.
+
+## Index
+
+| Proposal | Description |
+|----------|-------------|
+| [0008-ToolAuthAPI.md](0008-ToolAuthAPI.md) | Tool Authorization API |
+| [0017-DynamicAuth.md](0017-DynamicAuth.md) | Dynamic Auth |
+| [0059-AccessPolicyTargetRefs.md](0059-AccessPolicyTargetRefs.md) | AccessPolicy TargetRefs |
 
 ## Naming
-The directory of the proposal should lead with a 4-digit PR number (will move to 5,6,... should our PR count get that high), followed by kebab-cased title. The PR number is not known until the PR is cut, so development can use a placeholder, ex. XXXX-my-proposal. PR number is used b/c it is unique & chronological, allowing the default ordering of proposals to follow the timeline of development.
+
+- Use a **4-digit number** (PR number when available) followed by a **kebab-cased title**: `NNNN-short-title.md`.
+- Examples: `0008-ToolAuthAPI.md`, `0059-AccessPolicyTargetRefs.md`.
+- While developing, you can use a placeholder (e.g. `XXXX-my-proposal.md`) and rename to the PR number when the PR is opened.
+- The number gives a chronological order to proposals.
+
+## Adding a new proposal
+
+1. Create a new markdown file under `docs/proposals/` with the naming above.
+2. Include: context, goals, design (API changes, behavior), and alternatives considered.
+3. Add the new proposal to the **Index** table in this README.

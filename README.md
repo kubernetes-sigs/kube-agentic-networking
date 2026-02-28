@@ -30,6 +30,12 @@ This subproject aims to deliver the following:
 
 ![Architecture Diagram](./docs/diagram.svg)
 
+## Repository structure
+
+- **Proposals and design docs:** [docs/proposals/](docs/proposals/) — Design proposals (e.g. `0008-ToolAuthAPI.md`). See [docs/proposals/README.md](docs/proposals/README.md) for naming and index.
+- **APIs:** [api/](api/) — Go API types (XBackend, XAccessPolicy). CRDs in [k8s/crds/](k8s/crds/). Overview: [docs/api/README.md](docs/api/README.md).
+- **Full layout:** [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) — Where to add proposals, APIs, and other content.
+
 ## Community, discussion, contribution, and support
 
 Our community meetings are held weekly on Thursday at 4PM UTC ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=4PM&tz=UTC)).
