@@ -39,4 +39,9 @@ const (
 
 	// GatewayNameLabel is the label key used to identify resources associated with a specific Gateway.
 	GatewayNameLabel = ProjectName + "/gateway-name"
+
+	// GatewayRBACFilterNamePrefix is the prefix for Envoy RBAC filters at the gateway level.
+	GatewayRBACFilterNamePrefix = "envoy.filters.http.rbac.gateway_level_"
+	// BackendRBACFilterNamePrefix is the prefix for Envoy RBAC filters at the backend level.
+	BackendRBACFilterNamePrefix = "envoy.filters.http.rbac.backend_level_"
 )
