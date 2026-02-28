@@ -34,7 +34,9 @@ import (
 
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
+	gatewayinformersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1beta1"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
+	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -71,8 +73,10 @@ type gatewayResources struct {
 	gatewayLister gatewaylisters.GatewayLister
 	gatewaySynced cache.InformerSynced
 
-	httprouteLister gatewaylisters.HTTPRouteLister
-	httprouteSynced cache.InformerSynced
+	httprouteLister       gatewaylisters.HTTPRouteLister
+	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister
+	httprouteSynced      cache.InformerSynced
+	referenceGrantSynced cache.InformerSynced
 }
 
 type agenticNetResources struct {
@@ -111,10 +115,11 @@ func New(
 	namespaceInformer corev1informers.NamespaceInformer,
 	serviceInformer corev1informers.ServiceInformer,
 	secretInformer corev1informers.SecretInformer,
-	gatewayClassInformer gatewayinformers.GatewayClassInformer,
-	gatewayInformer gatewayinformers.GatewayInformer,
-	httprouteInformer gatewayinformers.HTTPRouteInformer,
-	backendInformer agenticinformers.XBackendInformer,
+	gatewayClassInformer    gatewayinformers.GatewayClassInformer,
+	gatewayInformer         gatewayinformers.GatewayInformer,
+	httprouteInformer       gatewayinformers.HTTPRouteInformer,
+	referenceGrantInformer gatewayinformersv1beta1.ReferenceGrantInformer,
+	backendInformer         agenticinformers.XBackendInformer,
 	accessPolicyInformer agenticinformers.XAccessPolicyInformer,
 ) (*Controller, error) {
 	c := &Controller{
@@ -133,8 +138,10 @@ func New(
 			gatewayClassSynced: gatewayClassInformer.Informer().HasSynced,
 			gatewayLister:      gatewayInformer.Lister(),
 			gatewaySynced:      gatewayInformer.Informer().HasSynced,
-			httprouteLister:    httprouteInformer.Lister(),
-			httprouteSynced:    httprouteInformer.Informer().HasSynced,
+			httprouteLister:       httprouteInformer.Lister(),
+			referenceGrantLister:  referenceGrantInformer.Lister(),
+			httprouteSynced:       httprouteInformer.Informer().HasSynced,
+			referenceGrantSynced:  referenceGrantInformer.Informer().HasSynced,
 		},
 		agentic: agenticNetResources{
 			client:             agenticClientSet,
@@ -214,6 +221,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		c.gateway.gatewayClassSynced,
 		c.gateway.gatewaySynced,
 		c.gateway.httprouteSynced,
+		c.gateway.referenceGrantSynced,
 		c.agentic.backendSynced,
 		c.agentic.accessPolicySynced); !ok {
 		return errors.New("failed to wait for caches to sync")
