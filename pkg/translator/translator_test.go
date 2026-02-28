@@ -154,7 +154,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			}{
 				listenerNames: []string{"listener-10001"},
 				routeNames:    []string{"route-10001"},
-				clusterNames:  []string{"quickstart-ns-local-mcp-backend", "kubernetes_api_cluster"},
+				clusterNames:  []string{"quickstart-ns-local-mcp-backend"},
 				spiffeID:      "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa",
 			},
 		},

@@ -127,38 +127,3 @@ func buildClustersFromBackends(backends []*agenticv0alpha0.XBackend) ([]*cluster
 	}
 	return clusters, nil
 }
-
-func buildK8sApiCluster() (*clusterv3.Cluster, error) {
-	tlsContext := &tlsv3.UpstreamTlsContext{
-		Sni: "kubernetes.default.svc",
-		CommonTlsContext: &tlsv3.CommonTlsContext{
-			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContext{
-				ValidationContext: &tlsv3.CertificateValidationContext{
-					TrustedCa: &corev3.DataSource{
-						Specifier: &corev3.DataSource_Filename{
-							// This tells Envoy to trust the K8s API server's cert
-							Filename: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
-						},
-					},
-				},
-			},
-		},
-	}
-	anyTlsContext, err := anypb.New(tlsContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal UpstreamTlsContext: %w", err)
-	}
-
-	cluster := &clusterv3.Cluster{
-		Name:                 constants.K8sAPIClusterName,
-		ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_LOGICAL_DNS},
-		LoadAssignment:       createClusterLoadAssignment(constants.K8sAPIClusterName, "kubernetes.default.svc", 443), // Use port 443 for HTTPS
-		TransportSocket: &corev3.TransportSocket{
-			Name: "envoy.transport_sockets.tls",
-			ConfigType: &corev3.TransportSocket_TypedConfig{
-				TypedConfig: anyTlsContext,
-			},
-		},
-	}
-	return cluster, nil
-}
