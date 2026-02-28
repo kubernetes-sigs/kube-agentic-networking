@@ -19,6 +19,7 @@ limitations under the License.
 package v0alpha0
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -32,7 +33,8 @@ type AccessPolicySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
-	// +kubebuilder:validation:XValidation:rule="self.all(x, x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend')",message="TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"
+	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
+	// +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
 	TargetRefs []gwapiv1.LocalPolicyTargetReferenceWithSectionName `json:"targetRefs"`
 	// Rules defines a list of rules to be applied to the target.
 	// An AccessPolicy must have at least one rule.
@@ -167,6 +169,14 @@ const (
 	AuthorizationRuleTypeExternalAuth AuthorizationRuleType = "ExternalAuth"
 )
 
+const (
+	// PolicyConditionAccepted indicates whether the policy has been accepted by the controller.
+	PolicyConditionAccepted gwapiv1.PolicyConditionType = "Accepted"
+
+	// PolicyReasonExceededLimit indicates that the policy was rejected because the maximum number of policies per target was exceeded.
+	PolicyReasonExceededLimit gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
+)
+
 // AccessPolicyStatus defines the observed state of AccessPolicy.
 type AccessPolicyStatus struct {
 	// Ancestors is a list of ancestor resources (usually Backend) that are
@@ -202,6 +212,21 @@ type XAccessPolicy struct {
 	// status defines the observed state of AccessPolicy.
 	// +optional
 	Status AccessPolicyStatus `json:"status,omitempty"`
+}
+
+// IsAccepted returns true if the policy has been explicitly accepted for all its targets.
+// A policy is considered accepted only if it has at least one ancestor status populated
+// and ALL ancestors have the 'Accepted' condition set to 'True'.
+func (p *XAccessPolicy) IsAccepted() bool {
+	if len(p.Status.Ancestors) == 0 {
+		return false
+	}
+	for _, ancestor := range p.Status.Ancestors {
+		if !meta.IsStatusConditionTrue(ancestor.Conditions, string(PolicyConditionAccepted)) {
+			return false
+		}
+	}
+	return true
 }
 
 // +kubebuilder:object:root=true
