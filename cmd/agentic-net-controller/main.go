@@ -58,6 +58,7 @@ var (
 	enableAgenticIdentitySigner = flag.Bool("enable-agentic-identity-signer", false, fmt.Sprintf("Run controller for %s", agenticidentitysigner.Name))
 	agenticIdentityTrustDomain  = flag.String("agentic-identity-trust-domain", "", "The SPIFFE trust domain for issued certificates")
 	agenticIdentityCAPoolFile   = flag.String("agentic-identity-ca-pool", "", fmt.Sprintf("File that contains the CA pool state for %s", agenticidentitysigner.Name))
+	maxAccessPoliciesPerTarget  = flag.Int("max-access-policies-per-target", 5, "Maximum number of AccessPolicies allowed to target a single resource")
 )
 
 func main() {
@@ -106,6 +107,7 @@ func main() {
 		ctx,
 		*agenticIdentityTrustDomain,
 		*proxyImage,
+		*maxAccessPoliciesPerTarget,
 		kubeClient,
 		gatewayClientset,
 		agenticClientset,

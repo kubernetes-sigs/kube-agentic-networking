@@ -97,6 +97,7 @@ type Controller struct {
 
 	agenticIdentityTrustDomain string
 	envoyImage                 string
+	maxAccessPoliciesPerTarget int
 
 	gatewayqueue            workqueue.TypedRateLimitingInterface[string]
 	backendFinalizerQueue   workqueue.TypedRateLimitingInterface[string]
@@ -109,6 +110,7 @@ func New(
 	ctx context.Context,
 	agenticIdentityTrustDomain string,
 	envoyImage string,
+	maxAccessPoliciesPerTarget int,
 	kubeClientSet kubernetes.Interface,
 	gwClientSet gatewayclient.Interface,
 	agenticClientSet agenticclient.Interface,
@@ -152,6 +154,7 @@ func New(
 		},
 		agenticIdentityTrustDomain: agenticIdentityTrustDomain,
 		envoyImage:                 envoyImage,
+		maxAccessPoliciesPerTarget: maxAccessPoliciesPerTarget,
 		gatewayqueue: workqueue.NewTypedRateLimitingQueueWithConfig(
 			workqueue.DefaultTypedControllerRateLimiter[string](),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "gateway"},
@@ -165,6 +168,7 @@ func New(
 
 	c.translator = translator.New(
 		agenticIdentityTrustDomain,
+		maxAccessPoliciesPerTarget,
 		kubeClientSet,
 		gwClientSet,
 		namespaceInformer.Lister(),

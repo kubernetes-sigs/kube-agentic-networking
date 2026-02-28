@@ -26,7 +26,6 @@ import (
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
 	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
-	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	tlsinspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -43,7 +42,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
-	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -154,13 +152,13 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 	return listenerConditions
 }
 
-func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, accessPolicyLister agenticlisters.XAccessPolicyLister) (*listener.FilterChain, error) {
+func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
 	var filterChain *listener.FilterChain
 	var err error
 
 	switch lis.Protocol {
 	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		filterChain, err = buildHTTPFilterChain(lis, routeName, accessPolicyLister)
+		filterChain, err = t.buildHTTPFilterChain(lis, routeName, gateway)
 	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType:
 		filterChain, err = buildTCPFilterChain(lis)
 	case gatewayv1.UDPProtocolType:
@@ -190,8 +188,8 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 	return filterChain, nil
 }
 
-func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, accessPolicyLister agenticlisters.XAccessPolicyLister) (*listener.FilterChain, error) {
-	httpFilters, err := buildHTTPFilters(accessPolicyLister)
+func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
+	httpFilters, err := t.buildHTTPFilters(gateway)
 	if err != nil {
 		return nil, err
 	}
@@ -268,37 +266,53 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
-func buildHTTPFilters(accessPolicyLister agenticlisters.XAccessPolicyLister) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
+	// 1. Add MCP filter.
 	mcpFilter, err := buildMCPFilter()
 	if err != nil {
 		return nil, err
 	}
 
-	rbacFilter, err := buildRBACFilter()
+	// 2. Add Gateway-level RBAC filters.
+	gatewayRBACFilters, err := t.buildGatewayLevelRBACFilters(gateway)
 	if err != nil {
 		return nil, err
 	}
 
-	extAuthzFilters, err := buildExtAuthzFilters(accessPolicyLister)
+	// 3. Add Backend-level RBAC filters.
+	// We add up to MaxAccessPoliciesPerTarget backend-level RBAC filters.
+	// These will be overridden at the cluster/route level.
+	backendRBACFilters, err := t.buildBackendLevelRBACFilters()
 	if err != nil {
 		return nil, err
 	}
 
+	// 4. Add ext_authz filters.
+	extAuthzFilters, err := t.buildExtAuthzFilters()
+	if err != nil {
+		return nil, err
+	}
+	// 5. Add router filter.
 	routerFilter, err := buildRouterFilter()
 	if err != nil {
 		return nil, err
 	}
 
-	filters := []*hcm.HttpFilter{
-		// IMPORTANT: Order matters here!
-		// RBAC filter must come before the ext_authz filter to ensure evaluation of RBAC shadow rules that trigger ext_authz.
-		// Ext_authz filter must come before router filter to enforce access control before routing.
-		// Router filter must come last to handle routing after all other filters have processed the request.
-		mcpFilter,
-		rbacFilter,
-	}
+	// Compose the list at the end to ensure the correct order.
+	// IMPORTANT: Order matters here!
+	// 1. The MCP filter must come first to populate metadata for RBAC.
+	// 2. Gateway-level RBAC filters must come before backend-level RBAC filters.
+	// 3. Backend-level RBAC filters must come before the ext_authz filter to ensure evaluation of RBAC shadow rules that trigger ext_authz.
+	// 4. Ext_authz filter must come before router filter to enforce access control before routing.
+	// 5. Router filter must come last to handle routing after all other filters have processed the request.
+	var filters []*hcm.HttpFilter
+	filters = append(filters, mcpFilter)
+	filters = append(filters, gatewayRBACFilters...)
+	filters = append(filters, backendRBACFilters...)
 	filters = append(filters, extAuthzFilters...)
-	return append(filters, routerFilter), nil
+	filters = append(filters, routerFilter)
+
+	return filters, nil
 }
 
 func buildMCPFilter() (*hcm.HttpFilter, error) {
@@ -317,24 +331,8 @@ func buildMCPFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-func buildRBACFilter() (*hcm.HttpFilter, error) {
-	rbacProto := &rbacv3.RBAC{}
-	rbacAny, err := anypb.New(rbacProto)
-	if err != nil {
-		klog.Errorf("Failed to marshal rbac config: %v", err)
-		return nil, err
-	}
-
-	return &hcm.HttpFilter{
-		Name: wellknown.HTTPRoleBasedAccessControl,
-		ConfigType: &hcm.HttpFilter_TypedConfig{
-			TypedConfig: rbacAny,
-		},
-	}, nil
-}
-
-func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister) ([]*hcm.HttpFilter, error) {
-	accessPolicies, err := accessPolicyLister.List(labels.Everything())
+func (t *Translator) buildExtAuthzFilters() ([]*hcm.HttpFilter, error) {
+	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
 	}
