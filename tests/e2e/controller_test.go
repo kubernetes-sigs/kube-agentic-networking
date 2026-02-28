@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -33,52 +34,41 @@ const (
 	agentCertPath = "/run/agent-identity-mtls/credential-bundle.pem"
 	agentKeyPath  = "/run/agent-identity-mtls/credential-bundle.pem"
 	agentCAPath   = "/run/agent-identity-mtls/cluster.local.trust-bundle.pem"
+
+	xdsUpdateWaitTime = 5 * time.Second
 )
 
-type mcpResponse struct {
-	StatusCode int      `json:"status"`
-	Body       respBody `json:"body"`
-}
-
-type respBody struct {
-	JSONRPC string     `json:"jsonrpc"`
-	ID      int        `json:"id"`
-	Result  *mcpResult `json:"result,omitempty"`
-}
-
-type mcpResult struct {
-	IsError bool         `json:"isError"`
-	Content []mcpContent `json:"content"`
-}
-
-type mcpContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
+// TestControllerE2E verifies the core functionality of the agentic networking controller including:
+// - Resource reconciliation on CRUD operations for Gateway, HTTPRoute, XBackend, and XAccessPolicy.
+// - Dynamic xDS configuration updates to Envoy proxies.
+// - mTLS authentication verification between the client and the proxy.
+// - Multi-level authorization enforcement at both Gateway and Backend scopes.
+// - Correctness of the generated Envoy configuration for policy enforcement.
 func TestControllerE2E(t *testing.T) {
-	// 1. Initial Setup
-	t.Log("Setting up E2E test resources...")
-	runKubectl(t, "apply", "-f", "testdata/e2e-resources.yaml")
-	runKubectl(t, "apply", "-f", "testdata/tester-pod.yaml")
-	runKubectl(t, "apply", "-f", "testdata/mcpserver.yaml")
+	// 1. Creating E2E test namespace
+	t.Log("Creating E2E test namespace")
+	runKubectl(t, "delete", "namespace", "e2e-test-ns", "--ignore-not-found")
+	runKubectl(t, "create", "namespace", "e2e-test-ns")
 
 	defer func() {
 		if t.Failed() {
 			t.Log("Skipping resource cleanup due to test failure. Inspect resources in 'e2e-test-ns' namespace.")
 			return
 		}
+		t.Log("🎉🎉 E2E Test Passed!")
 		t.Log("Cleaning up E2E test resources...")
-		runKubectl(t, "delete", "-f", "testdata/e2e-resources.yaml", "--ignore-not-found")
-		runKubectl(t, "delete", "-f", "testdata/tester-pod.yaml", "--ignore-not-found")
-		runKubectl(t, "delete", "-f", "testdata/mcpserver.yaml", "--ignore-not-found")
+		runKubectl(t, "delete", "namespace", "e2e-test-ns", "--ignore-not-found")
 	}()
 
-	// 2. Wait for Readiness
-	t.Log("Waiting for resources to be ready...")
-	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=5m")
+	// 2. Setting up E2E test resources
+	t.Log("Setting up E2E test resources...")
+	// a. MCP server
+	runKubectl(t, "apply", "-f", "testdata/mcpserver.yaml")
 	runKubectl(t, "wait", "--for=condition=available", "deployment/mcp-everything", "-n", "e2e-test-ns", "--timeout=2m")
-	// Wait for Gateway to be programmed and proxy to be up.
+
+	// b. Gateway, HTTPRoute and XBackend resources
+	runKubectl(t, "apply", "-f", "testdata/e2e-resources.yaml")
+
 	var proxyPodName string
 	err := retry(20, 5*time.Second, func() error {
 		out := runKubectlOutput(t, "get", "pods", "-n", "e2e-test-ns", "-l", fmt.Sprintf("%s=e2e-gateway", constants.GatewayNameLabel), "-o", "jsonpath={.items[*].metadata.name}")
@@ -95,8 +85,12 @@ func TestControllerE2E(t *testing.T) {
 	}
 	runKubectl(t, "wait", "--for=condition=Ready", "pod/"+proxyPodName, "-n", "e2e-test-ns", "--timeout=5m")
 
+	// c. Tester pod
+	runKubectl(t, "apply", "-f", "testdata/tester-pod.yaml")
+	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=5m")
+
 	// 3. Obtain Gateway Address from status
-	t.Log("Verifying Gateway status address and capturing IP...")
+	t.Log("Obtain Gateway Address from status")
 	var gatewayIP string
 	err = retry(20, 2*time.Second, func() error {
 		out := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", "e2e-test-ns", "-o", "jsonpath={.status.addresses[*].value}")
@@ -113,48 +107,16 @@ func TestControllerE2E(t *testing.T) {
 	}
 
 	// 4. Initialize MCP session
-	t.Log("Initializing MCP session...")
-	time.Sleep(10 * time.Second)
+	mcp := initializeMCP(t, gatewayIP)
 
-	mcpSessionID := ""
-	err = retry(5, 10*time.Second, func() error {
-		out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
-			"curl", "-ks", "-i",
-			"--cert", agentCertPath,
-			"--key", agentKeyPath,
-			"--cacert", agentCAPath,
-			"-H", "Content-Type: application/json",
-			"-H", "Accept: application/json, text/event-stream",
-			"-H", "mcp-protocol-version: 2025-11-25",
-			"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
-			fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
-
-		// Extract mcp-session-id from headers
-		lines := strings.Split(out, "\r\n")
-		for _, line := range lines {
-			if strings.HasPrefix(strings.ToLower(line), "mcp-session-id:") {
-				mcpSessionID = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
-				return nil
-			}
-		}
-
-		return fmt.Errorf("failed to get mcp-session-id from headers")
-	})
-	if err != nil {
-		t.Fatalf("MCP Initialization failed: %v", err)
-	}
-	t.Logf("Obtained MCP Session ID: %s", mcpSessionID)
-
-	// 5. Test Phase 1: get-sum allowed, echo denied
-	t.Log("Verifying initial policy (get-sum: OK, echo: DENY)...")
-
-	// get-sum should be successful.
-	assertToolCall(t, "1", mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`,
+	// 5. Case 1: No policy
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 1: No policy applied (all allowed)")
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`,
 		mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
 				JSONRPC: "2.0",
-				ID:      1,
 				Result: &mcpResult{
 					IsError: false,
 					Content: []mcpContent{
@@ -165,11 +127,47 @@ func TestControllerE2E(t *testing.T) {
 					},
 				},
 			},
-		},
-	)
+		})
+	mcp.assertToolCall("echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Echo: hello",
+						},
+					},
+				},
+			},
+		})
 
-	// echo should be unsuccessful.
-	assertToolCall(t, "2", mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`,
+	// 6. Case 2: Only backend policy
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 2: Only backend policy (allows get-sum)")
+	runKubectl(t, "apply", "-f", "testdata/backend-policy.yaml")
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "The sum of 2 and 3 is 5.",
+						},
+					},
+				},
+			},
+		})
+	mcp.assertToolCall("echo", `{"message":"hello"}`,
 		mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
@@ -185,22 +183,16 @@ func TestControllerE2E(t *testing.T) {
 					},
 				},
 			},
-		},
-	)
+		})
 
-	// 6. Update Policy
-	t.Log("Updating XAccessPolicy (swap permissions)...")
-	runKubectl(t, "apply", "-f", "testdata/policy-update.yaml")
-
-	// Give some time for xDS propagation
-	t.Log("Waiting for xDS propagation...")
-	time.Sleep(10 * time.Second)
-
-	// 7. Test Phase 2: get-sum denied, echo allowed
-	t.Log("Verifying updated policy (get-sum: DENY, echo: OK)...")
-
-	// get-sum should now be unsuccessful.
-	assertToolCall(t, "3", mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`,
+	// 7. Case 3: Only gateway policy
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 3: Only gateway policy (allows echo)")
+	runKubectl(t, "delete", "-f", "testdata/backend-policy.yaml", "--ignore-not-found")
+	runKubectl(t, "apply", "-f", "testdata/gateway-policy.yaml")
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`,
 		mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
@@ -216,16 +208,12 @@ func TestControllerE2E(t *testing.T) {
 					},
 				},
 			},
-		},
-	)
-
-	// echo should now be successful.
-	assertToolCall(t, "4", mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`,
+		})
+	mcp.assertToolCall("echo", `{"message":"hello"}`,
 		mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
 				JSONRPC: "2.0",
-				ID:      4,
 				Result: &mcpResult{
 					IsError: false,
 					Content: []mcpContent{
@@ -236,10 +224,75 @@ func TestControllerE2E(t *testing.T) {
 					},
 				},
 			},
-		},
-	)
+		})
 
-	t.Log("E2E Test Passed!")
+	// 8. Case 4: Both policies applied
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 4: Both policies (GW: echo, BE: get-sum)")
+	runKubectl(t, "apply", "-f", "testdata/backend-policy.yaml")
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				ID:      4,
+				Result: &mcpResult{
+					IsError: true,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Access to this tool is forbidden (403).",
+						},
+					},
+				},
+			},
+		})
+	mcp.assertToolCall("echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				ID:      5,
+				Result: &mcpResult{
+					IsError: true,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Access to this tool is forbidden (403).",
+						},
+					},
+				},
+			},
+		})
+
+	// 9. Case 5: Patch Gateway policy to allow get-sum
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 5: Patch Gateway policy to allow get-sum")
+	// Modifying Gateway Policy: Allowing 'get-sum' to align with Backend policy.
+	patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": ["get-sum"]}]`
+	runKubectl(t, "patch", "xaccesspolicy", "e2e-gateway-level-policy", "-n", "e2e-test-ns", "--type=json", "-p", patchGW)
+
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "The sum of 2 and 3 is 5.",
+						},
+					},
+				},
+			},
+		})
+	t.Log("--------------------------------------------------------------------------------")
 }
 
 func runKubectl(t *testing.T, args ...string) {
@@ -275,10 +328,77 @@ func retry(attempts int, sleep time.Duration, f func() error) error {
 	}
 	return fmt.Errorf("after %d attempts", attempts)
 }
-func assertToolCall(t *testing.T, requestID, sessionID, gatewayAddr, toolName, toolArgs string, expected mcpResponse) {
-	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, requestID, toolName, toolArgs)
 
-	out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
+type mcpTestSession struct {
+	t         *testing.T
+	gatewayIP string
+	sessionID string
+}
+
+func initializeMCP(t *testing.T, gatewayIP string) *mcpTestSession {
+	t.Log("Initialize MCP session")
+	time.Sleep(xdsUpdateWaitTime)
+
+	mcpSessionID := ""
+	err := retry(5, 10*time.Second, func() error {
+		out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
+			"curl", "-ks", "-i",
+			"--cert", agentCertPath,
+			"--key", agentKeyPath,
+			"--cacert", agentCAPath,
+			"-H", "Content-Type: application/json",
+			"-H", "Accept: application/json, text/event-stream",
+			"-H", "mcp-protocol-version: 2025-11-25",
+			"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
+			fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
+
+		// Extract mcp-session-id from headers
+		lines := strings.Split(out, "\r\n")
+		for _, line := range lines {
+			if strings.HasPrefix(strings.ToLower(line), "mcp-session-id:") {
+				mcpSessionID = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
+				return nil
+			}
+		}
+
+		return fmt.Errorf("failed to get mcp-session-id from headers")
+	})
+	if err != nil {
+		t.Fatalf("MCP Initialization failed: %v", err)
+	}
+	t.Logf("Obtained MCP Session ID: %s", mcpSessionID)
+
+	return &mcpTestSession{t: t, gatewayIP: gatewayIP, sessionID: mcpSessionID}
+}
+
+type mcpResponse struct {
+	StatusCode int      `json:"status"`
+	Body       respBody `json:"body"`
+}
+
+type respBody struct {
+	JSONRPC string     `json:"jsonrpc"`
+	ID      int        `json:"id"`
+	Result  *mcpResult `json:"result,omitempty"`
+}
+
+type mcpResult struct {
+	IsError bool         `json:"isError"`
+	Content []mcpContent `json:"content"`
+}
+
+type mcpContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func (m *mcpTestSession) assertToolCall(toolName, toolArgs string, expected mcpResponse) {
+	requestID := rand.Intn(1000000)
+	expected.Body.ID = requestID
+
+	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, requestID, toolName, toolArgs)
+
+	out := runKubectlOutput(m.t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
 		"curl", "-ks", "-w", "\n%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -286,24 +406,24 @@ func assertToolCall(t *testing.T, requestID, sessionID, gatewayAddr, toolName, t
 		"-H", "Content-Type: application/json",
 		"-H", "Accept: application/json, text/event-stream",
 		"-H", "mcp-protocol-version: 2025-11-25",
-		"-H", fmt.Sprintf("mcp-session-id: %s", sessionID),
+		"-H", fmt.Sprintf("mcp-session-id: %s", m.sessionID),
 		"--data-raw", data,
-		fmt.Sprintf("https://%s:10001/mcp", gatewayAddr))
+		fmt.Sprintf("https://%s:10001/mcp", m.gatewayIP))
 
 	out = strings.TrimSpace(out)
 	lines := strings.Split(out, "\n")
 	if len(lines) == 0 {
-		t.Fatalf("empty response from gateway")
+		m.t.Fatalf("empty response from gateway")
 	}
 
 	// Check HTTP status code
 	codeStr := strings.TrimSpace(lines[len(lines)-1])
 	code, err := strconv.Atoi(codeStr)
 	if err != nil {
-		t.Fatalf("failed to parse HTTP status code from response: %q", codeStr)
+		m.t.Fatalf("failed to parse HTTP status code from response: %q", codeStr)
 	}
 	if expected.StatusCode != 0 && code != expected.StatusCode {
-		t.Fatalf("unexpected HTTP status code: got %d, want %d\n", code, expected.StatusCode)
+		m.t.Fatalf("unexpected HTTP status code: got %d, want %d\n", code, expected.StatusCode)
 	}
 	// An example mcp response body: {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"Access to this tool is forbidden (403).","type":"text"}],"isError":true}}
 	// Check HTTP body
@@ -311,22 +431,22 @@ func assertToolCall(t *testing.T, requestID, sessionID, gatewayAddr, toolName, t
 	var resp respBody
 	idx := strings.Index(body, "{")
 	if idx == -1 {
-		t.Fatalf("failed to find JSON payload in response\nbody: %s", body)
+		m.t.Fatalf("failed to find JSON payload in response\nbody: %s", body)
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(body[idx:])), &resp); err != nil {
-		t.Fatalf("failed to parse JSON response: %v\nbody: %s", err, body)
+		m.t.Fatalf("failed to parse JSON response: %v\nbody: %s", err, body)
 	}
 
 	if expected.Body.JSONRPC != "" && resp.JSONRPC != expected.Body.JSONRPC {
-		t.Fatalf("jsonrpc mismatch: got %q, want %q\nJSON payload: %s", resp.JSONRPC, expected.Body.JSONRPC, body)
+		m.t.Fatalf("jsonrpc mismatch: got %q, want %q\nJSON payload: %s", resp.JSONRPC, expected.Body.JSONRPC, body)
 	}
 
-	if requestID != "" && strconv.Itoa(resp.ID) != requestID {
-		t.Fatalf("id mismatch: got %q, want %q\nbody: %s", strconv.Itoa(resp.ID), requestID, body)
+	if resp.ID != expected.Body.ID {
+		m.t.Fatalf("id mismatch: got %d, want %d\nbody: %s", resp.ID, expected.Body.ID, body)
 	}
 
 	if resp.Result == nil || len(resp.Result.Content) == 0 {
-		t.Fatalf("response contains no result\nbody: %s", body)
+		m.t.Fatalf("response contains no result\nbody: %s", body)
 	}
 	isError := resp.Result.IsError
 	message := resp.Result.Content[0].Text
@@ -335,12 +455,13 @@ func assertToolCall(t *testing.T, requestID, sessionID, gatewayAddr, toolName, t
 	expectedMessage := expected.Body.Result.Content[0].Text
 	expectedType := expected.Body.Result.Content[0].Type
 	if expectedIsError != isError {
-		t.Fatalf("isError mismatch: got %v, want %v\nbody: %s", isError, expectedIsError, body)
+		m.t.Fatalf("isError mismatch: got %v, want %v\nbody: %s", isError, expectedIsError, body)
 	}
 	if expectedMessage != "" && message != expectedMessage {
-		t.Fatalf("message mismatch: expected %q to be in %q\nbody: %s", expectedMessage, message, body)
+		m.t.Fatalf("message mismatch: expected %q to be in %q\nbody: %s", expectedMessage, message, body)
 	}
 	if expectedType != "" && tp != expectedType {
-		t.Fatalf("type mismatch: got %q, want %q\nbody: %s", tp, expectedType, body)
+		m.t.Fatalf("type mismatch: got %q, want %q\nbody: %s", tp, expectedType, body)
 	}
+	m.t.Logf("Tool call %q: got expected response.", toolName)
 }
