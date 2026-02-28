@@ -450,10 +450,13 @@ spec:
                 type: array
                 x-kubernetes-list-type: atomic
                 x-kubernetes-validations:
-                - message: TargetRef must have group agentic.prototype.x-k8s.io group
-                    and kind XBackend
-                  rule: self.all(x, x.group == 'agentic.prototype.x-k8s.io' && x.kind
-                    == 'XBackend')
+                - message: TargetRef must have group agentic.prototype.x-k8s.io and
+                    kind XBackend, or group gateway.networking.k8s.io and kind Gateway
+                  rule: self.all(x, (x.group == 'agentic.prototype.x-k8s.io' && x.kind
+                    == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind
+                    == 'Gateway'))
+                - message: All targetRefs must have the same Kind
+                  rule: self.all(ref, ref.kind == self[0].kind)
             required:
             - rules
             - targetRefs
