@@ -87,7 +87,7 @@ SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/
 # The root directory where client code will be placed.
 CLIENT_OUTPUT_DIR := $(REPO_ROOT)/k8s/client
 # The root Go package for your generated client code.
-CLIENT_OUTPUT_PKG := $(shell go list -m)/k8s/client
+CLIENT_OUTPUT_PKG := $(shell go list -m | head -n 1)/k8s/client
 BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 
 

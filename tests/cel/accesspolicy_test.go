@@ -74,14 +74,14 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Group = "wrong.group"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"},
+			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "invalid target kind",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Kind = "WrongKind"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"},
+			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "duplicate rule names",
@@ -173,7 +173,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			desc: "missing authorization for ExternalAuth type",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
-					Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+					Type:  v0alpha0.AuthorizationRuleTypeExternalAuth,
 					Tools: []string{"tool-1"},
 				}
 			},
@@ -183,7 +183,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			desc: "multiple authorization rule types specified",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
-					Type: v0alpha0.AuthorizationRuleTypeInlineTools,
+					Type:  v0alpha0.AuthorizationRuleTypeInlineTools,
 					Tools: []string{"tool-1"},
 					ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
 						ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
@@ -194,6 +194,19 @@ func TestValidateXAccessPolicy(t *testing.T) {
 				}
 			},
 			wantErrors: []string{"only one of tools or externalAuth can be specified"},
+		},
+		{
+			desc: "heterogeneous target kinds",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.TargetRefs = append(p.Spec.TargetRefs, gwapiv1.LocalPolicyTargetReferenceWithSectionName{
+					LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+						Group: "gateway.networking.k8s.io",
+						Kind:  "Gateway",
+						Name:  "my-gateway",
+					},
+				})
+			},
+			wantErrors: []string{"All targetRefs must have the same Kind"},
 		},
 	}
 	for _, tc := range testCases {
