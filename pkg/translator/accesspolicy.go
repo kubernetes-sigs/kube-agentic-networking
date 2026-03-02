@@ -71,7 +71,7 @@ func (t *Translator) rbacConfigFromAccessPolicy(accessPolicyLister agenticlister
 	} else {
 		// No AccessPolicy targets this backend. Per Envoy RBAC docs, when rules are absent, no RBAC enforcement occurs (allow all).
 		// See https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/rbac/v3/rbac.proto
-		return &rbacv3.RBAC{}, nil
+		return rbacConfig, nil
 	}
 
 	// It's deny-by-default (a.k.a ALLOW action), we explicitly allow necessary
