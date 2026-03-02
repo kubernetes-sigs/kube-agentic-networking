@@ -26,7 +26,7 @@ jobs:
       uses: helm/kind-action@v1.13.0
       with:
         cluster_name: kind
-        config: quickstart/kind-config.yaml
+        config: dev/ci/kind-config.yaml
 
     - name: Load controller image into cluster
       run: |
@@ -66,24 +66,9 @@ jobs:
         kubectl describe deployment agentic-net-controller -n agentic-net-system
         kubectl logs deployment/agentic-net-controller -n agentic-net-system --all-containers
 
-    - name: Create client pod with agent identity
-      run: |
-        kubectl apply -f quickstart/agent-identity-demo/agent-identity-demo.yaml
-
-    - name: Wait for agent identity client pod to be ready (indicates that cert issuance works)
-      run: |
-        kubectl wait --for=condition=available --timeout=300s deployment/client -n agent-identity-demo
-
-    - name: Debug client pod failure
-      if: failure()
-      run: |
-        kubectl get pods -n agent-identity-demo -l app=client -o yaml
-        kubectl get podcertificaterequests -n agent-identity-demo -o yaml
-        kubectl get clustertrustbundles -f 'spec.signerName=kube-agentic-networking.sigs.k8s.io/identity'
-
     - name: Run E2E tests
       run: |
-        make test-e2e
+        cd tests && go clean -testcache && go test -v ./e2e/...
 
     - name: Debug E2E failure
       if: failure()
@@ -93,6 +78,9 @@ jobs:
         kubectl get xaccesspolicies -n e2e-test-ns
         kubectl get xbackends -n e2e-test-ns
         kubectl get pods -n e2e-test-ns -o wide
+        kubectl get podcertificaterequests -n e2e-test-ns -o yaml
+        kubectl get clustertrustbundles
+        kubectl get pod e2e-tester -n e2e-test-ns -o yaml
         kubectl logs -n e2e-test-ns -l app=mcp-everything --tail=100
         kubectl logs -n e2e-test-ns -l "kube-agentic-networking.sigs.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100
         echo "--- Controller logs (last 200 lines) ---"
