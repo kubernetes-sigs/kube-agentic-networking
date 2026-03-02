@@ -343,12 +343,6 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 		clustersSlice = append(clustersSlice, cluster)
 	}
 
-	k8sApiCluster, err := buildK8sApiCluster()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to build kubernetes_api_cluster: %w", err)
-	}
-	clustersSlice = append(clustersSlice, k8sApiCluster)
-
 	orderedStatuses := make([]gatewayv1.ListenerStatus, len(gateway.Spec.Listeners))
 	for i, listener := range gateway.Spec.Listeners {
 		orderedStatuses[i] = allListenerStatuses[listener.Name]

@@ -33,8 +33,6 @@ const (
 	VHostNameFormat = "%s-vh-%d-%s"
 	// ClusterNameFormat is the format string for Envoy cluster names, becoming `<namespace>-<backend-name>`.
 	ClusterNameFormat = "%s-%s"
-	// K8sAPIClusterName is the name of the cluster that points to the Kubernetes API server.
-	K8sAPIClusterName = "kubernetes_api_cluster"
 
 	// EnvoyBootstrapMountPath is the path where the Envoy bootstrap configuration is mounted.
 	EnvoyBootstrapMountPath = "/etc/envoy/bootstrap"
