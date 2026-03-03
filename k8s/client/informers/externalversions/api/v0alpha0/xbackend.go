@@ -57,7 +57,7 @@ func NewXBackendInformer(client versioned.Interface, namespace string, resyncPer
 // one. This reduces memory footprint and number of connections to the server.
 func NewFilteredXBackendInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
@@ -82,7 +82,7 @@ func NewFilteredXBackendInformer(client versioned.Interface, namespace string, r
 				}
 				return client.AgenticV0alpha0().XBackends(namespace).Watch(ctx, options)
 			},
-		},
+		}, client),
 		&kubeagenticnetworkingapiv0alpha0.XBackend{},
 		resyncPeriod,
 		indexers,
