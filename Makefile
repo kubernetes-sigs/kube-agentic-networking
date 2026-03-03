@@ -154,6 +154,12 @@ $(CONTROLLER_GEN): $(LOCALBIN) ## Installs controller-gen if not already install
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
+##@Quickstart
+
+.PHONY: quickstart
+quickstart: ## Run the quickstart setup (requires HF_TOKEN env var, kind, kubectl, go).
+	hack/quickstart.sh
+
 ##@Docs
 
 .PHONY: build-docs
