@@ -22,6 +22,7 @@ import (
 	"reflect"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -41,9 +42,11 @@ func (c *Controller) setupGatewayEventHandlers(gatewayInformer gatewayinformers.
 
 func (c *Controller) onGatewayAdd(obj interface{}) {
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-	if err == nil {
-		c.gatewayqueue.Add(key)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("couldn't get key for Gateway: %w", err))
+		return
 	}
+	c.gatewayqueue.Add(key)
 	klog.V(4).InfoS("Gateway added", "gateway", key)
 }
 

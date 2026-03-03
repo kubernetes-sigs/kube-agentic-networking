@@ -40,13 +40,19 @@ jobs:
       run: |
         kubectl apply -f k8s/crds/
 
-    - name: Deploy Controller
+    # Create namespace and CA secret before deploying the controller so the pod
+    # can start immediately.
+    - name: Create agentic-net-system namespace
       run: |
-        kubectl apply -f k8s/deploy/deployment.yaml
+        kubectl create namespace agentic-net-system --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Create agentic identity CA
       run: |
         go run ./cmd/agentic-net-tool -- make-ca-pool-secret --ca-id=v1 --namespace=agentic-net-system --name=agentic-identity-ca-pool
+
+    - name: Deploy Controller
+      run: |
+        kubectl apply -f k8s/deploy/deployment.yaml
 
     - name: Wait for controller to be ready
       run: |
@@ -83,9 +89,11 @@ jobs:
       if: failure()
       run: |
         kubectl get all -n e2e-test-ns
-        kubectl get gateway -n e2e-test-ns
+        kubectl get gateway -n e2e-test-ns -o yaml
         kubectl get xaccesspolicies -n e2e-test-ns
         kubectl get xbackends -n e2e-test-ns
+        kubectl get pods -n e2e-test-ns -o wide
         kubectl logs -n e2e-test-ns -l app=mcp-everything --tail=100
-        # Log for the envoy proxy
         kubectl logs -n e2e-test-ns -l "kube-agentic-networking.sigs.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100
+        echo "--- Controller logs (last 200 lines) ---"
+        kubectl logs deployment/agentic-net-controller -n agentic-net-system --all-containers --tail=200

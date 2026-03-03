@@ -21,10 +21,13 @@ import (
 	"reflect"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
+	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
 
 func (c *Controller) setupServiceEventHandlers(informer corev1informers.ServiceInformer) error {
@@ -74,4 +77,84 @@ func (c *Controller) onServiceDelete(obj interface{}) {
 
 func (c *Controller) enqueueGatewaysForService(svc *corev1.Service) {
 	// A change to a Service can affect multiple Gateways via Backends and HTTPRoutes.
+	klog.V(4).InfoS(
+		"Enqueueing Gateways for Service change",
+		"service", klog.KObj(svc),
+	)
+	c.enqueueGatewaysForServiceDirectHTTPRouteRefs(svc)
+	c.enqueueGatewaysForServiceViaXBackends(svc)
+}
+
+// enqueueGatewaysForServiceDirectHTTPRouteRefs enqueues Gateways for HTTPRoutes
+// that reference this Service directly in their backendRefs
+func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefs(svc *corev1.Service) {
+	routes, err := c.gateway.httprouteLister.List(labels.Everything())
+	if err != nil {
+		runtime.HandleError(err)
+		return
+	}
+
+	for _, route := range routes {
+		matched := false
+
+		for _, rule := range route.Spec.Rules {
+			for _, backend := range rule.BackendRefs {
+				// Skip XBackend refs; see isXBackendRef in backend.go.
+				if isXBackendRef(backend.BackendRef) {
+					continue
+				}
+				backendNS := route.Namespace
+				if backend.Namespace != nil {
+					backendNS = string(*backend.Namespace)
+				}
+
+				if backendNS == svc.Namespace &&
+					string(backend.Name) == svc.Name {
+
+					// Cross-namespace refs require a ReferenceGrant in the backend namespace.
+					// See https://gateway-api.sigs.k8s.io/api-types/referencegrant/
+					if !translator.AllowedByReferenceGrant(route.Namespace, backendNS, c.gateway.referenceGrantLister) {
+						continue
+					}
+					matched = true
+
+					klog.V(4).InfoS(
+						"HTTPRoute references Service directly",
+						"service", klog.KObj(svc),
+						"httproute", klog.KObj(route),
+					)
+					break
+				}
+			}
+
+			if matched {
+				break
+			}
+		}
+
+		if matched {
+			c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
+		}
+	}
+}
+
+// enqueueGatewaysForServiceViaXBackends enqueues Gateways for HTTPRoutes that reference an XBackend
+func (c *Controller) enqueueGatewaysForServiceViaXBackends(svc *corev1.Service) {
+	backends, err := c.agentic.backendLister.XBackends(svc.Namespace).List(labels.Everything())
+	if err != nil {
+		runtime.HandleError(err)
+		return
+	}
+
+	for _, backend := range backends {
+		if backend.Spec.MCP.ServiceName == nil || *backend.Spec.MCP.ServiceName != svc.Name {
+			continue
+		}
+		klog.V(4).InfoS(
+			"XBackend references Service, enqueueing Gateways for HTTPRoutes using this backend",
+			"service", klog.KObj(svc),
+			"backend", klog.KObj(backend),
+		)
+		c.enqueueGatewaysForBackend(backend)
+	}
 }
