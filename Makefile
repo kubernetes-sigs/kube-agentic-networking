@@ -27,7 +27,15 @@ help:
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-17s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: all
-all: vet fmt verify test build;$(info $(M)...Begin to test, verify and build this project.) @ ## Test, verify and build this project.
+all: validate-python vet fmt verify test build;$(info $(M)...Begin to test, verify and build this project.) @ ## Test, verify and build this project.
+
+# Check Python syntax
+PYTHON_FILES := $(shell find . -type f -name "*.py")
+.PHONY: validate-python
+validate-python:
+	@echo "Checking Python syntax for the following files:"
+	@echo "$(PYTHON_FILES)"
+	@if [ -n "$(PYTHON_FILES)" ]; then python -m py_compile $(PYTHON_FILES); else echo "No Python files found."; fi
 
 # Run go fmt against code
 .PHONY: fmt
