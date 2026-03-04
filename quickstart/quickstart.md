@@ -50,6 +50,19 @@ graph TD
     style RemoteMCP fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
+## Prerequisites
+
+Before you begin, ensure you have the following:
+
+- **[git](https://git-scm.com/downloads)**
+- **[kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)** (Kubernetes in Docker)
+- **[kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)**
+- **[Go](https://go.dev/doc/install)** (1.23+)
+- **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
+- **A HuggingFace token** with ***"Make calls to Inference Providers"*** permission enabled. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one.
+
+> **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
+
 ## What the Script Does
 
 The `make quickstart` command runs a single script that automates the entire setup:
@@ -63,19 +76,6 @@ The `make quickstart` command runs a single script that automates the entire set
 7. **Applies network policies** (Gateway, HTTPRoutes, XBackends, XAccessPolicies) and waits for the Envoy proxy to be provisioned.
 8. **Deploys the AI agent** with an Envoy sidecar, configured with the discovered Gateway address and SPIFFE identity.
 9. **Sets up port-forwarding** to the agent UI on `localhost:8081`.
-
-## Prerequisites
-
-Before you begin, ensure you have the following:
-
-- **[git](https://git-scm.com/downloads)**
-- **[kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)** (Kubernetes in Docker)
-- **[kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)**
-- **[Go](https://go.dev/doc/install)** (1.23+)
-- **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
-- **A HuggingFace token** with ***"Make calls to Inference Providers"*** permission enabled. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one.
-
-> **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
 
 ## Quickstart
 
