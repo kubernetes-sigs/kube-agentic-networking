@@ -20,7 +20,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"reflect"
 	"time"
+
+	"k8s.io/utils/ptr"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -73,7 +77,7 @@ type gatewayResources struct {
 	gatewayLister gatewaylisters.GatewayLister
 	gatewaySynced cache.InformerSynced
 
-	httprouteLister       gatewaylisters.HTTPRouteLister
+	httprouteLister      gatewaylisters.HTTPRouteLister
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister
 	httprouteSynced      cache.InformerSynced
 	referenceGrantSynced cache.InformerSynced
@@ -98,10 +102,10 @@ type Controller struct {
 	agenticIdentityTrustDomain string
 	envoyImage                 string
 
-	gatewayqueue            workqueue.TypedRateLimitingInterface[string]
-	backendFinalizerQueue   workqueue.TypedRateLimitingInterface[string]
-	xdsServer               *xds.Server
-	translator              *translator.Translator
+	gatewayqueue          workqueue.TypedRateLimitingInterface[string]
+	backendFinalizerQueue workqueue.TypedRateLimitingInterface[string]
+	xdsServer             *xds.Server
+	translator            *translator.Translator
 }
 
 // New returns a new *Controller with the event handlers setup for types we are interested in.
@@ -115,11 +119,11 @@ func New(
 	namespaceInformer corev1informers.NamespaceInformer,
 	serviceInformer corev1informers.ServiceInformer,
 	secretInformer corev1informers.SecretInformer,
-	gatewayClassInformer    gatewayinformers.GatewayClassInformer,
-	gatewayInformer         gatewayinformers.GatewayInformer,
-	httprouteInformer       gatewayinformers.HTTPRouteInformer,
+	gatewayClassInformer gatewayinformers.GatewayClassInformer,
+	gatewayInformer gatewayinformers.GatewayInformer,
+	httprouteInformer gatewayinformers.HTTPRouteInformer,
 	referenceGrantInformer gatewayinformersv1beta1.ReferenceGrantInformer,
-	backendInformer         agenticinformers.XBackendInformer,
+	backendInformer agenticinformers.XBackendInformer,
 	accessPolicyInformer agenticinformers.XAccessPolicyInformer,
 ) (*Controller, error) {
 	c := &Controller{
@@ -133,15 +137,15 @@ func New(
 			secretSynced: secretInformer.Informer().HasSynced,
 		},
 		gateway: gatewayResources{
-			client:             gwClientSet,
-			gatewayClassLister: gatewayClassInformer.Lister(),
-			gatewayClassSynced: gatewayClassInformer.Informer().HasSynced,
-			gatewayLister:      gatewayInformer.Lister(),
-			gatewaySynced:      gatewayInformer.Informer().HasSynced,
-			httprouteLister:       httprouteInformer.Lister(),
-			referenceGrantLister:  referenceGrantInformer.Lister(),
-			httprouteSynced:       httprouteInformer.Informer().HasSynced,
-			referenceGrantSynced:  referenceGrantInformer.Informer().HasSynced,
+			client:               gwClientSet,
+			gatewayClassLister:   gatewayClassInformer.Lister(),
+			gatewayClassSynced:   gatewayClassInformer.Informer().HasSynced,
+			gatewayLister:        gatewayInformer.Lister(),
+			gatewaySynced:        gatewayInformer.Informer().HasSynced,
+			httprouteLister:      httprouteInformer.Lister(),
+			referenceGrantLister: referenceGrantInformer.Lister(),
+			httprouteSynced:      httprouteInformer.Informer().HasSynced,
+			referenceGrantSynced: referenceGrantInformer.Informer().HasSynced,
 		},
 		agentic: agenticNetResources{
 			client:             agenticClientSet,
@@ -244,16 +248,16 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 }
 
 // runWorker is a long-running function that will continually call the
-// processNextWorkItem function in order to read and process a message on the
+// processNextGatewayItem function in order to read and process a message on the
 // workqueue.
 func (c *Controller) runWorker(ctx context.Context) {
-	for c.processNextWorkItem(ctx) {
+	for c.processNextGatewayItem(ctx) {
 	}
 }
 
-// processNextWorkItem will read a single work item off the workqueue and
+// processNextGatewayItem will read a single work item off the workqueue and
 // attempt to process it, by calling the syncHandler.
-func (c *Controller) processNextWorkItem(ctx context.Context) bool {
+func (c *Controller) processNextGatewayItem(ctx context.Context) bool {
 	obj, shutdown := c.gatewayqueue.Get()
 	if shutdown {
 		return false
@@ -261,7 +265,7 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 	defer c.gatewayqueue.Done(obj)
 
 	// We expect strings (namespace/name) to come off the workqueue.
-	if err := c.syncHandler(ctx, obj); err != nil {
+	if err := c.syncGateway(ctx, obj); err != nil {
 		// Put the item back on the workqueue to handle any transient errors.
 		c.gatewayqueue.AddRateLimited(obj)
 		klog.ErrorS(err, "Error syncing", "key", obj)
@@ -295,9 +299,14 @@ func (c *Controller) processNextBackendFinalizerItem(ctx context.Context) bool {
 	return true
 }
 
-// syncHandler compares the actual state with the desired, and attempts to
+// syncGateway compares the actual state with the desired, and attempts to
 // converge the two.
-func (c *Controller) syncHandler(ctx context.Context, key string) error {
+func (c *Controller) syncGateway(ctx context.Context, key string) error {
+	startTime := time.Now()
+	defer func() {
+		klog.V(2).Infof("Finished syncing gateway %q (%v)", key, time.Since(startTime))
+	}()
+
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -310,12 +319,12 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 
 	// Get the Gateway resource with this namespace/name
 	gateway, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
+	if apierrors.IsNotFound(err) {
+		logger.Info("Gateway deleted, cleaning up associated resources.")
+		return envoy.DeleteProxy(ctx, c.core.client, namespace, name)
+	}
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Gateway deleted, cleaning up associated resources.")
-			return envoy.DeleteProxy(ctx, c.core.client, namespace, name)
-		}
-		return err
+		return fmt.Errorf("failed to get gateway %s: %w", key, err)
 	}
 
 	// Only reconcile Gateways whose spec.gatewayClassName refers to a GatewayClass
@@ -362,17 +371,20 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 		return err
 	}
 
-	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
-
-	// Update Gateway status with the proxy IP.
-	if err := c.updateGatewayStatus(ctx, gateway, proxyIP); err != nil {
-		// TODO: Holistic retry on error
-		// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/100
-		logger.Error(err, "Failed to update gateway status")
+	// TODO: Add support for IPv6?
+	newGW.Status.Addresses = []gatewayv1.GatewayStatusAddress{}
+	if net.ParseIP(proxyIP) != nil {
+		newGW.Status.Addresses = append(newGW.Status.Addresses,
+			gatewayv1.GatewayStatusAddress{
+				Type:  ptr.To(gatewayv1.IPAddressType),
+				Value: proxyIP,
+			})
 	}
 
+	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
+
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
-	resources, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
+	resources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
 		// TODO: Update Gateway status with the error.
 		return fmt.Errorf("failed to translate gateway to xDS resources: %w", err)
@@ -380,13 +392,21 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 
 	logger.Info("Translated gateway to xDS resources")
 
+	newGW.Status.Listeners = listenerStatuses
 	// Update the xDS server with the new resources.
-	if err := c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources); err != nil {
-		return fmt.Errorf("failed to update xDS server: %w", err)
-	}
+	err = c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
 
-	logger.Info("Updated xDS server with new resources", "nodeID", rm.NodeID())
-	return nil
+	setGatewayConditions(newGW, listenerStatuses, err)
+
+	if !reflect.DeepEqual(gateway.Status, newGW.Status) {
+		_, err := c.gateway.client.GatewayV1().Gateways(newGW.Namespace).UpdateStatus(ctx, newGW, metav1.UpdateOptions{})
+		if err != nil {
+			klog.Errorf("Failed to update gateway status: %v", err)
+			return err
+		}
+	}
+	logger.Info("Updated gateway status")
+	return c.updateRouteStatuses(ctx, httpRouteStatuses, grpcRouteStatuses)
 }
 
 // hasHTTPRoutesReferencingGateway returns true if any HTTPRoute has a ParentRef to the given Gateway.

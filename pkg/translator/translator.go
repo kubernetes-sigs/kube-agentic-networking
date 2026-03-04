@@ -102,14 +102,14 @@ func New(
 }
 
 // TranslateGatewayToXDS translates Gateway and HTTPRoute resources into Envoy xDS resources.
-func (t *Translator) TranslateGatewayToXDS(ctx context.Context, gw *gatewayv1.Gateway) (map[resourcev3.Type][]envoyproxytypes.Resource, error) {
+func (t *Translator) TranslateGatewayToXDS(ctx context.Context, gw *gatewayv1.Gateway) (map[resourcev3.Type][]envoyproxytypes.Resource, []gatewayv1.ListenerStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, error) {
 	// Get the desired state
-	envoyResources, _, _, err := t.buildEnvoyResourcesForGateway(gw)
+	envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, err := t.buildEnvoyResourcesForGateway(gw)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	return envoyResources, nil
+	return envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, nil
 }
 
 var (
@@ -123,6 +123,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	map[resourcev3.Type][]envoyproxytypes.Resource,
 	[]gatewayv1.ListenerStatus,
 	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // HTTPRoutes
+	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // GRPCRoutes
 	error,
 ) {
 
@@ -242,7 +243,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 					clusters, err := buildClustersFromBackends(allValidBackends)
 					if err != nil {
-						return nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
+						return nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
 					}
 					for _, cluster := range clusters {
 						envoyClusters[cluster.Name] = cluster
@@ -366,7 +367,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			resourcev3.RouteType:    envoyRoutes,
 			resourcev3.ClusterType:  clustersSlice,
 		}, orderedStatuses,
-		httpRouteStatuses, nil
+		httpRouteStatuses, nil, nil
 }
 
 func getSupportedKinds(listener gatewayv1.Listener) ([]gatewayv1.RouteGroupKind, bool) {
@@ -482,7 +483,7 @@ func (t *Translator) validateHTTPRoute(
 		// --- Build the final status for this ParentRef ---
 		status := gatewayv1.RouteParentStatus{
 			ParentRef:      parentRef,
-			ControllerName: "test",
+			ControllerName: gatewayv1.GatewayController(constants.ControllerName),
 			Conditions:     []metav1.Condition{},
 		}
 
