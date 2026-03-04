@@ -28,7 +28,9 @@ import (
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
@@ -54,9 +56,13 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 		mcpSvc   *corev1.Service
 		expected struct {
 			listenerNames []string
+			listenerStatusNames []string
 			routeNames    []string
 			clusterNames  []string
 			spiffeID      string
+			listenerConditions []metav1.Condition
+			routeParentStatus  []gatewayv1.RouteParentStatus
+
 		}
 	}{
 		{
@@ -148,14 +154,50 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			},
 			expected: struct {
 				listenerNames []string
+				listenerStatusNames []string
 				routeNames    []string
 				clusterNames  []string
 				spiffeID      string
+				listenerConditions []metav1.Condition
+				routeParentStatus  []gatewayv1.RouteParentStatus
 			}{
 				listenerNames: []string{"listener-10001"},
+				listenerStatusNames: []string{"https-listener"},
 				routeNames:    []string{"route-10001"},
 				clusterNames:  []string{"quickstart-ns-local-mcp-backend"},
 				spiffeID:      "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa",
+				listenerConditions: []metav1.Condition{
+					{
+						Type:   string(gatewayv1.ListenerConditionProgrammed),
+						Status: metav1.ConditionTrue,
+						Reason: string(gatewayv1.ListenerReasonProgrammed),
+					},
+					{
+						Type:   string(gatewayv1.ListenerConditionAccepted),
+						Status: metav1.ConditionTrue,
+						Reason: string(gatewayv1.ListenerReasonAccepted),
+					},
+				},
+				routeParentStatus: []gatewayv1.RouteParentStatus{
+					{
+						ParentRef: gatewayv1.ParentReference{
+							Name: "agentic-net-gateway",
+						},
+						ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.RouteConditionAccepted),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.RouteReasonAccepted),
+							},
+							{
+								Type:   string(gatewayv1.RouteConditionResolvedRefs),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.RouteReasonResolvedRefs),
+							},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -194,7 +236,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(tc.policy)
 
 			// 3. Run Translation
-			resources, err := tr.TranslateGatewayToXDS(ctx, tc.gw)
+			resources, listenerStatuses, httpRouteStatuses, _, err := tr.TranslateGatewayToXDS(ctx, tc.gw)
 			if err != nil {
 				t.Fatalf("Translation failed: %v", err)
 			}
@@ -253,6 +295,50 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				}
 				if !found {
 					t.Errorf("expected cluster %s not found", expectedName)
+				}
+			}
+
+
+			// Verify Listener Status
+			if len(listenerStatuses) != 1 {
+				t.Errorf("expected 1 listener status, got %d", len(listenerStatuses))
+			} else {
+				ls := listenerStatuses[0]
+				if string(ls.Name) != tc.expected.listenerStatusNames[0] {
+					t.Errorf("expected listener status name %s, got %s", tc.expected.listenerStatusNames[0], ls.Name)
+				}
+				// Verify conditions
+				for _, expectedCond := range tc.expected.listenerConditions {
+					if !meta.IsStatusConditionTrue(ls.Conditions, expectedCond.Type) {
+						t.Errorf("expected listener condition %s to be True", expectedCond.Type)
+					}
+				}
+			}
+
+			// Verify HTTPRoute Status
+			// The map key is NamespacedName{Namespace: route.Namespace, Name: route.Name}
+			routeKey := types.NamespacedName{Namespace: tc.route.Namespace, Name: tc.route.Name}
+			routeStatuses, ok := httpRouteStatuses[routeKey]
+			if !ok {
+				t.Errorf("expected http route status for %s", routeKey)
+			} else {
+				if len(routeStatuses) != len(tc.expected.routeParentStatus) {
+					t.Errorf("expected %d route parent statuses, got %d", len(tc.expected.routeParentStatus), len(routeStatuses))
+				} else {
+					for i, expected := range tc.expected.routeParentStatus {
+						got := routeStatuses[i]
+						if got.ParentRef.Name != expected.ParentRef.Name {
+							t.Errorf("expected parent ref name %s, got %s", expected.ParentRef.Name, got.ParentRef.Name)
+						}
+						if got.ControllerName != expected.ControllerName {
+							t.Errorf("expected controller name %s, got %s", expected.ControllerName, got.ControllerName)
+						}
+						for _, expectedCond := range expected.Conditions {
+							if !meta.IsStatusConditionTrue(got.Conditions, expectedCond.Type) {
+								t.Errorf("expected route condition %s to be True", expectedCond.Type)
+							}
+						}
+					}
 				}
 			}
 		})
