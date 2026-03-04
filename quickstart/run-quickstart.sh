@@ -111,11 +111,12 @@ install_agentic_networking_crds() {
   kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.prototype.x-k8s.io_xaccesspolicies.yaml"
 }
 
-# --- Step 4: Create Namespace ---
+# --- Step 4: Create Namespaces ---
 
-create_namespace() {
-  info "Step 4/9: Creating namespace '${NAMESPACE}'..."
+create_namespaces() {
+  info "Step 4/9: Creating namespaces..."
   kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create namespace "${CONTROLLER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 }
 
 # --- Step 5: Deploy MCP Server ---
@@ -130,7 +131,9 @@ deploy_mcp_server() {
 
 deploy_controller() {
   info "Step 6/9: Deploying Agentic Networking controller..."
-  kubectl apply -f "${SCRIPT_ROOT}/k8s/deploy/deployment.yaml"
+
+  # Create CA pool secret before deploying the controller so the pod can start
+  # immediately (it requires the CA pool secret as a volume).
   info "Creating CA pool secret for agentic identity..."
   if kubectl get secret agentic-identity-ca-pool -n "${CONTROLLER_NAMESPACE}" &>/dev/null; then
     warn "CA pool secret already exists, skipping creation."
@@ -140,6 +143,8 @@ deploy_controller() {
       --namespace="${CONTROLLER_NAMESPACE}" \
       --name=agentic-identity-ca-pool)
   fi
+
+  kubectl apply -f "${SCRIPT_ROOT}/k8s/deploy/deployment.yaml"
   wait_for_deployment "${CONTROLLER_NAMESPACE}" "agentic-net-controller"
 }
 
@@ -148,7 +153,22 @@ deploy_controller() {
 apply_policies() {
   info "Step 7/9: Applying network policies (Gateway, HTTPRoutes, XBackends, XAccessPolicies)..."
   kubectl apply -f "${SCRIPT_ROOT}/quickstart/policy/e2e.yaml"
-  info "Waiting for Envoy proxy to be provisioned..."
+
+  info "Waiting for Envoy proxy deployment to be created..."
+  local retries=0
+  local max_retries=30
+  while ! kubectl get deployment -n "${NAMESPACE}" \
+    -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" \
+    -o name 2>/dev/null | grep -q .; do
+    retries=$((retries + 1))
+    if [[ ${retries} -ge ${max_retries} ]]; then
+      error "Timed out waiting for Envoy proxy deployment to be created."
+      exit 1
+    fi
+    sleep 5
+  done
+
+  info "Waiting for Envoy proxy to be ready..."
   kubectl wait --timeout=5m -n "${NAMESPACE}" deployment \
     -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" \
     --for=condition=Available
@@ -159,12 +179,31 @@ apply_policies() {
 deploy_agent() {
   info "Step 8/9: Deploying AI agent..."
 
-  # Discover gateway address and service account.
-  info "Discovering Gateway address and identity..."
-  local gateway_address
-  gateway_address=$(kubectl get gateway agentic-net-gateway -n "${NAMESPACE}" -o jsonpath='{.status.addresses[0].value}')
+  # Wait for the Gateway to have an address assigned.
+  info "Waiting for Gateway address to be assigned..."
+  local gateway_address=""
+  local retries=0
+  local max_retries=30
+  while [[ -z "${gateway_address}" ]]; do
+    gateway_address=$(kubectl get gateway agentic-net-gateway -n "${NAMESPACE}" -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
+    if [[ -n "${gateway_address}" ]]; then
+      break
+    fi
+    retries=$((retries + 1))
+    if [[ ${retries} -ge ${max_retries} ]]; then
+      error "Timed out waiting for Gateway address to be assigned."
+      exit 1
+    fi
+    sleep 5
+  done
+
+  # Discover service account for the gateway.
   local gateway_sa
   gateway_sa=$(kubectl get sa -n "${NAMESPACE}" -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" -o jsonpath='{.items[0].metadata.name}')
+  if [[ -z "${gateway_sa}" ]]; then
+    error "Could not find service account for the gateway."
+    exit 1
+  fi
   local gateway_spiffe_id="spiffe://cluster.local/ns/${NAMESPACE}/sa/${gateway_sa}"
 
   info "  Gateway Address:   ${gateway_address}"
@@ -207,7 +246,7 @@ setup_port_forward() {
 create_kind_cluster
 install_gateway_api_crds
 install_agentic_networking_crds
-create_namespace
+create_namespaces
 deploy_mcp_server
 deploy_controller
 apply_policies
