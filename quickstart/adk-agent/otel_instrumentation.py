@@ -28,70 +28,26 @@ logger = logging.getLogger(__name__)
 
 
 def setup_otel_tracing(service_name: str = "adk-agent"):
-    """
-    Set up OpenTelemetry tracing with OTLP exporter.
-
-    Args:
-        service_name: Name of the service for tracing
-    """
-    # Get OTEL collector endpoint from environment
+    """Set up OpenTelemetry tracing with OTLP exporter."""
     otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    logger.info(f"Setting up OpenTelemetry tracing: service={service_name}, endpoint={otel_endpoint}")
 
-    logger.info(f"Setting up OpenTelemetry tracing for service: {service_name}")
-    logger.info(f"OTLP endpoint: {otel_endpoint}")
-
-    # Create a resource with service name
     resource = Resource.create({
         "service.name": service_name,
         "service.namespace": os.environ.get("NAMESPACE", "default"),
         "service.instance.id": os.environ.get("HOSTNAME", "unknown"),
     })
 
-    # Set up the tracer provider
     tracer_provider = TracerProvider(resource=resource)
-
-    # Configure OTLP HTTP exporter
-    # The HTTP exporter expects the full URL including the traces path
-    traces_endpoint = f"{otel_endpoint}/v1/traces"
-    otlp_exporter = OTLPSpanExporter(
-        endpoint=traces_endpoint,
+    tracer_provider.add_span_processor(
+        BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{otel_endpoint}/v1/traces"))
     )
-
-    # Add span processor
-    span_processor = BatchSpanProcessor(otlp_exporter)
-    tracer_provider.add_span_processor(span_processor)
-
-    # Set the global tracer provider
     trace.set_tracer_provider(tracer_provider)
-
-    # Instrument logging to include trace context
     LoggingInstrumentor().instrument(set_logging_format=True)
-
-    logger.info("OpenTelemetry tracing setup complete")
 
     return tracer_provider
 
 
 def instrument_fastapi(app):
-    """
-    Instrument a FastAPI application with OpenTelemetry.
-
-    Args:
-        app: FastAPI application instance
-    """
-    logger.info("Instrumenting FastAPI application")
+    """Instrument a FastAPI application with OpenTelemetry."""
     FastAPIInstrumentor.instrument_app(app)
-    logger.info("FastAPI instrumentation complete")
-
-
-def get_tracer(name: str = __name__):
-    """
-    Get a tracer instance.
-
-    Args:
-        name: Name for the tracer
-
-    Returns:
-        Tracer instance
-    """
-    return trace.get_tracer(name)

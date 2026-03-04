@@ -21,11 +21,10 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnecti
 
 # Import OpenTelemetry for custom tracing
 from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 # Import GenAI semantic conventions helper
-from .genai_spans import GenAISpanHelper, GenAISpanAttributes
+from .genai_spans import GenAISpanHelper
 
 # Add these lines to configure logging
 logging.basicConfig(
@@ -80,80 +79,37 @@ propagator = TraceContextTextMapPropagator()
 genai_helper = GenAISpanHelper(tracer)
 
 
-def get_trace_headers():
-    """
-    Get headers with trace context (traceparent) for propagating traces to downstream services.
+def _init_mcp(name: str, mcp_type: str) -> McpToolset:
+    """Initialize an MCP toolset with tracing and trace context propagation."""
+    url = f"http://{envoy_service}/{mcp_type}/mcp"
+    with genai_helper.create_tool_call_span(f"{mcp_type}_mcp_init") as span:
+        try:
+            span.set_attribute("mcp.type", mcp_type)
+            span.set_attribute("mcp.url", url)
+            headers: dict = {}
+            propagator.inject(headers)
+            toolset = McpToolset(
+                connection_params=StreamableHTTPConnectionParams(url=url, headers=headers),
+            )
+            logger.info(f"McpToolset {name} initialized successfully.")
+            genai_helper.set_success_status(span)
+            return toolset
+        except Exception as e:
+            logger.error(f"Error initializing McpToolset {name}: {e}")
+            genai_helper.set_error_status(span, e, error_type="MCPInitializationError")
+            raise
 
-    Returns:
-        dict: Headers containing traceparent and tracestate if a span is active
-    """
-    headers = {}
-    # Inject current trace context into headers
-    propagator.inject(headers)
-    return headers
 
-# Initialize MCP toolsets with unified trace hierarchy
-# Create a parent agent initialization span that encompasses all MCP setup
 with genai_helper.create_agent_chat_span(
     agent_name=AGENT_NAME,
     system=AGENT_SYSTEM,
-    model=model
+    model=str(model),
 ) as parent_span:
     parent_span.set_attribute("operation.type", "agent_initialization")
-    logger.info("Starting agent initialization with unified trace context")
-
     try:
-        # Initialize local MCP with tracing using GenAI semantic conventions
-        # Use gen_ai.tool.call span for MCP initialization as it represents setting up tool access
-        with genai_helper.create_tool_call_span("local_mcp_init") as span:
-            try:
-                span.set_attribute("mcp.type", "local")
-                span.set_attribute("mcp.url", f"http://{envoy_service}/local/mcp")
-
-                # Get trace context headers to propagate to MCP
-                trace_headers = get_trace_headers()
-                logger.debug(f"Trace headers for local MCP: {trace_headers}")
-
-                local_mcp = McpToolset(
-                    connection_params=StreamableHTTPConnectionParams(
-                        url=f"http://{envoy_service}/local/mcp",
-                        headers=trace_headers,
-                    ),
-                )
-                logger.info("McpToolset local_mcp initialized successfully.")
-                genai_helper.set_success_status(span)
-            except Exception as e:
-                logger.error(f"Error initializing McpToolset local_mcp: {e}")
-                genai_helper.set_error_status(span, e, error_type="MCPInitializationError")
-                raise
-
-        # Initialize remote MCP with tracing using GenAI semantic conventions
-        with genai_helper.create_tool_call_span("remote_mcp_init") as span:
-            try:
-                span.set_attribute("mcp.type", "remote")
-                span.set_attribute("mcp.url", f"http://{envoy_service}/remote/mcp")
-
-                # Get trace context headers to propagate to MCP
-                trace_headers = get_trace_headers()
-                logger.debug(f"Trace headers for remote MCP: {trace_headers}")
-
-                remote_mcp = McpToolset(
-                    connection_params=StreamableHTTPConnectionParams(
-                        url=f"http://{envoy_service}/remote/mcp",
-                        headers=trace_headers,
-                    ),
-                )
-                logger.info("McpToolset remote_mcp initialized successfully.")
-                genai_helper.set_success_status(span)
-            except Exception as e:
-                logger.error(f"Error initializing McpToolset remote_mcp: {e}")
-                genai_helper.set_error_status(span, e, error_type="MCPInitializationError")
-                raise
-
-        # Mark parent span as successful
+        local_mcp = _init_mcp("local_mcp", "local")
+        remote_mcp = _init_mcp("remote_mcp", "remote")
         genai_helper.set_success_status(parent_span)
-        logger.info("Agent initialization completed successfully with unified trace")
-
     except Exception as e:
         logger.error(f"Agent initialization failed: {e}")
         genai_helper.set_error_status(parent_span, e, error_type="AgentInitializationError")

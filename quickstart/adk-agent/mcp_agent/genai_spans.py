@@ -66,22 +66,7 @@ class GenAISpanHelper:
         system: Optional[str] = None,
         model: Optional[str] = None,
     ):
-        """
-        Create a context-managed span for agent chat operations following gen_ai.agent.chat conventions.
-
-        This represents the top-level agent operation where the agent processes a user request.
-        Uses start_as_current_span so the span is set as the active span in the
-        OTel context, enabling child spans to be properly linked in the trace hierarchy.
-
-        Args:
-            agent_id: Unique identifier for the agent instance
-            agent_name: Name/type of the agent
-            system: The AI system being used (e.g., "anthropic", "openai", "google")
-            model: The model being used
-
-        Yields:
-            The active span
-        """
+        """Create a gen_ai.agent.chat span as the current span for trace hierarchy."""
         with self.tracer.start_as_current_span("gen_ai.agent.chat") as span:
             if agent_id:
                 span.set_attribute(GenAISpanAttributes.AGENT_ID, agent_id)
@@ -98,19 +83,7 @@ class GenAISpanHelper:
 
     @contextmanager
     def create_tool_call_span(self, tool_name: str):
-        """
-        Create a context-managed span for tool calls following gen_ai.tool.call conventions.
-
-        This represents the agent calling a tool/function.
-        Uses start_as_current_span so the span is set as the active span in the
-        OTel context, enabling trace context propagation via inject().
-
-        Args:
-            tool_name: Name of the tool being called
-
-        Yields:
-            The active span
-        """
+        """Create a gen_ai.tool.call span as the current span, enabling context propagation via inject()."""
         with self.tracer.start_as_current_span("gen_ai.tool.call") as span:
             span.set_attribute(GenAISpanAttributes.TOOL_NAME, tool_name)
             span.set_attribute(GenAISpanAttributes.OPERATION_NAME, "execute_tool")
@@ -122,14 +95,6 @@ class GenAISpanHelper:
         input_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
     ):
-        """
-        Set token usage attributes on a span.
-
-        Args:
-            span: The span to set attributes on
-            input_tokens: Number of input tokens
-            output_tokens: Number of output tokens
-        """
         if input_tokens is not None:
             span.set_attribute(GenAISpanAttributes.USAGE_INPUT_TOKENS, input_tokens)
         if output_tokens is not None:
@@ -140,14 +105,6 @@ class GenAISpanHelper:
         span.set_status(Status(StatusCode.OK))
 
     def set_error_status(self, span: trace.Span, error: Exception, error_type: Optional[str] = None):
-        """
-        Set span status to ERROR and record the exception.
-
-        Args:
-            span: The span to set status on
-            error: The exception that occurred
-            error_type: Optional error type classification
-        """
         span.set_status(Status(StatusCode.ERROR, str(error)))
         span.record_exception(error)
 
