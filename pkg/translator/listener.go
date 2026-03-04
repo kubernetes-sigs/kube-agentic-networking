@@ -173,6 +173,13 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 	// Add TLS transport socket config if the listener uses HTTPS or TLS protocol.
 	// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/95
 	if lis.Protocol == gatewayv1.HTTPSProtocolType || lis.Protocol == gatewayv1.TLSProtocolType {
+		if lis.Hostname != nil && *lis.Hostname != "" {
+			if filterChain.FilterChainMatch == nil {
+				filterChain.FilterChainMatch = &listener.FilterChainMatch{}
+			}
+			filterChain.FilterChainMatch.ServerNames = []string{string(*lis.Hostname)}
+		}
+
 		tlsContext, err := buildDownstreamTLSContext()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS context for listener %s: %w", lis.Name, err)

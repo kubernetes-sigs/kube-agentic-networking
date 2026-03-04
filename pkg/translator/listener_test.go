@@ -17,11 +17,25 @@ limitations under the License.
 package translator
 
 import (
+	"reflect"
 	"testing"
 
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/utils/ptr"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	apiv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
+
+type mockAccessPolicyLister struct {
+	agenticlisters.XAccessPolicyLister
+}
+
+func (m *mockAccessPolicyLister) List(selector labels.Selector) (ret []*apiv0alpha0.XAccessPolicy, err error) {
+	return nil, nil
+}
 
 func TestBuildDownstreamTLSContext(t *testing.T) {
 	anyContext, err := buildDownstreamTLSContext()
@@ -52,5 +66,68 @@ func TestBuildDownstreamTLSContext(t *testing.T) {
 	validation := common.GetValidationContextSdsSecretConfig()
 	if validation == nil || validation.Name != constants.SpiffeTrustSdsConfigName {
 		t.Errorf("Trust SDS secret config name mismatch")
+	}
+}
+
+func TestTranslateListenerToFilterChain(t *testing.T) {
+	mockLister := &mockAccessPolicyLister{}
+	translator := &Translator{}
+
+	testCases := []struct {
+		name                string
+		listener            gatewayv1.Listener
+		expectedServerNames []string
+	}{
+		{
+			name: "HTTPS with hostname",
+			listener: gatewayv1.Listener{
+				Name:     "https",
+				Port:     443,
+				Protocol: gatewayv1.HTTPSProtocolType,
+				Hostname: ptr.To(gatewayv1.Hostname("example.com")),
+			},
+			expectedServerNames: []string{"example.com"},
+		},
+		{
+			name: "HTTPS with wildcard hostname",
+			listener: gatewayv1.Listener{
+				Name:     "https-wildcard",
+				Port:     443,
+				Protocol: gatewayv1.HTTPSProtocolType,
+				Hostname: ptr.To(gatewayv1.Hostname("*.example.com")),
+			},
+			expectedServerNames: []string{"*.example.com"},
+		},
+		{
+			name: "HTTP without hostname",
+			listener: gatewayv1.Listener{
+				Name:     "http",
+				Port:     80,
+				Protocol: gatewayv1.HTTPProtocolType,
+			},
+			expectedServerNames: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fc, err := translator.translateListenerToFilterChain(tc.listener, "route-config", mockLister)
+			if err != nil {
+				t.Fatalf("failed to translate listener: %v", err)
+			}
+
+			if len(tc.expectedServerNames) > 0 {
+				if fc.FilterChainMatch == nil {
+					t.Fatal("expected FilterChainMatch to be set")
+				}
+				if !reflect.DeepEqual(fc.FilterChainMatch.ServerNames, tc.expectedServerNames) {
+					t.Errorf("expected ServerNames %v, got %v", tc.expectedServerNames, fc.FilterChainMatch.ServerNames)
+				}
+			} else {
+				if fc.FilterChainMatch != nil && len(fc.FilterChainMatch.ServerNames) > 0 {
+					t.Errorf("expected no ServerNames in FilterChainMatch, got %v", fc.FilterChainMatch.ServerNames)
+				}
+			}
+		})
 	}
 }
