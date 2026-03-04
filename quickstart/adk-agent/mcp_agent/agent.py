@@ -19,14 +19,43 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
-envoy_service = os.environ.get("ENVOY_SERVICE")
-hf_model = os.environ.get("HF_MODEL")
-
 # Add these lines to configure logging
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Environment variables
+envoy_service = os.environ.get("ENVOY_SERVICE")
+hf_model = os.environ.get("HF_MODEL")
+ollama_base_url = os.environ.get("OLLAMA_BASE_URL")
+ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2")
+
+# Automatically determine which model to use based on available credentials
+if hf_model:
+    # Use Hugging Face model
+    logger.info(f"Using Hugging Face model: {hf_model}")
+    model = LiteLlm(
+        model=hf_model,
+    )
+else:
+    # Use Ollama (either custom URL or default local)
+    base_url = ollama_base_url or "http://localhost:11434"
+
+    # Set dummy OPENAI_API_KEY if not available (required for openai/ usage in LiteLLM)
+    if not os.environ.get("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = "ollama"
+        logger.info("Setting OPENAI_API_KEY to dummy value for Ollama compatibility")
+
+    if ollama_base_url:
+        logger.info(f"Using Ollama model: {ollama_model} at {base_url}")
+    else:
+        logger.warning(f"No HF_MODEL or OLLAMA_BASE_URL found. Defaulting to Ollama at {base_url}")
+
+    model = LiteLlm(
+        model=f"openai/{ollama_model}",
+        api_base=f"{base_url}/v1",
+    )
 
 try:
     local_mcp = McpToolset(
@@ -49,7 +78,7 @@ except Exception as e:
     logger.error(f"Error initializing McpToolset remote_mcp: {e}")
 
 root_agent = LlmAgent(
-    model=LiteLlm(model=hf_model),
+    model=model,
     name="multi_mcp_agent",
     instruction="""You are an AI assistant that interacts with the world primarily
     via the provided MCP tools. When processing a user's prompt, first check both MCPs
