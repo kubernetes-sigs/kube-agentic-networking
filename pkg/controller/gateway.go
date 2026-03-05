@@ -69,11 +69,28 @@ func (c *Controller) onGatewayUpdate(old, new interface{}) {
 }
 
 func (c *Controller) onGatewayDelete(obj interface{}) {
+	gw, ok := obj.(*gatewayv1.Gateway)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			runtime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
+			return
+		}
+		gw, ok = tombstone.Obj.(*gatewayv1.Gateway)
+		if !ok {
+			runtime.HandleError(fmt.Errorf("tombstone contained object that is not a Gateway %#v", obj))
+			return
+		}
+	}
+
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err == nil {
 		c.gatewayqueue.Add(key)
 	}
 	klog.V(4).InfoS("Gateway deleted", "gateway", key)
+
+	// Trigger GatewayClass sync to allow it to remove finalizer if it was waiting on this Gateway.
+	c.syncGatewayClass(string(gw.Spec.GatewayClassName))
 }
 
 func (c *Controller) updateGatewayStatus(ctx context.Context, gateway *gatewayv1.Gateway, ip string) error {
