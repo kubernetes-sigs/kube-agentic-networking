@@ -35,7 +35,6 @@ import (
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
-	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
 )
@@ -58,9 +57,8 @@ func (c *Controller) setupGatewayEventHandlers(gatewayInformer gatewayinformers.
 }
 
 func (c *Controller) onGatewayAdd(obj interface{}) {
-	// TODO: Create GatewayClass from the controller
 	gw := obj.(*gatewayv1.Gateway)
-	if gw.Spec.GatewayClassName != constants.GatewayClassName	 {
+	if !c.isGatewayOwnedByController(gw) {
 		return
 	}
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
@@ -81,7 +79,7 @@ func (c *Controller) onGatewayAdd(obj interface{}) {
 func (c *Controller) onGatewayUpdate(old, new interface{}) {
 	oldGW := old.(*gatewayv1.Gateway)
 	newGW := new.(*gatewayv1.Gateway)
-	if newGW.Spec.GatewayClassName != constants.GatewayClassName {
+	if !c.isGatewayOwnedByController(newGW) {
 		return
 	}
 	if newGW.Generation != oldGW.Generation || newGW.DeletionTimestamp != oldGW.DeletionTimestamp || !reflect.DeepEqual(newGW.Annotations, oldGW.Annotations) {
@@ -95,7 +93,7 @@ func (c *Controller) onGatewayUpdate(old, new interface{}) {
 
 func (c *Controller) onGatewayDelete(obj interface{}) {
 	gw := obj.(*gatewayv1.Gateway)
-	if gw.Spec.GatewayClassName != constants.GatewayClassName {
+	if !c.isGatewayOwnedByController(gw) {
 		return
 	}
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)

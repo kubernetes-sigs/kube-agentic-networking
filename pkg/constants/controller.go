@@ -37,7 +37,5 @@ const (
 	GatewayFinalizer = ProjectName + "/gateway-finalizer"
 	// XBackendFinalizer is set on XBackend; removed when no XAccessPolicy targets it.
 	XBackendFinalizer = ProjectName + "/xbackend-finalizer"
-
-	// GatewayClassName is the name of the GatewayClass that this controller manages.
-	GatewayClassName = "kube-agentic-networking"
+	
 )
