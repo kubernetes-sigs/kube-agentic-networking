@@ -63,8 +63,8 @@ metadata:
   namespace: prod-ns
 spec:
   # GEP-713 Attachment
-  targetRef:
-    group: gateway.networking.k8s.io
+  targetRefs:
+  - group: gateway.networking.k8s.io
     kind: Gateway
     name: my-gateway
   
@@ -151,8 +151,8 @@ type TelemetryPolicy struct {
 }
 
 type TelemetryPolicySpec struct {
-    // Identifies the target resource (Gateway or Namespace) to which this policy attaches.
-    TargetRef TargetRef `json:"targetRef"`
+    // Identifies the target resources (Gateway or Namespace) to which this policy attaches (GEP-713).
+    TargetRefs []TargetReference `json:"targetRefs"`
 
     // Configuration for distributed tracing options.
     Tracing *TracingConfig `json:"tracing,omitempty"`
@@ -162,12 +162,6 @@ type TelemetryPolicySpec struct {
 
     // Configuration for access log generation.
     AccessLogs *AccessLogsConfig `json:"accessLogs,omitempty"`
-}
-
-type TargetRef struct {
-    Group string `json:"group"`
-    Kind  string `json:"kind"`
-    Name  string `json:"name"`
 }
 
 // --- Tracing Types ---
