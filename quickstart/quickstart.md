@@ -50,6 +50,19 @@ graph TD
     style RemoteMCP fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
+## Prerequisites
+
+Before you begin, ensure you have the following:
+
+- **[git](https://git-scm.com/downloads)**
+- **[kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)** (Kubernetes in Docker)
+- **[kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)**
+- **[Go](https://go.dev/doc/install)** (1.23+)
+- **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
+- **A HuggingFace token** with ***"Make calls to Inference Providers"*** permission enabled. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one.
+
+> **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
+
 ## What the Script Does
 
 The `make quickstart` command runs a single script that automates the entire setup:
@@ -63,19 +76,6 @@ The `make quickstart` command runs a single script that automates the entire set
 7. **Applies network policies** (Gateway, HTTPRoutes, XBackends, XAccessPolicies) and waits for the Envoy proxy to be provisioned.
 8. **Deploys the AI agent** with an Envoy sidecar, configured with the discovered Gateway address and SPIFFE identity.
 9. **Sets up port-forwarding** to the agent UI on `localhost:8081`.
-
-## Prerequisites
-
-Before you begin, ensure you have the following:
-
-- **[git](https://git-scm.com/downloads)**
-- **[kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)** (Kubernetes in Docker)
-- **[kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)**
-- **[Go](https://go.dev/doc/install)** (1.23+)
-- **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
-- **A HuggingFace token** with ***"Make calls to Inference Providers"*** permission enabled. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one.
-
-> **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
 
 ## Quickstart
 
@@ -165,12 +165,13 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
 
 The quickstart script already deployed the sample ADK agent with a fully configured Envoy sidecar. The steps below are only needed if you want to integrate a **different** agent of your own into the Agentic Networking infrastructure.
 
-### Prerequisites
+**Prerequisites**
+
 - You have completed the quickstart (the kind cluster, controller, and Gateway are running)
 - Your agent deployment, service, and MCP tools are running
 - Your agent can communicate with MCP tool servers
 
-### Step 1: Ensure your agent has a ServiceAccount
+**Step 1: Ensure your agent has a ServiceAccount**
 
 The mTLS identity system issues SPIFFE certificates based on the pod's ServiceAccount. The resulting identity will be `spiffe://cluster.local/ns/<namespace>/sa/<service-account>`, which is used for RBAC policy matching.
 
@@ -181,7 +182,7 @@ kubectl create serviceaccount <agent-sa> -n <agent-namespace>
 kubectl set serviceaccount deployment/<agent-deployment> <agent-sa> -n <agent-namespace>
 ```
 
-### Step 2: Define or update access policies
+**Step 2: Define or update access policies**
 
 Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your agent's ServiceAccount and tool endpoints (see the `quickstart/policy/e2e.yaml` file for examples):
 
@@ -189,9 +190,9 @@ Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your 
 kubectl apply -f <policy-file>.yaml
 ```
 
-### Step 3: Create the Envoy sidecar ConfigMap
+**Step 3: Create the Envoy sidecar ConfigMap**
 
-The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Use the template at [`quickstart/adk-agent/sidecar/sidecar-configs.yaml`](/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
+The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Use the template at [`quickstart/adk-agent/sidecar/sidecar-configs.yaml`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
 
 1.  **Copy the template** and update `metadata.namespace` to your agent's namespace:
 
@@ -208,13 +209,13 @@ The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations fo
     envsubst < <your-sidecar-configs>.yaml | kubectl apply -f -
     ```
 
-### Step 4: Add the Envoy sidecar to your agent deployment
+**Step 4: Add the Envoy sidecar to your agent deployment**
 
-Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
+Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
 
 > **Note**: The ADK agent deployment also includes a `proxy-init` init container with iptables rules. This is **not required** — the Envoy sidecar already listens on port 10001 within the pod, so `127.0.0.1:10001` reaches it directly. Omitting it avoids the `NET_ADMIN` capability requirement and speeds up pod startup.
 
-### Step 5: Configure your agent to route through Envoy
+**Step 5: Configure your agent to route through Envoy**
 
 Update your agent's tool endpoint to use the local Envoy sidecar. Use **plain HTTP** (not HTTPS) — the sidecar handles mTLS to the Gateway transparently:
 
