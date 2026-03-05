@@ -1,1 +1,1 @@
---8<-- "quickstart/quickstart.md"
+--8<-- "quickstart/README.md"
