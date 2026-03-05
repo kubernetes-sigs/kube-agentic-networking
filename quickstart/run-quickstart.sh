@@ -89,7 +89,7 @@ create_kind_cluster() {
   if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
     warn "Kind cluster '${CLUSTER_NAME}' already exists, skipping creation."
   else
-    kind create cluster --name "${CLUSTER_NAME}" --config="${SCRIPT_ROOT}/quickstart/kind-config.yaml"
+    kind create cluster --name "${CLUSTER_NAME}" --config="${SCRIPT_ROOT}/dev/ci/kind-config.yaml"
     info "Kind cluster '${CLUSTER_NAME}' created."
   fi
   # Ensure kubectl context is set to the kind cluster.

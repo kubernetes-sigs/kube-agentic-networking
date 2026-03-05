@@ -54,7 +54,7 @@ func TestControllerE2E(t *testing.T) {
 
 	// 2. Wait for Readiness
 	t.Log("Waiting for resources to be ready...")
-	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=2m")
+	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=5m")
 	runKubectl(t, "wait", "--for=condition=available", "deployment/mcp-everything", "-n", "e2e-test-ns", "--timeout=2m")
 	// Wait for Gateway to be programmed and proxy to be up.
 	var proxyPodName string
@@ -71,7 +71,7 @@ func TestControllerE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to find envoy proxy pod: %v", err)
 	}
-	runKubectl(t, "wait", "--for=condition=Ready", "pod/"+proxyPodName, "-n", "e2e-test-ns", "--timeout=2m")
+	runKubectl(t, "wait", "--for=condition=Ready", "pod/"+proxyPodName, "-n", "e2e-test-ns", "--timeout=5m")
 
 	// 3. Obtain Gateway Address from status
 	t.Log("Verifying Gateway status address and capturing IP...")

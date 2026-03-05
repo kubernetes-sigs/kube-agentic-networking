@@ -64,8 +64,8 @@ test-crd: ;$(info $(M)...Running CRD tests.) @ ## Run CRD tests.
 	cd tests && go test -v ./crd/...
 
 .PHONY: test-e2e
-test-e2e: ;$(info $(M)...Running E2E tests.) @ ## Run E2E tests. Requirements: K8s v1.35+, PodCertificateRequest/ClusterTrustBundle enabled, and KAN Controller running with --enable-agentic-identity-signer=true.
-	cd tests && go test -v ./e2e/...
+test-e2e: ;$(info $(M)...Running full E2E pipeline (setup + test).) @ ## Run full E2E tests including cluster setup and controller deployment.
+	./dev/ci/run-e2e.sh
 
 
 # Run static analysis.
