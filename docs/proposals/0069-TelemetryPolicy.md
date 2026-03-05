@@ -286,10 +286,33 @@ type MatchCondition struct {
 
 ## Comparison with Prior Art
 
-|                | **Istio** | **Envoy Gateway** | **Kong** | **Kuadrant** | **GKE / Inference Gateway** | **TelemetryPolicy**<br />(this proposal) |
-| --- | --- | --- | --- | --- | --- | --- |
-| Primary API    | [Telemetry CRD](https://istio.io/latest/docs/reference/config/telemetry/) | | | | | |
-| Policy Model   | | | | | | |
-| Metrics & Logs | | | | | | |
-| Portability    | | | | | | |
-| AI/LLM Support | | | | | | |
+### Istio
+
+[Istio](https://istio.io/)'s `Telemetry` API is the most direct prior art that inspired this proposal. It allows configuring observability at the mesh, namespace, and workload level.
+
+* **Metrics**: Istio allows users to enable/disable specific metrics, add custom dimensions, and configure providers.
+* **Logs**: Istio supports access logging configurations with CEL-like expressions for advanced filtering.
+* **Traces**: Istio supports probabilistic sampling, context propagation, and custom span tags.
+* **Customization**: For advanced telemetry use-cases not natively covered by the `Telemetry` API, Istio users can fall back to using `EnvoyFilter` resources. While highly flexible, `EnvoyFilter` requires deep knowledge of Envoy's internal xDS API. This is tightly coupled to the data plane implementation and can be brittle across version upgrades.
+* **Comparison**: The proposed `TelemetryPolicy` adapts Istio's powerful intent-based capabilities to the standardized Gateway API attachment model.
+
+### Envoy Gateway
+
+[Envoy Gateway](https://gateway.envoyproxy.io/) configures observability through two distinct custom resources: `EnvoyGateway` for the control plane and `EnvoyProxy` for the underlying data plane proxies.
+
+* **Metrics**: Envoy Gateway allows configuring Prometheus and OpenTelemetry sinks for both the control plane (using `EnvoyGateway` CRD) and the data plane proxies (using the `EnvoyProxy` CRD).
+* **Logs**: Proxy access logs are configured via the `EnvoyProxy` resource. It supports exporting to file, OTLP, or gRPC Access Log Service (ALS) sinks. It uses CEL expressions for smart filtering (e.g., matching specific headers), and allows applying log configurations at the Route or Listener level.
+* **Tracing**: Tracing is configured in the `EnvoyProxy` resource. It supports OpenTelemetry, Zipkin, and Datadog providers. It allows configuring sampling and supports appending custom tags derived from literals, environment variables, or request headers.
+* **Customization**: For advanced telemetry use-cases not covered natively, users can fall back to the `EnvoyPatchPolicy` API to mutate the underlying xDS configuration using JSON Patch semantics. This is similar to Istio's `EnvoyFilter`.
+* **Comparison**: While Envoy Gateway provides a robust, native telemetry configuration, it is tightly coupled to infrastructure-oriented CRDs. The proposed `TelemetryPolicy` allows users to configure telemetry behaviors using a portable `targetRef` model, without binding their observability intent to an Envoy-specific schema.
+
+### Kuadrant
+
+[Kuadrant](https://kuadrant.io/) provides observability for API management features like rate limiting and authentication. It is configured through a mix of its own custom resources and the underlying gateway's APIs.
+
+* **Metrics**: Kuadrant enables metrics via the `Kuadrant` CR. It also introduces its own `TelemetryPolicy` API (extensions.kuadrant.io/v1alpha1) to add custom dimensions to metrics.
+* **Logs**: For proxy access logging, Kuadrant relies on the underlying gateway provider (e.g., Istio's Telemetry API). However, it configures request correlation across its own components (Authorino, Limitador, and Wasm-shim) by specifying HTTP header identifiers in the `Kuadrant` CR.
+* **Tracing**: Tracing is configured centrally via the `Kuadrant` CR. It exports OpenTelemetry spans for both the control plane and data plane components. It supports global trace filtering levels to control the verbosity of exported spans.
+* **Customization**: To make low-level, custom modifications to the data plane configuration that are not supported by Kuadrant's native APIs, users can bypass Kuadrant and directly use the underlying gateway's mechanisms.
+* **Comparison**: While Kuadrant provides powerful, identity-aware telemetry (like token tracking per user), its configuration is fragmented across the `Kuadrant` CR, components specific CRDs, its custom extension `TelemetryPolicy`, and the underlying gateway's native APIs. The proposed `TelemetryPolicy` unified these intent-based capabilities into a single, provider-agnostic resource.  
+
