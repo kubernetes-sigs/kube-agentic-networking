@@ -70,7 +70,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			gw: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "agentic-net-gateway", Namespace: ns},
 				Spec: gatewayv1.GatewaySpec{
-					GatewayClassName: "cloud-provider-kind",
+					GatewayClassName: "kube-agentic-networking",
 					Listeners: []gatewayv1.Listener{{
 						Name:     "https-listener",
 						Port:     10001,
