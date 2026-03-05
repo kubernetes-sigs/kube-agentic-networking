@@ -104,6 +104,7 @@ spec:
     format: JSON
     matches: # Conditional logging
       - path: "/api/v1/sensitive"
+      - cel: "response.code >= 500" # CEL-based filtering for errors
     fields: # Configure specific fields to include
       - "start_time"
       - "response_code"
@@ -254,7 +255,11 @@ type AccessLogsConfig struct {
 }
 
 type MatchCondition struct {
+    // Path allows filtering to specific paths.
     Path string `json:"path,omitempty"`
+
+    // CEL provides an expression for advanced filtering (e.g., matching response codes, headers).
+    CEL string `json:"cel,omitempty"`
 }
 ```
 
