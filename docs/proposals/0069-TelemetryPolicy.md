@@ -100,7 +100,7 @@ spec:
 
   # 3. Access Logging
   accessLogs:
-    enable: true
+    enabled: true
     format: JSON
     matches: # Conditional logging
       - path: "/api/v1/sensitive"
