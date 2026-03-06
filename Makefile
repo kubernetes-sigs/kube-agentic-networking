@@ -158,7 +158,7 @@ SHELL = /usr/bin/env bash -o pipefail
 
 .PHONY: quickstart
 quickstart: ## Run the quickstart setup (requires HF_TOKEN env var, kind, kubectl, go).
-	quickstart/run-quickstart.sh
+	site-src/guides/quickstart/run-quickstart.sh
 
 ##@Docs
 
