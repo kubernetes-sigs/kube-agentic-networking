@@ -22,6 +22,7 @@ import (
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -126,4 +127,32 @@ func buildClustersFromBackends(backends []*agenticv0alpha0.XBackend) ([]*cluster
 		clusters = append(clusters, cluster)
 	}
 	return clusters, nil
+}
+
+func createClusterLoadAssignment(clusterName, serviceHost string, servicePort uint32) *endpointv3.ClusterLoadAssignment {
+	return &endpointv3.ClusterLoadAssignment{
+		ClusterName: clusterName,
+		Endpoints: []*endpointv3.LocalityLbEndpoints{
+			{
+				LbEndpoints: []*endpointv3.LbEndpoint{
+					{
+						HostIdentifier: &endpointv3.LbEndpoint_Endpoint{
+							Endpoint: &endpointv3.Endpoint{
+								Address: &corev3.Address{
+									Address: &corev3.Address_SocketAddress{
+										SocketAddress: &corev3.SocketAddress{
+											Address: serviceHost,
+											PortSpecifier: &corev3.SocketAddress_PortValue{
+												PortValue: servicePort,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }

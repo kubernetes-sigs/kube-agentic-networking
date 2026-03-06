@@ -1,9 +1,4 @@
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: e2e-test-ns
----
-apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: e2e-tester-sa
@@ -34,28 +29,6 @@ spec:
     serviceName: mcp-everything-svc
     port: 3001
     path: /mcp
----
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
-kind: XAccessPolicy
-metadata:
-  name: e2e-policy
-  namespace: e2e-test-ns
-spec:
-  targetRefs:
-    - group: agentic.prototype.x-k8s.io
-      kind: XBackend
-      name: e2e-mcp-backend
-  rules:
-    - name: allow-get-sum
-      source:
-        type: ServiceAccount
-        serviceAccount:
-          name: e2e-tester-sa
-          namespace: e2e-test-ns
-      authorization:
-        type: InlineTools
-        tools:
-          - "get-sum"
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

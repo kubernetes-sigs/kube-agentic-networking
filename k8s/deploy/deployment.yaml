@@ -125,6 +125,7 @@ spec:
             - --enable-agentic-identity-signer=true
             - --agentic-identity-trust-domain=cluster.local
             - --agentic-identity-ca-pool=/run/agentic-identity-ca-state/ca-pool.json
+            - --max-access-policies-per-target=5
             - --v=5 # Set log level to 5 (debug)
           volumeMounts:
           - name: "agentic-identity-ca-state"

@@ -34,29 +34,38 @@ const (
 	agentCAPath   = "/run/agent-identity-mtls/cluster.local.trust-bundle.pem"
 )
 
+// TestControllerE2E verifies the core functionality of the agentic networking controller including:
+// - Resource reconciliation on CRUD operations for Gateway, HTTPRoute, XBackend, and XAccessPolicy.
+// - Dynamic xDS configuration updates to Envoy proxies.
+// - mTLS authentication verification between the client and the proxy.
+// - Multi-level authorization enforcement at both Gateway and Backend scopes.
+// - Correctness of the generated Envoy configuration for policy enforcement.
 func TestControllerE2E(t *testing.T) {
-	// 1. Initial Setup
-	t.Log("Setting up E2E test resources...")
-	runKubectl(t, "apply", "-f", "testdata/e2e-resources.yaml")
-	runKubectl(t, "apply", "-f", "testdata/tester-pod.yaml")
-	runKubectl(t, "apply", "-f", "testdata/mcpserver.yaml")
+	// 1. Creating E2E test namespace
+	t.Log("Creating E2E test namespace")
+	runKubectl(t, "delete", "namespace", "e2e-test-ns", "--ignore-not-found")
+	runKubectl(t, "create", "namespace", "e2e-test-ns")
 
 	defer func() {
 		if t.Failed() {
 			t.Log("Skipping resource cleanup due to test failure. Inspect resources in 'e2e-test-ns' namespace.")
 			return
 		}
+		t.Log("🎉🎉 E2E Test Passed!")
 		t.Log("Cleaning up E2E test resources...")
-		runKubectl(t, "delete", "-f", "testdata/e2e-resources.yaml", "--ignore-not-found")
-		runKubectl(t, "delete", "-f", "testdata/tester-pod.yaml", "--ignore-not-found")
-		runKubectl(t, "delete", "-f", "testdata/mcpserver.yaml", "--ignore-not-found")
+		runKubectl(t, "delete", "namespace", "e2e-test-ns", "--ignore-not-found")
+		runKubectl(t, "delete", "gatewayclass", "kube-agentic-networking", "--ignore-not-found")
 	}()
 
-	// 2. Wait for Readiness
-	t.Log("Waiting for resources to be ready...")
-	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=5m")
+	// 2. Setting up E2E test resources
+	t.Log("Setting up E2E test resources...")
+	// a. MCP server
+	runKubectl(t, "apply", "-f", "testdata/mcpserver.yaml")
 	runKubectl(t, "wait", "--for=condition=available", "deployment/mcp-everything", "-n", "e2e-test-ns", "--timeout=2m")
-	// Wait for Gateway to be programmed and proxy to be up.
+
+	// b. Gateway, HTTPRoute and XBackend resources
+	runKubectl(t, "apply", "-f", "testdata/e2e-resources.yaml")
+
 	var proxyPodName string
 	err := retry(20, 5*time.Second, func() error {
 		out := runKubectlOutput(t, "get", "pods", "-n", "e2e-test-ns", "-l", fmt.Sprintf("%s=e2e-gateway", constants.GatewayNameLabel), "-o", "jsonpath={.items[*].metadata.name}")
@@ -73,8 +82,12 @@ func TestControllerE2E(t *testing.T) {
 	}
 	runKubectl(t, "wait", "--for=condition=Ready", "pod/"+proxyPodName, "-n", "e2e-test-ns", "--timeout=5m")
 
+	// c. Tester pod
+	runKubectl(t, "apply", "-f", "testdata/tester-pod.yaml")
+	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", "e2e-test-ns", "--timeout=5m")
+
 	// 3. Obtain Gateway Address from status
-	t.Log("Verifying Gateway status address and capturing IP...")
+	t.Log("Obtain Gateway Address from status")
 	var gatewayIP string
 	err = retry(20, 2*time.Second, func() error {
 		out := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", "e2e-test-ns", "-o", "jsonpath={.status.addresses[*].value}")
@@ -91,63 +104,53 @@ func TestControllerE2E(t *testing.T) {
 	}
 
 	// 4. Initialize MCP session
-	t.Log("Initializing MCP session...")
-	time.Sleep(10 * time.Second)
+	mcp := initializeMCP(t, gatewayIP)
 
-	mcpSessionID := ""
-	err = retry(5, 10*time.Second, func() error {
-		out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
-			"curl", "-ks", "-i",
-			"--cert", agentCertPath,
-			"--key", agentKeyPath,
-			"--cacert", agentCAPath,
-			"-H", "Content-Type: application/json",
-			"-H", "Accept: application/json, text/event-stream",
-			"-H", "mcp-protocol-version: 2025-11-25",
-			"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
-			fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
+	// 5. Case 1: No policy
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 1: No policy applied (all allowed)")
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`, 200)
+	mcp.assertToolCall("echo", `{"message":"hello"}`, 200)
 
-		// Extract mcp-session-id from headers
-		lines := strings.Split(out, "\r\n")
-		for _, line := range lines {
-			if strings.HasPrefix(strings.ToLower(line), "mcp-session-id:") {
-				mcpSessionID = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
-				return nil
-			}
-		}
+	// 6. Case 2: Only backend policy
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 2: Only backend policy (allows get-sum)")
+	runKubectl(t, "apply", "-f", "testdata/backend-policy.yaml")
+	// Wait for xDS propagation
+	time.Sleep(5 * time.Second)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`, 200)
+	mcp.assertToolCall("echo", `{"message":"hello"}`, 403)
 
-		return fmt.Errorf("failed to get mcp-session-id from headers")
-	})
-	if err != nil {
-		t.Fatalf("MCP Initialization failed: %v", err)
-	}
-	t.Logf("Obtained MCP Session ID: %s", mcpSessionID)
+	// 7. Case 3: Only gateway policy
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 3: Only gateway policy (allows echo)")
+	runKubectl(t, "delete", "-f", "testdata/backend-policy.yaml", "--ignore-not-found")
+	runKubectl(t, "apply", "-f", "testdata/gateway-policy.yaml")
+	// Wait for xDS propagation
+	time.Sleep(5 * time.Second)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`, 403)
+	mcp.assertToolCall("echo", `{"message":"hello"}`, 200)
 
-	// 5. Test Phase 1: get-sum allowed, echo denied
-	t.Log("Verifying initial policy (get-sum: OK, echo: DENY)...")
+	// 8. Case 4: Both policies applied
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 4: Both policies (GW: echo, BE: get-sum)")
+	runKubectl(t, "apply", "-f", "testdata/backend-policy.yaml")
+	// Wait for xDS propagation
+	time.Sleep(5 * time.Second)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`, 403)
+	mcp.assertToolCall("echo", `{"message":"hello"}`, 403)
 
-	// get-sum should be 200
-	assertToolCall(t, mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`, 200)
-	// echo should be 403
-	assertToolCall(t, mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`, 403)
+	// 9. Case 5: Patch Gateway policy to allow get-sum
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 5: Patch Gateway policy to allow get-sum")
+	// Modifying Gateway Policy: Allowing 'get-sum' to align with Backend policy.
+	patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": ["get-sum"]}]`
+	runKubectl(t, "patch", "xaccesspolicy", "e2e-gateway-level-policy", "-n", "e2e-test-ns", "--type=json", "-p", patchGW)
 
-	// 6. Update Policy
-	t.Log("Updating XAccessPolicy (swap permissions)...")
-	runKubectl(t, "apply", "-f", "testdata/policy-update.yaml")
-
-	// Give some time for xDS propagation
-	t.Log("Waiting for xDS propagation...")
-	time.Sleep(10 * time.Second)
-
-	// 7. Test Phase 2: get-sum denied, echo allowed
-	t.Log("Verifying updated policy (get-sum: DENY, echo: OK)...")
-
-	// get-sum should now be 403
-	assertToolCall(t, mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`, 403)
-	// echo should now be 200
-	assertToolCall(t, mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`, 200)
-
-	t.Log("E2E Test Passed!")
+	// Wait for xDS propagation
+	time.Sleep(5 * time.Second)
+	mcp.assertToolCall("get-sum", `{"a":2,"b":3}`, 200)
+	t.Log("--------------------------------------------------------------------------------")
 }
 
 func runKubectl(t *testing.T, args ...string) {
@@ -184,10 +187,52 @@ func retry(attempts int, sleep time.Duration, f func() error) error {
 	return fmt.Errorf("after %d attempts", attempts)
 }
 
-func assertToolCall(t *testing.T, sessionID, gatewayAddr, toolName, toolArgs string, expectedStatus int) {
+type mcpTestSession struct {
+	t         *testing.T
+	gatewayIP string
+	sessionID string
+}
+
+func initializeMCP(t *testing.T, gatewayIP string) *mcpTestSession {
+	t.Log("Initialize MCP session")
+	time.Sleep(5 * time.Second)
+
+	mcpSessionID := ""
+	err := retry(5, 10*time.Second, func() error {
+		out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
+			"curl", "-ks", "-i",
+			"--cert", agentCertPath,
+			"--key", agentKeyPath,
+			"--cacert", agentCAPath,
+			"-H", "Content-Type: application/json",
+			"-H", "Accept: application/json, text/event-stream",
+			"-H", "mcp-protocol-version: 2025-11-25",
+			"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
+			fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
+
+		// Extract mcp-session-id from headers
+		lines := strings.Split(out, "\r\n")
+		for _, line := range lines {
+			if strings.HasPrefix(strings.ToLower(line), "mcp-session-id:") {
+				mcpSessionID = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
+				return nil
+			}
+		}
+
+		return fmt.Errorf("failed to get mcp-session-id from headers")
+	})
+	if err != nil {
+		t.Fatalf("MCP Initialization failed: %v", err)
+	}
+	t.Logf("Obtained MCP Session ID: %s", mcpSessionID)
+
+	return &mcpTestSession{t: t, gatewayIP: gatewayIP, sessionID: mcpSessionID}
+}
+
+func (m *mcpTestSession) assertToolCall(toolName, toolArgs string, expectedStatus int) {
 	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, toolName, toolArgs)
 
-	out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
+	out := runKubectlOutput(m.t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
 		"curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -195,18 +240,18 @@ func assertToolCall(t *testing.T, sessionID, gatewayAddr, toolName, toolArgs str
 		"-H", "Content-Type: application/json",
 		"-H", "Accept: application/json, text/event-stream",
 		"-H", "mcp-protocol-version: 2025-11-25",
-		"-H", fmt.Sprintf("mcp-session-id: %s", sessionID),
+		"-H", fmt.Sprintf("mcp-session-id: %s", m.sessionID),
 		"--data-raw", data,
-		fmt.Sprintf("https://%s:10001/mcp", gatewayAddr))
+		fmt.Sprintf("https://%s:10001/mcp", m.gatewayIP))
 
 	gotStatus, err := strconv.Atoi(strings.TrimSpace(out))
 	if err != nil {
-		t.Fatalf("Failed to parse HTTP status code from curl output %q: %v", out, err)
+		m.t.Fatalf("Failed to parse HTTP status code from curl output %q: %v", out, err)
 	}
 
 	if gotStatus != expectedStatus {
-		t.Errorf("Tool call %s: expected status %d, got %d", toolName, expectedStatus, gotStatus)
+		m.t.Errorf("Tool call %s: expected status %d, got %d", toolName, expectedStatus, gotStatus)
 	} else {
-		t.Logf("Tool call %s: got expected status %d", toolName, gotStatus)
+		m.t.Logf("Tool call %s: got expected status %d", toolName, gotStatus)
 	}
 }

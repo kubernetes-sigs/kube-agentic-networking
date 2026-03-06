@@ -18,17 +18,21 @@ package translator
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
+	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
@@ -41,6 +45,18 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
+const (
+	MaxAccessPoliciesPerTarget = 5
+)
+
+type expectedResult struct {
+	listenerNames     []string
+	routeNames        []string
+	clusterNames      []string
+	gwPrincipals      []string
+	backendPrincipals []string
+}
+
 func TestTranslateGatewayToXDS_Full(t *testing.T) {
 	ns := "quickstart-ns"
 	trustDomain := "cluster.local"
@@ -50,123 +66,59 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 		gw       *gatewayv1.Gateway
 		backend  *agenticv0alpha0.XBackend
 		route    *gatewayv1.HTTPRoute
-		policy   *agenticv0alpha0.XAccessPolicy
+		policies []*agenticv0alpha0.XAccessPolicy
 		mcpSvc   *corev1.Service
-		expected struct {
-			listenerNames []string
-			routeNames    []string
-			clusterNames  []string
-			spiffeID      string
-		}
+		expected expectedResult
 	}{
 		{
-			name: "Basic mTLS and RBAC Translation",
-			gw: &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{Name: "agentic-net-gateway", Namespace: ns},
-				Spec: gatewayv1.GatewaySpec{
-					GatewayClassName: "cloud-provider-kind",
-					Listeners: []gatewayv1.Listener{{
-						Name:     "https-listener",
-						Port:     10001,
-						Protocol: gatewayv1.HTTPSProtocolType,
-						AllowedRoutes: &gatewayv1.AllowedRoutes{
-							Namespaces: &gatewayv1.RouteNamespaces{From: ptr.To(gatewayv1.NamespacesFromSame)},
-						},
-					}},
-				},
+			name:    "Basic mTLS and RBAC Translation",
+			gw:      newTestGateway("agentic-net-gateway", ns),
+			backend: newTestBackend("local-mcp-backend", ns),
+			route:   newTestHTTPRoute("httproute-local-mcp", ns, "agentic-net-gateway", "local-mcp-backend"),
+			policies: []*agenticv0alpha0.XAccessPolicy{
+				newTestAccessPolicy("auth-policy-local-mcp", ns, "local-mcp-backend", "XBackend", "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa"),
 			},
-			backend: &agenticv0alpha0.XBackend{
-				ObjectMeta: metav1.ObjectMeta{Name: "local-mcp-backend", Namespace: ns},
-				Spec: agenticv0alpha0.BackendSpec{
-					MCP: agenticv0alpha0.MCPBackend{
-						ServiceName: ptr.To("mcp-everything-svc"),
-						Port:        3001,
-						Path:        "/mcp",
-					},
-				},
+			mcpSvc: newTestService("local-mcp-backend-svc", ns, 3001),
+			expected: expectedResult{
+				listenerNames:     []string{"listener-10001"},
+				routeNames:        []string{"route-10001"},
+				clusterNames:      []string{"quickstart-ns-local-mcp-backend"},
+				backendPrincipals: []string{"spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa"},
 			},
-			route: &gatewayv1.HTTPRoute{
-				ObjectMeta: metav1.ObjectMeta{Name: "httproute-local-mcp", Namespace: ns},
-				Spec: gatewayv1.HTTPRouteSpec{
-					CommonRouteSpec: gatewayv1.CommonRouteSpec{
-						ParentRefs: []gatewayv1.ParentReference{{Name: "agentic-net-gateway"}},
-					},
-					Rules: []gatewayv1.HTTPRouteRule{{
-						Matches: []gatewayv1.HTTPRouteMatch{{
-							Path: &gatewayv1.HTTPPathMatch{Type: ptr.To(gatewayv1.PathMatchPathPrefix), Value: ptr.To("/local/mcp")},
-						}},
-						Filters: []gatewayv1.HTTPRouteFilter{{
-							Type: gatewayv1.HTTPRouteFilterURLRewrite,
-							URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
-								Path: &gatewayv1.HTTPPathModifier{
-									Type:               gatewayv1.PrefixMatchHTTPPathModifier,
-									ReplacePrefixMatch: ptr.To("/mcp"),
-								},
-							},
-						}},
-						BackendRefs: []gatewayv1.HTTPBackendRef{{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Name:  "local-mcp-backend",
-									Group: ptr.To(gatewayv1.Group("agentic.prototype.x-k8s.io")),
-									Kind:  ptr.To(gatewayv1.Kind("XBackend")),
-								},
-							},
-						}},
-					}},
-				},
+		},
+		{
+			name:    "Multiple Policies Targeting Gateway and Backend",
+			gw:      newTestGateway("multi-policy-gw", ns),
+			backend: newTestBackend("multi-policy-backend", ns),
+			route:   newTestHTTPRoute("multi-policy-route", ns, "multi-policy-gw", "multi-policy-backend"),
+			policies: []*agenticv0alpha0.XAccessPolicy{
+				newTestAccessPolicy("gw-policy", ns, "multi-policy-gw", "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
+				newTestAccessPolicy("backend-policy", ns, "multi-policy-backend", "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2"),
 			},
-			policy: &agenticv0alpha0.XAccessPolicy{
-				ObjectMeta: metav1.ObjectMeta{Name: "auth-policy-local-mcp", Namespace: ns},
-				Spec: agenticv0alpha0.AccessPolicySpec{
-					TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
-						LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
-							Group: "agentic.prototype.x-k8s.io",
-							Kind:  "XBackend",
-							Name:  "local-mcp-backend",
-						},
-					}},
-					Rules: []agenticv0alpha0.AccessRule{{
-						Name: "tools-for-adk-agent-sa",
-						Source: agenticv0alpha0.Source{
-							Type: agenticv0alpha0.AuthorizationSourceTypeServiceAccount,
-							ServiceAccount: &agenticv0alpha0.AuthorizationSourceServiceAccount{
-								Name:      "adk-agent-sa",
-								Namespace: ns,
-							},
-						},
-						Authorization: &agenticv0alpha0.AuthorizationRule{
-							Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
-							Tools: []string{"get-sum"},
-						},
-					}},
-				},
-			},
-			mcpSvc: &corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{Name: "mcp-everything-svc", Namespace: ns},
-				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 3001}}},
-			},
-			expected: struct {
-				listenerNames []string
-				routeNames    []string
-				clusterNames  []string
-				spiffeID      string
-			}{
-				listenerNames: []string{"listener-10001"},
-				routeNames:    []string{"route-10001"},
-				clusterNames:  []string{"quickstart-ns-local-mcp-backend"},
-				spiffeID:      "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa",
+			mcpSvc: newTestService("multi-policy-backend-svc", ns, 3001),
+			expected: expectedResult{
+				listenerNames:     []string{"listener-10001"},
+				routeNames:        []string{"route-10001"},
+				clusterNames:      []string{"quickstart-ns-multi-policy-backend"},
+				gwPrincipals:      []string{"spiffe://cluster.local/ns/ns1/sa/sa1"},
+				backendPrincipals: []string{"spiffe://cluster.local/ns/ns2/sa/sa2"},
 			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// 2. Setup Fake Clients and Informers
+			// Setup Fake Clients and Informers
 			ctx := context.Background()
 			k8sClient := fake.NewClientset(tc.mcpSvc)
 			gwClient := gatewayclient.NewClientset(tc.gw, tc.route)
-			agenticClient := agenticclient.NewSimpleClientset(tc.backend, tc.policy)
+
+			var agenticObjs []runtime.Object
+			agenticObjs = append(agenticObjs, tc.backend)
+			for _, p := range tc.policies {
+				agenticObjs = append(agenticObjs, p)
+			}
+			agenticClient := agenticclient.NewSimpleClientset(agenticObjs...)
 
 			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
@@ -174,6 +126,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 
 			tr := New(
 				trustDomain,
+				MaxAccessPoliciesPerTarget,
 				k8sClient,
 				gwClient,
 				coreInformerFactory.Core().V1().Namespaces().Lister(),
@@ -190,15 +143,17 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			_ = gwInformerFactory.Gateway().V1().Gateways().Informer().GetIndexer().Add(tc.gw)
 			_ = gwInformerFactory.Gateway().V1().HTTPRoutes().Informer().GetIndexer().Add(tc.route)
 			_ = agenticInformerFactory.Agentic().V0alpha0().XBackends().Informer().GetIndexer().Add(tc.backend)
-			_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(tc.policy)
+			for _, p := range tc.policies {
+				_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(p)
+			}
 
-			// 3. Run Translation
+			// Run Translation
 			resources, err := tr.TranslateGatewayToXDS(ctx, tc.gw)
 			if err != nil {
 				t.Fatalf("Translation failed: %v", err)
 			}
 
-			// 4. Assertions
+			// Assertions
 			// Verify ListenerType
 			listeners := resources[resourcev3.ListenerType]
 			if len(listeners) != len(tc.expected.listenerNames) {
@@ -211,6 +166,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					if lis.Name == expectedName {
 						found = true
 						checkListenerMTLS(t, lis)
+						checkListenerRBAC(t, lis, tc.expected.gwPrincipals)
 					}
 				}
 				if !found {
@@ -229,7 +185,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					rc := res.(*routev3.RouteConfiguration)
 					if rc.Name == expectedName {
 						found = true
-						checkRouteRBAC(t, rc, tc.expected.spiffeID)
+						checkRouteRBAC(t, rc, tc.expected.backendPrincipals)
 					}
 				}
 				if !found {
@@ -255,6 +211,112 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Helper functions to create test objects
+
+func newTestGateway(name, ns string) *gatewayv1.Gateway {
+	return &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloud-provider-kind",
+			Listeners: []gatewayv1.Listener{{
+				Name:     "https-listener",
+				Port:     10001,
+				Protocol: gatewayv1.HTTPSProtocolType,
+				AllowedRoutes: &gatewayv1.AllowedRoutes{
+					Namespaces: &gatewayv1.RouteNamespaces{From: ptr.To(gatewayv1.NamespacesFromSame)},
+				},
+			}},
+		},
+	}
+}
+
+func newTestBackend(name, ns string) *agenticv0alpha0.XBackend {
+	return &agenticv0alpha0.XBackend{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: agenticv0alpha0.BackendSpec{
+			MCP: agenticv0alpha0.MCPBackend{
+				ServiceName: ptr.To(name + "-svc"),
+				Port:        3001,
+				Path:        "/mcp",
+			},
+		},
+	}
+}
+
+func newTestHTTPRoute(name, ns, gwName, backendName string) *gatewayv1.HTTPRoute {
+	return &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: gatewayv1.ObjectName(gwName)}},
+			},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				Matches: []gatewayv1.HTTPRouteMatch{{
+					Path: &gatewayv1.HTTPPathMatch{Type: ptr.To(gatewayv1.PathMatchPathPrefix), Value: ptr.To("/mcp")},
+				}},
+				BackendRefs: []gatewayv1.HTTPBackendRef{{
+					BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{
+							Name:  gatewayv1.ObjectName(backendName),
+							Group: ptr.To(gatewayv1.Group("agentic.prototype.x-k8s.io")),
+							Kind:  ptr.To(gatewayv1.Kind("XBackend")),
+						},
+					},
+				}},
+			}},
+		},
+	}
+}
+
+func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *agenticv0alpha0.XAccessPolicy {
+	var group string
+	if targetKind == "Gateway" {
+		group = gatewayv1.GroupName
+	} else {
+		group = agenticv0alpha0.GroupName
+	}
+	return &agenticv0alpha0.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: agenticv0alpha0.AccessPolicySpec{
+			TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+					Group: gatewayv1.Group(group),
+					Kind:  gatewayv1.Kind(targetKind),
+					Name:  gatewayv1.ObjectName(targetName),
+				},
+			}},
+			Rules: []agenticv0alpha0.AccessRule{{
+				Name: "rule-1",
+				Source: agenticv0alpha0.Source{
+					Type:   agenticv0alpha0.AuthorizationSourceTypeSPIFFE,
+					SPIFFE: (*agenticv0alpha0.AuthorizationSourceSPIFFE)(&principal),
+				},
+			}},
+		},
+		Status: agenticv0alpha0.AccessPolicyStatus{
+			Ancestors: []gatewayv1.PolicyAncestorStatus{
+				{
+					Conditions: []metav1.Condition{
+						{
+							Type:               string(agenticv0alpha0.PolicyConditionAccepted),
+							Status:             metav1.ConditionTrue,
+							Reason:             "Accepted",
+							LastTransitionTime: metav1.Now(),
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func newTestService(name, ns string, port int32) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: port}}},
 	}
 }
 
@@ -286,36 +348,44 @@ func checkListenerMTLS(t *testing.T, lis *listenerv3.Listener) {
 	}
 }
 
-func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrincipal string) {
-	foundRBAC := false
+// checkRouteRBAC verifies the RBAC configuration at the route level.
+// It checks that:
+// 1. All clusters in weighted clusters have exactly the expected number of backend-level RBAC filters.
+// 2. Each backend-level RBAC filter follows the correct naming convention (e.g., backend_level_1).
+// 3. Each provided principal is present in its corresponding backend-level RBAC filter override.
+func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrincipals []string) {
 	for _, vh := range rc.VirtualHosts {
 		for _, r := range vh.Routes {
 			if routeAction := r.GetRoute(); routeAction != nil {
 				if weightedClusters := routeAction.GetWeightedClusters(); weightedClusters != nil {
 					for _, wc := range weightedClusters.Clusters {
-						if rbacAny, ok := wc.TypedPerFilterConfig[wellknown.HTTPRoleBasedAccessControl]; ok {
-							foundRBAC = true
+						// Verify count of backend RBAC overrides
+						beFilterCount := 0
+						for filterName := range wc.TypedPerFilterConfig {
+							if strings.HasPrefix(filterName, constants.BackendRBACFilterNamePrefix) {
+								beFilterCount++
+							}
+						}
+						if beFilterCount != len(expectedPrincipals) {
+							t.Errorf("expected %d backend RBAC overrides in cluster %s, got %d", len(expectedPrincipals), wc.Name, beFilterCount)
+						}
+
+						// Check each expected principal and filter name
+						for i, expectedPrincipal := range expectedPrincipals {
+							filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
+							rbacAny, ok := wc.TypedPerFilterConfig[filterName]
+							if !ok {
+								t.Errorf("Backend RBAC filter %s not found in cluster %s", filterName, wc.Name)
+								continue
+							}
+
 							rbacPerRoute := &rbacv3.RBACPerRoute{}
 							if err := rbacAny.UnmarshalTo(rbacPerRoute); err != nil {
 								t.Fatalf("failed to unmarshal RBACPerRoute: %v", err)
 							}
 
-							foundPrincipal := false
-							for _, policy := range rbacPerRoute.Rbac.Rules.Policies {
-								for _, princ := range policy.Principals {
-									if auth := princ.GetAuthenticated(); auth != nil {
-										if auth.PrincipalName.GetExact() == expectedPrincipal {
-											foundPrincipal = true
-											break
-										}
-									}
-								}
-								if foundPrincipal {
-									break
-								}
-							}
-							if !foundPrincipal {
-								t.Errorf("RBAC policy for cluster %s missing expected principal: %s", wc.Name, expectedPrincipal)
+							if !hasPrincipal(rbacPerRoute.Rbac, expectedPrincipal) {
+								t.Errorf("RBAC policy for cluster %s filter %s missing expected principal: %s", wc.Name, filterName, expectedPrincipal)
 							}
 						}
 					}
@@ -323,7 +393,79 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 			}
 		}
 	}
-	if !foundRBAC {
-		t.Errorf("RBAC per-cluster config not found in route configuration %s", rc.Name)
+}
+
+// checkListenerRBAC verifies the RBAC configuration at the listener level.
+// It checks that:
+// 1. The HTTP Connection Manager has exactly the expected number of Gateway-level RBAC filters.
+// 2. The HTTP Connection Manager has exactly MaxAccessPoliciesPerTarget Backend-level RBAC filters.
+// 3. All RBAC filters follow the correct naming convention (gateway_level_N or backend_level_N).
+// 4. Gateway-level RBAC filters contain the expected principals.
+func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincipals []string) {
+	for _, fc := range lis.FilterChains {
+		for _, filter := range fc.Filters {
+			if filter.Name == wellknown.HTTPConnectionManager {
+				hcmConfig := &hcm.HttpConnectionManager{}
+				if err := filter.GetTypedConfig().UnmarshalTo(hcmConfig); err != nil {
+					t.Fatalf("failed to unmarshal HCM config: %v", err)
+				}
+
+				gwFilterCount := 0
+				beFilterCount := 0
+				for _, httpFilter := range hcmConfig.HttpFilters {
+					if strings.HasPrefix(httpFilter.Name, constants.GatewayRBACFilterNamePrefix) {
+						gwFilterCount++
+						// Verify exact name
+						expectedName := fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, gwFilterCount)
+						if httpFilter.Name != expectedName {
+							t.Errorf("Gateway RBAC filter name mismatch: got %s, want %s", httpFilter.Name, expectedName)
+						}
+
+						// Verify principal if it's within the expected list
+						if gwFilterCount <= len(expectedGWPrincipals) {
+							rbacConfig := &rbacv3.RBAC{}
+							if err := httpFilter.GetTypedConfig().UnmarshalTo(rbacConfig); err != nil {
+								t.Fatalf("failed to unmarshal RBAC config from listener: %v", err)
+							}
+							expectedPrincipal := expectedGWPrincipals[gwFilterCount-1]
+							if !hasPrincipal(rbacConfig, expectedPrincipal) {
+								t.Errorf("Gateway RBAC filter %s missing expected principal: %s", httpFilter.Name, expectedPrincipal)
+							}
+						}
+					} else if strings.HasPrefix(httpFilter.Name, constants.BackendRBACFilterNamePrefix) {
+						beFilterCount++
+						// Verify exact name
+						expectedName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, beFilterCount)
+						if httpFilter.Name != expectedName {
+							t.Errorf("Backend RBAC filter name mismatch in listener: got %s, want %s", httpFilter.Name, expectedName)
+						}
+					}
+				}
+
+				if gwFilterCount != len(expectedGWPrincipals) {
+					t.Errorf("expected %d Gateway RBAC filters, got %d", len(expectedGWPrincipals), gwFilterCount)
+				}
+				if beFilterCount != MaxAccessPoliciesPerTarget {
+					t.Errorf("expected %d Backend RBAC filters in listener, got %d", MaxAccessPoliciesPerTarget, beFilterCount)
+				}
+			}
+		}
 	}
+}
+
+// hasPrincipal is a helper to check if an RBAC config contains a specific SPIFFE ID principal.
+func hasPrincipal(rbac *rbacv3.RBAC, expectedPrincipal string) bool {
+	if rbac == nil || rbac.Rules == nil {
+		return false
+	}
+	for _, policy := range rbac.Rules.Policies {
+		for _, princ := range policy.Principals {
+			if auth := princ.GetAuthenticated(); auth != nil {
+				if auth.PrincipalName.GetExact() == expectedPrincipal {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
