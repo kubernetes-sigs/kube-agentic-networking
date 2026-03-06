@@ -23,7 +23,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
+SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/../../..
 source "${SCRIPT_ROOT}/hack/kube-env.sh"
 
 # --- Configuration ---
@@ -123,7 +123,7 @@ create_namespaces() {
 
 deploy_mcp_server() {
   info "Step 5/9: Deploying in-cluster MCP server..."
-  kubectl apply -f "${SCRIPT_ROOT}/quickstart/mcpserver/deployment.yaml"
+  kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/mcpserver/deployment.yaml"
   wait_for_deployment "${NAMESPACE}" "mcp-everything"
 }
 
@@ -152,7 +152,7 @@ deploy_controller() {
 
 apply_policies() {
   info "Step 7/9: Applying network policies (Gateway, HTTPRoutes, XBackends, XAccessPolicies)..."
-  kubectl apply -f "${SCRIPT_ROOT}/quickstart/policy/e2e.yaml"
+  kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/policy/e2e.yaml"
 
   info "Waiting for Envoy proxy deployment to be created..."
   local retries=0
@@ -211,7 +211,7 @@ deploy_agent() {
 
   # Render and apply sidecar config with envsubst.
   GATEWAY_ADDRESS="${gateway_address}" GATEWAY_SPIFFE_ID="${gateway_spiffe_id}" \
-    envsubst < "${SCRIPT_ROOT}/quickstart/adk-agent/sidecar/sidecar-configs.yaml" | kubectl apply -f -
+    envsubst < "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/sidecar/sidecar-configs.yaml" | kubectl apply -f -
 
   # Create HuggingFace secret (idempotent via dry-run).
   kubectl create secret generic hf-secret -n "${NAMESPACE}" \
@@ -219,7 +219,7 @@ deploy_agent() {
     --dry-run=client -o yaml | kubectl apply -f -
 
   # Deploy agent.
-  kubectl apply -f "${SCRIPT_ROOT}/quickstart/adk-agent/deployment.yaml"
+  kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/deployment.yaml"
   wait_for_deployment "${NAMESPACE}" "adk-agent"
 }
 

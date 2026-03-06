@@ -10,7 +10,7 @@ hide:
       <h1>Kubernetes Agentic Networking</h1>
       <p class="hero-subtitle">Secure, governed communication for the next generation of AI agents.</p>
       <div class="hero-buttons">
-        <a href="guides/" class="md-button md-button--primary">Get Started</a>
+        <a href="guides/quickstart/" class="md-button md-button--primary">Get Started</a>
         <a href="https://github.com/kubernetes-sigs/kube-agentic-networking" class="md-button">View on GitHub</a>
       </div>
     </div>

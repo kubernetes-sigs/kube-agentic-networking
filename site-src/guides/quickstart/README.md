@@ -82,7 +82,7 @@ make quickstart
 
 ### What `make quickstart` Does
 
-`make quickstart` automates the entire setup by running [`run-quickstart.sh`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/run-quickstart.sh):
+`make quickstart` automates the entire setup by running [`run-quickstart.sh`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/run-quickstart.sh):
 
 1. **Creates a kind cluster** (`kan-quickstart`) with Kubernetes v1.35 and required feature gates enabled.
 2. **Installs Gateway API CRDs** (standard v1.4.0 install).

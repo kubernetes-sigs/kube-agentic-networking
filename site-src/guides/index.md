@@ -1,1 +1,3 @@
---8<-- "quickstart/README.md"
+# Guides
+
+- [Quickstart](quickstart/README.md)
