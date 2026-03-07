@@ -18,6 +18,14 @@ limitations under the License.
 
 package v0alpha0
 
+// KANConfigListerExpansion allows custom methods to be added to
+// KANConfigLister.
+type KANConfigListerExpansion interface{}
+
+// KANConfigNamespaceListerExpansion allows custom methods to be added to
+// KANConfigNamespaceLister.
+type KANConfigNamespaceListerExpansion interface{}
+
 // XAccessPolicyListerExpansion allows custom methods to be added to
 // XAccessPolicyLister.
 type XAccessPolicyListerExpansion interface{}
