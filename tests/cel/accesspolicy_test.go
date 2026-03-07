@@ -195,6 +195,40 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			},
 			wantErrors: []string{"only one of tools or externalAuth can be specified"},
 		},
+		{
+			desc: "multiple ExternalAuth authorization rules specified",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+					ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gwapiv1.BackendObjectReference{
+							Name: "ext-auth-svc",
+						},
+					},
+				}
+				// add another rule with ExternalAuth type
+				p.Spec.Rules = append(p.Spec.Rules, v0alpha0.AccessRule{
+					Name: "rule-2",
+					Source: v0alpha0.Source{
+						Type: v0alpha0.AuthorizationSourceTypeServiceAccount,
+						ServiceAccount: &v0alpha0.AuthorizationSourceServiceAccount{
+							Name: "sa-2",
+						},
+					},
+					Authorization: &v0alpha0.AuthorizationRule{
+						Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gwapiv1.BackendObjectReference{
+								Name: "ext-auth-svc-2",
+							},
+						},
+					},
+				})
+			},
+			wantErrors: []string{"a maximum of one rule per policy can specify 'ExternalAuth' authorization type"},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {

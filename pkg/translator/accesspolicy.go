@@ -169,7 +169,7 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
 						continue
 					}
-					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash)
+					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash) // a maximum of one ExternalAuth rule per policy is allowed, so we can safely set the shadow rule stat prefix at the RBAC config level
 					policy.Permissions = []*rbacconfigv3.Permission{buildTooslCallMethodPermission()}
 					addPolicyToRBACShadowRules(rbacConfig, policyName, policy)
 				}

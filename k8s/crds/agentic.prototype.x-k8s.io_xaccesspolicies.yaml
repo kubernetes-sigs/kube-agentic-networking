@@ -391,6 +391,10 @@ spec:
                 x-kubernetes-validations:
                 - message: AccessRule names must be unique
                   rule: self.all(r, self.filter(x, x.name == r.name).size() == 1)
+                - message: a maximum of one rule per policy can specify 'ExternalAuth'
+                    authorization type
+                  rule: self.filter(r, has(r.authorization) && r.authorization.type
+                    == 'ExternalAuth').size() <= 1
               targetRefs:
                 description: |-
                   TargetRefs specifies the targets of the AccessPolicy.
