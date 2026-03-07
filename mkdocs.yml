@@ -5,6 +5,10 @@ site_dir: site
 docs_dir: site-src
 extra_css:
   - stylesheets/extra.css
+hooks:
+  - hack/mkdocs-copy-proposals.py
+watch:
+  - docs/proposals
 theme:
   name: material
   icon:
