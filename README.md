@@ -30,6 +30,10 @@ This subproject aims to deliver the following:
 
 ![Architecture Diagram](./docs/diagram.svg)
 
+## Repository structure
+
+See [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) for where to find and add proposals, APIs, documentation, and code.
+
 ## Community, discussion, contribution, and support
 
 Our community meetings are held weekly on Thursday at 4PM UTC ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=4PM&tz=UTC)).
