@@ -48,7 +48,7 @@ var (
 	shardingPodUID          = flag.String("sharding-pod-uid", "", "(Work Sharding) The pod UID of the controller")
 	shardingApplicationName = flag.String("sharding-application-name", "", "(Work Sharding) The application name to disambiguate Leases")
 
-	resyncPeriod = flag.Duration("resync-period", 10*time.Second, "The resync period for all informers. Setting this to 0 will disable resyncing.")
+	resyncPeriod = flag.Duration("resync-period", 10*time.Minute, "The resync period for all informers. Setting this to 0 will disable resyncing.")
 )
 
 func main() {

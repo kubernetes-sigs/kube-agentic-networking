@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -50,6 +51,14 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/xds"
 	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
+
+// controllerConfig holds the subset of KANConfig-driven settings that are read
+// by concurrent reconcile workers. Written atomically by applyKANConfig so that
+// reads in syncHandler never race with writes.
+type controllerConfig struct {
+	envoyImage                 string
+	agenticIdentityTrustDomain string
+}
 
 type coreResources struct {
 	client kubernetes.Interface
@@ -98,9 +107,8 @@ type Controller struct {
 	gateway gatewayResources
 	agentic agenticNetResources
 
-	agenticIdentityTrustDomain string
-	envoyImage                 string
-	workerCount                int
+	config      atomic.Pointer[controllerConfig] // immutable snapshot; swapped by applyKANConfig
+	workerCount int                              // startup-only; read by Run() before workers start
 
 	gatewayqueue            workqueue.TypedRateLimitingInterface[string]
 	backendFinalizerQueue   workqueue.TypedRateLimitingInterface[string]
@@ -155,9 +163,7 @@ func New(
 			kanConfigLister:    kanConfigInformer.Lister(),
 			kanConfigSynced:    kanConfigInformer.Informer().HasSynced,
 		},
-		agenticIdentityTrustDomain: "",  // populated by applyKANConfig
-		envoyImage:                 "",  // populated by applyKANConfig
-		workerCount:                2,   // default; overridden by KANConfig.spec.workerCount
+		workerCount: 2, // default; overridden by KANConfig.spec.workerCount
 		gatewayqueue: workqueue.NewTypedRateLimitingQueueWithConfig(
 			workqueue.DefaultTypedControllerRateLimiter[string](),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "gateway"},
@@ -169,6 +175,7 @@ func New(
 		xdsServer: xds.NewServer(ctx),
 	}
 
+	c.config.Store(&controllerConfig{}) // zero value until first KANConfig is applied
 	c.translator = translator.New(
 		"",
 		kubeClientSet,
@@ -366,7 +373,11 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 	logger.Info("Syncing gateway")
 
 	// Ensure Envoy proxy deployment and service exist.
-	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
+	activeCfg := c.config.Load()
+	if activeCfg.envoyImage == "" {
+		return fmt.Errorf("envoy proxy image not configured yet: waiting for KANConfig to be applied to GatewayClass %q", string(gateway.Spec.GatewayClassName))
+	}
+	rm := envoy.NewResourceManager(c.core.client, gateway, activeCfg.envoyImage, activeCfg.agenticIdentityTrustDomain)
 	proxyIP, err := rm.EnsureProxyExist(ctx)
 	if err != nil {
 		return err

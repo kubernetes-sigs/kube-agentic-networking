@@ -25,11 +25,13 @@ rules:
     resources: ["gatewayclasses/status", "gateways/status", "httproutes/status"]
     verbs: ["update", "patch"]
   - apiGroups: ["agentic.prototype.x-k8s.io"]
-    resources: ["xbackends", "xaccesspolicies", "kanconfigs"]
+    resources: ["xbackends", "xaccesspolicies"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["agentic.prototype.x-k8s.io"]
-    resources:
-      ["xbackends/status", "xaccesspolicies/status", "kanconfigs/status"]
+    resources: ["kanconfigs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["agentic.prototype.x-k8s.io"]
+    resources: ["xbackends/status", "xaccesspolicies/status", "kanconfigs/status"]
     verbs: ["update", "patch"]
   # Permissions for managing resources for Envoy deployment
   - apiGroups: [""]
@@ -182,4 +184,3 @@ spec:
   proxyImage: envoyproxy/envoy:v1.36-latest
   workerCount: 6
   agenticIdentityTrustDomain: cluster.local
-  enableAgenticIdentitySigner: true

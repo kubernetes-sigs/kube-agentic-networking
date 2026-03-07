@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -210,12 +211,19 @@ func (c *Controller) isGatewayOwnedByController(gateway *gatewayv1.Gateway) bool
 // and writes back the observed status on the KANConfig resource.
 // It is safe to call on every reconcile — it is fully idempotent.
 func (c *Controller) applyKANConfig(cfg *v0alpha0.KANConfig, referencingGatewayClass string) {
+	// Atomically swap the config snapshot — safe against concurrent reads in syncHandler.
+	old := c.config.Load()
+	updatedControllerCfg := &controllerConfig{
+		envoyImage:                 old.envoyImage,
+		agenticIdentityTrustDomain: old.agenticIdentityTrustDomain,
+	}
 	if cfg.Spec.ProxyImage != "" {
-		c.envoyImage = cfg.Spec.ProxyImage
+		updatedControllerCfg.envoyImage = cfg.Spec.ProxyImage
 	}
 	if cfg.Spec.AgenticIdentityTrustDomain != "" {
-		c.agenticIdentityTrustDomain = cfg.Spec.AgenticIdentityTrustDomain
+		updatedControllerCfg.agenticIdentityTrustDomain = cfg.Spec.AgenticIdentityTrustDomain
 	}
+	c.config.Store(updatedControllerCfg)
 	if cfg.Spec.WorkerCount > 0 {
 		c.workerCount = cfg.Spec.WorkerCount
 	}
@@ -225,7 +233,22 @@ func (c *Controller) applyKANConfig(cfg *v0alpha0.KANConfig, referencingGatewayC
 	newCfg := cfg.DeepCopy()
 	newCfg.Status.ObservedGeneration = cfg.Generation
 	newCfg.Status.ActiveWorkerCount = c.workerCount
-	newCfg.Status.ReferencedBy = mergeStringSlice(cfg.Status.ReferencedBy, referencingGatewayClass)
+
+	// Recompute ReferencedBy by listing all GatewayClasses that currently point to
+	// this KANConfig. This removes stale entries when a GatewayClass is deleted or
+	// its parametersRef changes, and avoids mutating the cached cfg object.
+	allGwcs, _ := c.gateway.gatewayClassLister.List(labels.Everything())
+	var referencedBy []string
+	for _, gwc := range allGwcs {
+		if gwc.Spec.ParametersRef != nil &&
+			string(gwc.Spec.ParametersRef.Group) == "agentic.prototype.x-k8s.io" &&
+			string(gwc.Spec.ParametersRef.Kind) == "KANConfig" &&
+			string(gwc.Spec.ParametersRef.Name) == cfg.Name {
+			referencedBy = append(referencedBy, gwc.Name)
+		}
+	}
+	sort.Strings(referencedBy)
+	newCfg.Status.ReferencedBy = referencedBy
 	meta.SetStatusCondition(&newCfg.Status.Conditions, metav1.Condition{
 		Type:               "Accepted",
 		Status:             metav1.ConditionTrue,
@@ -257,45 +280,43 @@ func mergeStringSlice(slice []string, val string) []string {
 	return append(slice, val)
 }
 
-// setupKANConfigEventHandlers watches KANConfig resources and re-syncs all
+// setupKANConfigEventHandlers watches KANConfig resources and re-queues all
 // GatewayClasses whenever a KANConfig changes, so config reloads without
 // restarting the controller pod.
-func (c *Controller) setupKANConfigEventHandlers(
-    kanConfigInformer agenticinformers.KANConfigInformer,
-) error {
-    _, err := kanConfigInformer.Informer().AddEventHandler(
-        cache.ResourceEventHandlerFuncs{
-            AddFunc: func(obj interface{}) {
-                c.enqueueAllOwnedGatewayClasses()
-            },
-            UpdateFunc: func(oldObj, newObj interface{}) {
-                c.enqueueAllOwnedGatewayClasses()
-            },
-            DeleteFunc: func(obj interface{}) {
-                // KANConfig deleted — GatewayClasses will get InvalidParameters
-                // on next sync because the lister.Get will return NotFound
-                c.enqueueAllOwnedGatewayClasses()
-            },
-        },
-    )
-    return err
+func (c *Controller) setupKANConfigEventHandlers(kanConfigInformer agenticinformers.KANConfigInformer) error {
+	_, err := kanConfigInformer.Informer().AddEventHandler(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				c.enqueueAllOwnedGatewayClasses()
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				c.enqueueAllOwnedGatewayClasses()
+			},
+			DeleteFunc: func(obj interface{}) {
+				// KANConfig deleted — GatewayClasses will get InvalidParameters
+				// on next sync because the lister.Get will return NotFound.
+				c.enqueueAllOwnedGatewayClasses()
+			},
+		},
+	)
+	return err
 }
 
-// enqueueAllOwnedGatewayClasses re-queues every GatewayClass controlled by us.
-// Called when KANConfig changes so all GatewayClasses reload their config.
+// enqueueAllOwnedGatewayClasses enqueues every GatewayClass controlled by us.
+// Called from KANConfig event handlers so all GatewayClasses reload their config.
 func (c *Controller) enqueueAllOwnedGatewayClasses() {
-    gwClasses, err := c.gateway.gatewayClassLister.List(labels.Everything())
-    if err != nil {
-        klog.Errorf("failed to list GatewayClasses for KANConfig re-sync: %v", err)
-        return
-    }
-    for _, gwc := range gwClasses {
-        if gwc.Spec.ControllerName == constants.ControllerName {
-            key, err := cache.MetaNamespaceKeyFunc(gwc)
-            if err == nil {
-                klog.V(4).InfoS("Re-syncing GatewayClass due to KANConfig change", "gatewayclass", key)
-                c.syncGatewayClass(key)
-            }
-        }
-    }
+	gwClasses, err := c.gateway.gatewayClassLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("failed to list GatewayClasses for KANConfig re-sync: %v", err)
+		return
+	}
+	for _, gwc := range gwClasses {
+		if gwc.Spec.ControllerName == constants.ControllerName {
+			key, err := cache.MetaNamespaceKeyFunc(gwc)
+			if err == nil {
+				klog.V(4).InfoS("Enqueueing GatewayClass for KANConfig re-sync", "gatewayclass", key)
+				c.gatewayqueue.Add(key)
+			}
+		}
+	}
 }

@@ -36,6 +36,37 @@ import (
 // mergeStringSlice
 // --------------------------------------------------------------------------
 
+// makeControllerForKANConfigTest builds a minimal *Controller suitable for
+// testing applyKANConfig. It pre-populates the GatewayClass lister so that
+// ReferencedBy computation works; gwcNames should list every GatewayClass that
+// references kanConfigName via parametersRef.
+func makeControllerForKANConfigTest(fakeClient *agenticfake.Clientset, kanConfigName string, gwcNames ...string) *Controller {
+	gwcIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	for _, name := range gwcNames {
+		_ = gwcIndexer.Add(&gatewayv1.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: gatewayv1.GatewayClassSpec{
+				ParametersRef: &gatewayv1.ParametersReference{
+					Group: "agentic.prototype.x-k8s.io",
+					Kind:  "KANConfig",
+					Name:  kanConfigName,
+				},
+			},
+		})
+	}
+	c := &Controller{
+		workerCount: 2,
+		gateway: gatewayResources{
+			gatewayClassLister: gatewaylisters.NewGatewayClassLister(gwcIndexer),
+		},
+		agentic: agenticNetResources{
+			client: fakeClient,
+		},
+	}
+	c.config.Store(&controllerConfig{})
+	return c
+}
+
 func TestMergeStringSlice(t *testing.T) {
 	t.Run("empty slice gets value appended", func(t *testing.T) {
 		result := mergeStringSlice(nil, "a")
@@ -67,27 +98,23 @@ func TestApplyKANConfig_ControllerFields(t *testing.T) {
 	cfg := &agenticv0alpha0.KANConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-config", Generation: 3},
 		Spec: agenticv0alpha0.KANConfigSpec{
-			ProxyImage:                  "envoyproxy/envoy:v1.36-latest",
-			WorkerCount:                 8,
+			ProxyImage:                 "envoyproxy/envoy:v1.36-latest",
+			WorkerCount:                8,
 			AgenticIdentityTrustDomain: "example.com",
 		},
 	}
 
 	fakeClient := agenticfake.NewSimpleClientset(cfg)
-	c := &Controller{
-		workerCount: 2, // default
-		agentic: agenticNetResources{
-			client: fakeClient,
-		},
-	}
+	c := makeControllerForKANConfigTest(fakeClient, "my-config", "my-gatewayclass")
 
 	c.applyKANConfig(cfg, "my-gatewayclass")
 
-	if c.envoyImage != "envoyproxy/envoy:v1.36-latest" {
-		t.Errorf("envoyImage not applied, got %q", c.envoyImage)
+	loaded := c.config.Load()
+	if loaded.envoyImage != "envoyproxy/envoy:v1.36-latest" {
+		t.Errorf("envoyImage not applied, got %q", loaded.envoyImage)
 	}
-	if c.agenticIdentityTrustDomain != "example.com" {
-		t.Errorf("agenticIdentityTrustDomain not applied, got %q", c.agenticIdentityTrustDomain)
+	if loaded.agenticIdentityTrustDomain != "example.com" {
+		t.Errorf("agenticIdentityTrustDomain not applied, got %q", loaded.agenticIdentityTrustDomain)
 	}
 	if c.workerCount != 8 {
 		t.Errorf("workerCount not applied, got %d", c.workerCount)
@@ -104,12 +131,7 @@ func TestApplyKANConfig_ZeroWorkerCountKeepsDefault(t *testing.T) {
 	}
 
 	fakeClient := agenticfake.NewSimpleClientset(cfg)
-	c := &Controller{
-		workerCount: 2, // default
-		agentic: agenticNetResources{
-			client: fakeClient,
-		},
-	}
+	c := makeControllerForKANConfigTest(fakeClient, "my-config", "my-gatewayclass")
 
 	c.applyKANConfig(cfg, "my-gatewayclass")
 
@@ -132,12 +154,7 @@ func TestApplyKANConfig_StatusWriteback(t *testing.T) {
 	}
 
 	fakeClient := agenticfake.NewSimpleClientset(cfg)
-	c := &Controller{
-		workerCount: 2,
-		agentic: agenticNetResources{
-			client: fakeClient,
-		},
-	}
+	c := makeControllerForKANConfigTest(fakeClient, "my-config", "gw-class-1")
 
 	c.applyKANConfig(cfg, "gw-class-1")
 
@@ -191,20 +208,15 @@ func TestApplyKANConfig_ReferencedByIsIdempotent(t *testing.T) {
 	cfg := &agenticv0alpha0.KANConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-config"},
 		Spec:       agenticv0alpha0.KANConfigSpec{ProxyImage: "envoyproxy/envoy:v1.36-latest"},
-		Status: agenticv0alpha0.KANConfigStatus{
-			ReferencedBy: []string{"gw-class-1"}, // already present
-		},
 	}
 
 	fakeClient := agenticfake.NewSimpleClientset(cfg)
-	c := &Controller{
-		workerCount: 2,
-		agentic: agenticNetResources{
-			client: fakeClient,
-		},
-	}
+	// One GatewayClass references "my-config" — calling applyKANConfig twice must
+	// still produce ReferencedBy of length 1 (computed fresh from lister each call).
+	c := makeControllerForKANConfigTest(fakeClient, "my-config", "gw-class-1")
 
-	c.applyKANConfig(cfg, "gw-class-1") // applying same key again
+	c.applyKANConfig(cfg, "gw-class-1")
+	c.applyKANConfig(cfg, "gw-class-1") // second call — must not duplicate
 
 	actions := fakeClient.Actions()
 	var updatedCfg *agenticv0alpha0.KANConfig
@@ -222,7 +234,7 @@ func TestApplyKANConfig_ReferencedByIsIdempotent(t *testing.T) {
 		t.Fatal("no action recorded")
 	}
 	if len(updatedCfg.Status.ReferencedBy) != 1 {
-		t.Errorf("expected ReferencedBy to remain length 1, got %v", updatedCfg.Status.ReferencedBy)
+		t.Errorf("expected ReferencedBy length 1 (idempotent), got %v", updatedCfg.Status.ReferencedBy)
 	}
 }
 
@@ -295,18 +307,13 @@ func TestApplyKANConfig_EmptyProxyImageIgnored(t *testing.T) {
 	}
 
 	fakeClient := agenticfake.NewSimpleClientset(cfg)
-	c := &Controller{
-		envoyImage:  "previous/image:latest",
-		workerCount: 2,
-		agentic: agenticNetResources{
-			client: fakeClient,
-		},
-	}
+	c := makeControllerForKANConfigTest(fakeClient, "my-config", "gw-class-1")
+	c.config.Store(&controllerConfig{envoyImage: "previous/image:latest"})
 
 	c.applyKANConfig(cfg, "gw-class-1")
 
-	if c.envoyImage != "previous/image:latest" {
-		t.Errorf("expected envoyImage to be unchanged, got %q", c.envoyImage)
+	if c.config.Load().envoyImage != "previous/image:latest" {
+		t.Errorf("expected envoyImage to be unchanged, got %q", c.config.Load().envoyImage)
 	}
 }
 
