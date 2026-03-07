@@ -41,10 +41,10 @@ import (
 // It now correctly handles RequestHeaderModifier filters.
 func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 	httpRoute *gatewayv1.HTTPRoute,
-) ([]*routev3.Route, []*agenticv0alpha0.XBackend, metav1.Condition) {
+) ([]*routev3.Route, []*routeBackend, metav1.Condition) {
 
 	var envoyRoutes []*routev3.Route
-	var allValidBackends []*agenticv0alpha0.XBackend
+	var allValidBackends []*routeBackend
 	overallCondition := createSuccessCondition(httpRoute.Generation)
 
 	for ruleIndex, rule := range httpRoute.Spec.Rules {
@@ -257,19 +257,19 @@ func processRequestHeaderModifierFilter(f *gatewayv1.HTTPHeaderFilter) ([]*corev
 	return headersToAdd, headersToRemove
 }
 
-// buildHTTPRouteAction returns an action, a list of *valid* BackendRefs, and a structured error.
+// buildHTTPRouteAction returns an action, a list of *valid* route backends (XBackend or Service), and a structured error.
 func (t *Translator) buildHTTPRouteAction(namespace string,
-	backendRefs []gatewayv1.HTTPBackendRef) (*routev3.RouteAction, []*agenticv0alpha0.XBackend, error) {
+	backendRefs []gatewayv1.HTTPBackendRef) (*routev3.RouteAction, []*routeBackend, error) {
 
 	weightedClusters := &routev3.WeightedCluster{}
-	var validBackends []*agenticv0alpha0.XBackend
+	var validBackends []*routeBackend
 
 	for _, httpBackendRef := range backendRefs {
-		backend, err := t.fetchBackend(namespace, httpBackendRef.BackendRef)
+		rb, err := t.fetchBackend(namespace, httpBackendRef.BackendRef)
 		if err != nil {
 			return nil, nil, err
 		}
-		validBackends = append(validBackends, backend)
+		validBackends = append(validBackends, rb)
 		weight := int32(1)
 		if httpBackendRef.Weight != nil {
 			weight = *httpBackendRef.Weight
@@ -279,23 +279,21 @@ func (t *Translator) buildHTTPRouteAction(namespace string,
 		}
 
 		clusterWeight := &routev3.WeightedCluster_ClusterWeight{
-			Name:   fmt.Sprintf(constants.ClusterNameFormat, backend.Namespace, backend.Name),
+			Name:   rb.ClusterName(),
 			Weight: &wrapperspb.UInt32Value{Value: uint32(weight)},
 		}
 
-		// The HostRewriteLiteral is set on the individual clusterWeight within the WeightedCluster.
-		// This ensures that for external backends with a specified hostname, Envoy rewrites
-		// the Host header to the correct external hostname before forwarding the request.
-		if backend.Spec.MCP.Hostname != nil {
+		if host := rb.Hostname(); host != "" {
 			clusterWeight.HostRewriteSpecifier = &routev3.WeightedCluster_ClusterWeight_HostRewriteLiteral{
-				HostRewriteLiteral: *backend.Spec.MCP.Hostname,
+				HostRewriteLiteral: host,
 			}
 		}
 
-		clusterWeight.TypedPerFilterConfig, err = t.buildPerClusterRBACFilterConfig(t.accessPolicyLister, backend)
-		if err != nil {
-			klog.Errorf("Failed to build per-cluster RBAC config for backend %s/%s: %v", backend.Namespace, backend.Name, err)
-			// Continue without RBAC config for this cluster if it fails to build.
+		if rb.XBackend() != nil {
+			clusterWeight.TypedPerFilterConfig, err = t.buildPerClusterRBACFilterConfig(t.accessPolicyLister, rb.XBackend())
+			if err != nil {
+				klog.Errorf("Failed to build per-cluster RBAC config for backend %s: %v", rb.ClusterName(), err)
+			}
 		}
 		// TODO(guicassolato): Add per-route ext_authz config - to populate context_metadata with info about which AccessPolicy rule matched
 		weightedClusters.Clusters = append(weightedClusters.Clusters, clusterWeight)
