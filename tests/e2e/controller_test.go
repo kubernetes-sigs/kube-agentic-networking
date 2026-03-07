@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -33,6 +34,27 @@ const (
 	agentKeyPath  = "/run/agent-identity-mtls/credential-bundle.pem"
 	agentCAPath   = "/run/agent-identity-mtls/cluster.local.trust-bundle.pem"
 )
+
+type mcpResponse struct {
+	StatusCode int      `json:"status"`
+	Body       respBody `json:"body"`
+}
+
+type respBody struct {
+	JSONRPC string     `json:"jsonrpc"`
+	ID      int        `json:"id"`
+	Result  *mcpResult `json:"result,omitempty"`
+}
+
+type mcpResult struct {
+	IsError bool         `json:"isError"`
+	Content []mcpContent `json:"content"`
+}
+
+type mcpContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
 
 func TestControllerE2E(t *testing.T) {
 	// 1. Initial Setup
@@ -126,10 +148,45 @@ func TestControllerE2E(t *testing.T) {
 	// 5. Test Phase 1: get-sum allowed, echo denied
 	t.Log("Verifying initial policy (get-sum: OK, echo: DENY)...")
 
-	// get-sum should be 200
-	assertToolCall(t, mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`, 200)
-	// echo should be 403
-	assertToolCall(t, mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`, 403)
+	// get-sum should be successful.
+	assertToolCall(t, "1", mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				ID:      1,
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "The sum of 2 and 3 is 5.",
+						},
+					},
+				},
+			},
+		},
+	)
+
+	// echo should be unsuccessful.
+	assertToolCall(t, "2", mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				ID:      2,
+				Result: &mcpResult{
+					IsError: true,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Access to this tool is forbidden (403).",
+						},
+					},
+				},
+			},
+		},
+	)
 
 	// 6. Update Policy
 	t.Log("Updating XAccessPolicy (swap permissions)...")
@@ -142,10 +199,45 @@ func TestControllerE2E(t *testing.T) {
 	// 7. Test Phase 2: get-sum denied, echo allowed
 	t.Log("Verifying updated policy (get-sum: DENY, echo: OK)...")
 
-	// get-sum should now be 403
-	assertToolCall(t, mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`, 403)
-	// echo should now be 200
-	assertToolCall(t, mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`, 200)
+	// get-sum should now be unsuccessful.
+	assertToolCall(t, "3", mcpSessionID, gatewayIP, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				ID:      3,
+				Result: &mcpResult{
+					IsError: true,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Access to this tool is forbidden (403).",
+						},
+					},
+				},
+			},
+		},
+	)
+
+	// echo should now be successful.
+	assertToolCall(t, "4", mcpSessionID, gatewayIP, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				ID:      4,
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Echo: hello",
+						},
+					},
+				},
+			},
+		},
+	)
 
 	t.Log("E2E Test Passed!")
 }
@@ -183,12 +275,11 @@ func retry(attempts int, sleep time.Duration, f func() error) error {
 	}
 	return fmt.Errorf("after %d attempts", attempts)
 }
-
-func assertToolCall(t *testing.T, sessionID, gatewayAddr, toolName, toolArgs string, expectedStatus int) {
-	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, toolName, toolArgs)
+func assertToolCall(t *testing.T, requestID, sessionID, gatewayAddr, toolName, toolArgs string, expected mcpResponse) {
+	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, requestID, toolName, toolArgs)
 
 	out := runKubectlOutput(t, "exec", "e2e-tester", "-n", "e2e-test-ns", "--",
-		"curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}",
+		"curl", "-ks", "-w", "\n%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
 		"--cacert", agentCAPath,
@@ -199,14 +290,57 @@ func assertToolCall(t *testing.T, sessionID, gatewayAddr, toolName, toolArgs str
 		"--data-raw", data,
 		fmt.Sprintf("https://%s:10001/mcp", gatewayAddr))
 
-	gotStatus, err := strconv.Atoi(strings.TrimSpace(out))
-	if err != nil {
-		t.Fatalf("Failed to parse HTTP status code from curl output %q: %v", out, err)
+	out = strings.TrimSpace(out)
+	lines := strings.Split(out, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("empty response from gateway")
 	}
 
-	if gotStatus != expectedStatus {
-		t.Errorf("Tool call %s: expected status %d, got %d", toolName, expectedStatus, gotStatus)
-	} else {
-		t.Logf("Tool call %s: got expected status %d", toolName, gotStatus)
+	// Check HTTP status code
+	codeStr := strings.TrimSpace(lines[len(lines)-1])
+	code, err := strconv.Atoi(codeStr)
+	if err != nil {
+		t.Fatalf("failed to parse HTTP status code from response: %q", codeStr)
+	}
+	if expected.StatusCode != 0 && code != expected.StatusCode {
+		t.Fatalf("unexpected HTTP status code: got %d, want %d\n", code, expected.StatusCode)
+	}
+	// An example mcp response body: {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"Access to this tool is forbidden (403).","type":"text"}],"isError":true}}
+	// Check HTTP body
+	body := strings.TrimSpace(strings.Join(lines[:len(lines)-1], "\n"))
+	var resp respBody
+	idx := strings.Index(body, "{")
+	if idx == -1 {
+		t.Fatalf("failed to find JSON payload in response\nbody: %s", body)
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body[idx:])), &resp); err != nil {
+		t.Fatalf("failed to parse JSON response: %v\nbody: %s", err, body)
+	}
+
+	if expected.Body.JSONRPC != "" && resp.JSONRPC != expected.Body.JSONRPC {
+		t.Fatalf("jsonrpc mismatch: got %q, want %q\nJSON payload: %s", resp.JSONRPC, expected.Body.JSONRPC, body)
+	}
+
+	if requestID != "" && strconv.Itoa(resp.ID) != requestID {
+		t.Fatalf("id mismatch: got %q, want %q\nbody: %s", strconv.Itoa(resp.ID), requestID, body)
+	}
+
+	if resp.Result == nil || len(resp.Result.Content) == 0 {
+		t.Fatalf("response contains no result\nbody: %s", body)
+	}
+	isError := resp.Result.IsError
+	message := resp.Result.Content[0].Text
+	tp := resp.Result.Content[0].Type
+	expectedIsError := expected.Body.Result.IsError
+	expectedMessage := expected.Body.Result.Content[0].Text
+	expectedType := expected.Body.Result.Content[0].Type
+	if expectedIsError != isError {
+		t.Fatalf("isError mismatch: got %v, want %v\nbody: %s", isError, expectedIsError, body)
+	}
+	if expectedMessage != "" && message != expectedMessage {
+		t.Fatalf("message mismatch: expected %q to be in %q\nbody: %s", expectedMessage, message, body)
+	}
+	if expectedType != "" && tp != expectedType {
+		t.Fatalf("type mismatch: got %q, want %q\nbody: %s", tp, expectedType, body)
 	}
 }

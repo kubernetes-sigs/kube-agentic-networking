@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
@@ -37,6 +38,7 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -190,6 +192,58 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 	return filterChain, nil
 }
 
+// buildLocalReplyConfig constructs the local reply configuration for 403 responses
+func buildLocalReplyConfig() *hcm.LocalReplyConfig {
+	return &hcm.LocalReplyConfig{
+		Mappers: []*hcm.ResponseMapper{
+			{
+				Filter: &accesslogv3.AccessLogFilter{
+					FilterSpecifier: &accesslogv3.AccessLogFilter_StatusCodeFilter{
+						StatusCodeFilter: &accesslogv3.StatusCodeFilter{
+							Comparison: &accesslogv3.ComparisonFilter{
+								Op: accesslogv3.ComparisonFilter_EQ,
+								Value: &corev3.RuntimeUInt32{
+									DefaultValue: 403,
+									RuntimeKey:   "custom_403",
+								},
+							},
+						},
+					},
+				},
+				// Change the status code to 200 so the MCP client processes the JSON-RPC error natively.
+				StatusCode: wrapperspb.UInt32(200),
+				// Override the body format to JSON-RPC 2.0.
+				BodyFormatOverride: &corev3.SubstitutionFormatString{
+					Format: &corev3.SubstitutionFormatString_JsonFormat{
+						JsonFormat: &structpb.Struct{
+							Fields: map[string]*structpb.Value{
+								"jsonrpc": structpb.NewStringValue("2.0"),
+								"id":      structpb.NewStringValue("%DYNAMIC_METADATA(mcp_proxy:id)%"),
+								"result": structpb.NewStructValue(&structpb.Struct{
+									Fields: map[string]*structpb.Value{
+										"isError": structpb.NewBoolValue(true),
+										"content": structpb.NewListValue(&structpb.ListValue{
+											Values: []*structpb.Value{
+												structpb.NewStructValue(&structpb.Struct{
+													Fields: map[string]*structpb.Value{
+														"type": structpb.NewStringValue("text"),
+														"text": structpb.NewStringValue("Access to this tool is forbidden (403)."),
+													},
+												}),
+											},
+										}),
+									},
+								}),
+							},
+						},
+					},
+					ContentType: "application/json",
+				},
+			},
+		},
+	}
+}
+
 func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, accessPolicyLister agenticlisters.XAccessPolicyLister) (*listener.FilterChain, error) {
 	httpFilters, err := buildHTTPFilters(accessPolicyLister)
 	if err != nil {
@@ -197,7 +251,8 @@ func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, accessPolicy
 	}
 
 	hcmConfig := &hcm.HttpConnectionManager{
-		StatPrefix: string(lis.Name),
+		StatPrefix:       string(lis.Name),
+		LocalReplyConfig: buildLocalReplyConfig(),
 		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
 			Rds: &hcm.Rds{
 				ConfigSource: &corev3.ConfigSource{
