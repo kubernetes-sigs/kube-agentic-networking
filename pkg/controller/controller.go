@@ -87,6 +87,9 @@ type agenticNetResources struct {
 
 	accessPolicyLister agenticlisters.XAccessPolicyLister
 	accessPolicySynced cache.InformerSynced
+
+	kanConfigLister agenticlisters.KANConfigLister
+	kanConfigSynced cache.InformerSynced
 }
 
 // Controller is the controller implementation for Gateway resources
@@ -97,6 +100,7 @@ type Controller struct {
 
 	agenticIdentityTrustDomain string
 	envoyImage                 string
+	workerCount                int
 
 	gatewayqueue            workqueue.TypedRateLimitingInterface[string]
 	backendFinalizerQueue   workqueue.TypedRateLimitingInterface[string]
@@ -107,8 +111,6 @@ type Controller struct {
 // New returns a new *Controller with the event handlers setup for types we are interested in.
 func New(
 	ctx context.Context,
-	agenticIdentityTrustDomain string,
-	envoyImage string,
 	kubeClientSet kubernetes.Interface,
 	gwClientSet gatewayclient.Interface,
 	agenticClientSet agenticclient.Interface,
@@ -121,6 +123,7 @@ func New(
 	referenceGrantInformer gatewayinformersv1beta1.ReferenceGrantInformer,
 	backendInformer         agenticinformers.XBackendInformer,
 	accessPolicyInformer agenticinformers.XAccessPolicyInformer,
+	kanConfigInformer agenticinformers.KANConfigInformer,
 ) (*Controller, error) {
 	c := &Controller{
 		core: coreResources{
@@ -149,9 +152,12 @@ func New(
 			backendSynced:      backendInformer.Informer().HasSynced,
 			accessPolicyLister: accessPolicyInformer.Lister(),
 			accessPolicySynced: accessPolicyInformer.Informer().HasSynced,
+			kanConfigLister:    kanConfigInformer.Lister(),
+			kanConfigSynced:    kanConfigInformer.Informer().HasSynced,
 		},
-		agenticIdentityTrustDomain: agenticIdentityTrustDomain,
-		envoyImage:                 envoyImage,
+		agenticIdentityTrustDomain: "",  // populated by applyKANConfig
+		envoyImage:                 "",  // populated by applyKANConfig
+		workerCount:                2,   // default; overridden by KANConfig.spec.workerCount
 		gatewayqueue: workqueue.NewTypedRateLimitingQueueWithConfig(
 			workqueue.DefaultTypedControllerRateLimiter[string](),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "gateway"},
@@ -164,7 +170,7 @@ func New(
 	}
 
 	c.translator = translator.New(
-		agenticIdentityTrustDomain,
+		"",
 		kubeClientSet,
 		gwClientSet,
 		namespaceInformer.Lister(),
@@ -195,6 +201,9 @@ func New(
 	if err := c.setupServiceEventHandlers(serviceInformer); err != nil {
 		return nil, err
 	}
+	if err := c.setupKANConfigEventHandlers(kanConfigInformer); err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -202,7 +211,7 @@ func New(
 // Run will
 // - sync informer caches and start workers.
 // - start the xDS server
-func (c *Controller) Run(ctx context.Context, workers int) error {
+func (c *Controller) Run(ctx context.Context) error {
 	defer runtime.HandleCrashWithContext(ctx)
 	defer c.gatewayqueue.ShutDown()
 	defer c.backendFinalizerQueue.ShutDown()
@@ -223,16 +232,17 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		c.gateway.httprouteSynced,
 		c.gateway.referenceGrantSynced,
 		c.agentic.backendSynced,
-		c.agentic.accessPolicySynced); !ok {
+		c.agentic.accessPolicySynced,
+		c.agentic.kanConfigSynced); !ok {
 		return errors.New("failed to wait for caches to sync")
 	}
 
-	klog.InfoS("Starting gateway workers", "count", workers)
-	for i := 0; i < workers; i++ {
+	klog.InfoS("Starting gateway workers", "count", c.workerCount)
+	for i := 0; i < c.workerCount; i++ {
 		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
 	}
-	klog.InfoS("Starting backend finalizer workers", "count", workers)
-	for i := 0; i < workers; i++ {
+	klog.InfoS("Starting backend finalizer workers", "count", c.workerCount)
+	for i := 0; i < c.workerCount; i++ {
 		go wait.UntilWithContext(ctx, c.runBackendFinalizerWorker, time.Second)
 	}
 

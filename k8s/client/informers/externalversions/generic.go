@@ -53,6 +53,8 @@ func (f *genericInformer) Lister() cache.GenericLister {
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
 	// Group=agentic.prototype.x-k8s.io, Version=v0alpha0
+	case v0alpha0.SchemeGroupVersion.WithResource("kanconfigs"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Agentic().V0alpha0().KANConfigs().Informer()}, nil
 	case v0alpha0.SchemeGroupVersion.WithResource("xaccesspolicies"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Agentic().V0alpha0().XAccessPolicies().Informer()}, nil
 	case v0alpha0.SchemeGroupVersion.WithResource("xbackends"):

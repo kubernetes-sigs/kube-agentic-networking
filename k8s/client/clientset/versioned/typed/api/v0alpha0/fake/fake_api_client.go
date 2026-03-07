@@ -28,6 +28,10 @@ type FakeAgenticV0alpha0 struct {
 	*testing.Fake
 }
 
+func (c *FakeAgenticV0alpha0) KANConfigs(namespace string) v0alpha0.KANConfigInterface {
+	return newFakeKANConfigs(c, namespace)
+}
+
 func (c *FakeAgenticV0alpha0) XAccessPolicies(namespace string) v0alpha0.XAccessPolicyInterface {
 	return newFakeXAccessPolicies(c, namespace)
 }

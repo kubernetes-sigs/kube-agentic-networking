@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -37,27 +36,19 @@ import (
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
 	"sigs.k8s.io/kube-agentic-networking/pkg/controller"
-	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/agenticidentitysigner"
-	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/localca"
-	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/signercontroller"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/rendezvous"
 )
 
 var (
 	kubeconfig   = flag.String("kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster. Leaving empty assumes in-cluster configuration.")
 	apiServerURL = flag.String("apiserver-url", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster. Leaving empty assumes in-cluster configuration.")
-	proxyImage   = flag.String("proxy-image", "", "The image of the envoy proxy.")
-	workerCount  = flag.Int("worker-count", 2, "Number of workers for the controller")
-	resyncPeriod = flag.Duration("resync-period", 10*time.Minute, "Informer resync period")
 
 	shardingNamespace       = flag.String("sharding-pod-namespace", "", "(Work Sharding) The namespace the controller is running in")
 	shardingPodName         = flag.String("sharding-pod-name", "", "(Work Sharding) The pod name of the controller")
 	shardingPodUID          = flag.String("sharding-pod-uid", "", "(Work Sharding) The pod UID of the controller")
 	shardingApplicationName = flag.String("sharding-application-name", "", "(Work Sharding) The application name to disambiguate Leases")
 
-	enableAgenticIdentitySigner = flag.Bool("enable-agentic-identity-signer", false, fmt.Sprintf("Run controller for %s", agenticidentitysigner.Name))
-	agenticIdentityTrustDomain  = flag.String("agentic-identity-trust-domain", "", "The SPIFFE trust domain for issued certificates")
-	agenticIdentityCAPoolFile   = flag.String("agentic-identity-ca-pool", "", fmt.Sprintf("File that contains the CA pool state for %s", agenticidentitysigner.Name))
+	resyncPeriod = flag.Duration("resync-period", 10*time.Second, "The resync period for all informers. Setting this to 0 will disable resyncing.")
 )
 
 func main() {
@@ -69,11 +60,6 @@ func main() {
 	defer cancel()
 
 	finishGroup := sync.WaitGroup{}
-
-	if *proxyImage == "" {
-		klog.ErrorS(fmt.Errorf("--proxy-image cannot be empty"), "Startup error")
-		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
-	}
 
 	cfg, err := clientcmd.BuildConfigFromFlags(*apiServerURL, *kubeconfig)
 	if err != nil {
@@ -104,8 +90,6 @@ func main() {
 
 	c, err := controller.New(
 		ctx,
-		*agenticIdentityTrustDomain,
-		*proxyImage,
 		kubeClient,
 		gatewayClientset,
 		agenticClientset,
@@ -117,14 +101,16 @@ func main() {
 		sharedGwInformers.Gateway().V1().HTTPRoutes(),
 		sharedGwInformers.Gateway().V1beta1().ReferenceGrants(),
 		sharedAgenticInformers.Agentic().V0alpha0().XBackends(),
-		sharedAgenticInformers.Agentic().V0alpha0().XAccessPolicies())
+		sharedAgenticInformers.Agentic().V0alpha0().XAccessPolicies(),
+		sharedAgenticInformers.Agentic().V0alpha0().KANConfigs(),
+	)
 	if err != nil {
 		klog.ErrorS(err, "Error while creating agentic networking controller")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
 	finishGroup.Go(func() {
-		if err := c.Run(ctx, *workerCount); err != nil {
+		if err := c.Run(ctx); err != nil {
 			klog.ErrorS(err, "Error running the agentic networking controller")
 		}
 	})
@@ -142,32 +128,6 @@ func main() {
 			klog.ErrorS(err, "Error running the rendezvous hasher")
 		}
 	})
-
-	if *enableAgenticIdentitySigner {
-		if *agenticIdentityTrustDomain == "" {
-			klog.ErrorS(nil, "--agentic-identity-trust-domain must be set")
-			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
-		}
-
-		poolWatcher, err := localca.NewPoolWatcher(*agenticIdentityCAPoolFile)
-		if err != nil {
-			klog.ErrorS(err, "Error while creating CA pool watcher")
-			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
-		}
-		finishGroup.Go(func() { poolWatcher.Run(ctx) })
-
-		impl := agenticidentitysigner.NewImpl(*agenticIdentityTrustDomain, poolWatcher, clock.RealClock{})
-		controller, err := signercontroller.New(clock.RealClock{}, impl, kubeClient, hasher)
-		if err != nil {
-			klog.ErrorS(err, "Error creating agentic identity signer controller")
-			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
-		}
-		finishGroup.Go(func() {
-			if err := controller.Run(ctx); err != nil {
-				klog.ErrorS(err, "Error running the agentic identity signer")
-			}
-		})
-	}
 
 	// notice that there is no need to run Start methods in a separate goroutine. (i.e. go kubeInformerFactory.Start(ctx.done())
 	// Start method is non-blocking and runs all registered informers in a dedicated goroutine.

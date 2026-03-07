@@ -28,6 +28,7 @@ import (
 
 type AgenticV0alpha0Interface interface {
 	RESTClient() rest.Interface
+	KANConfigsGetter
 	XAccessPoliciesGetter
 	XBackendsGetter
 }
@@ -35,6 +36,10 @@ type AgenticV0alpha0Interface interface {
 // AgenticV0alpha0Client is used to interact with features provided by the agentic.prototype.x-k8s.io group.
 type AgenticV0alpha0Client struct {
 	restClient rest.Interface
+}
+
+func (c *AgenticV0alpha0Client) KANConfigs(namespace string) KANConfigInterface {
+	return newKANConfigs(c, namespace)
 }
 
 func (c *AgenticV0alpha0Client) XAccessPolicies(namespace string) XAccessPolicyInterface {
