@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2024 The Kubernetes Authors.
+# Copyright 2026 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ This allows proposals to be managed in docs/proposals while being served
 as part of the documentation.
 """
 
-import shutil
 import logging
 from mkdocs import plugins
 from mkdocs.structure.files import File
@@ -41,22 +40,33 @@ def on_files(files, config, **kwargs):
 
     # Check if site-src/proposals exists (files copied out-of-band from MkDocs)
     site_src_proposals = Path('site-src/proposals')
-    if site_src_proposals.exists() and site_src_proposals.is_dir():
-        log.info("Found site-src/proposals/ directory. Cleaning up...")
 
-        # Iterate over the list of files in this directory and remove them from MkDocs
+    # Files to preserve in site-src/proposals (should not be deleted)
+    preserve_files = {'overview.md', '.pages', 'README.md'}
+
+    if site_src_proposals.exists() and site_src_proposals.is_dir():
+        log.info("Found site-src/proposals/ directory. Cleaning up auto-copied files...")
+
+        # Iterate over the list of files in this directory and remove auto-copied files from MkDocs
         for root_dir, _, proposal_files in site_src_proposals.walk():
             for filename in proposal_files:
-                # Exclude the leading 'site-src/' to get the relative path as it
-                # exists on the site (i.e., proposals/overview.md)
-                path = '/'.join(root_dir.parts[1:])
+                # Skip files that should be preserved
+                if filename not in preserve_files:
+                    # Exclude the leading 'site-src/' to get the relative path as it
+                    # exists on the site (i.e., proposals/0008-ToolAuthAPI.md)
+                    path = '/'.join(root_dir.parts[1:])
 
-                existing_file = files.get_file_from_path(f'{path}/{filename}')
-                if existing_file:
-                    files.remove(existing_file)
+                    existing_file = files.get_file_from_path(f'{path}/{filename}')
+                    if existing_file:
+                        files.remove(existing_file)
 
-        # Delete the 'site-src/proposals' directory
-        shutil.rmtree(site_src_proposals)
+                    # Delete the auto-copied file from filesystem
+                    file_to_delete = root_dir / filename
+                    if file_to_delete.exists():
+                        file_to_delete.unlink()
+                        log.debug(f"Deleted auto-copied file: {file_to_delete}")
+                else:
+                    log.debug(f"Preserving {filename}")
 
     # Path to source proposals
     proposals_src = Path('docs/proposals')
@@ -69,23 +79,21 @@ def on_files(files, config, **kwargs):
     for root_dir, _, proposal_files in proposals_src.walk():
         for filename in proposal_files:
             # Skip README.md in the root proposals directory
-            if filename == 'README.md' and root_dir == proposals_src:
-                continue
+            if not (filename == 'README.md' and root_dir == proposals_src):
+                # Calculate relative path from docs/proposals
+                relative_path = root_dir.relative_to('docs')
+                file_path = str(relative_path / filename)
 
-            # Calculate relative path from docs/proposals
-            relative_path = root_dir.relative_to('docs')
-            file_path = str(relative_path / filename)
+                if files.get_file_from_path(file_path) is None:
+                    new_file = File(
+                        path=file_path,
+                        src_dir='docs/',
+                        dest_dir=config['site_dir'],
+                        use_directory_urls=config['use_directory_urls']
+                    )
 
-            if files.get_file_from_path(file_path) is None:
-                new_file = File(
-                    path=file_path,
-                    src_dir='docs/',
-                    dest_dir=config['site_dir'],
-                    use_directory_urls=config['use_directory_urls']
-                )
-
-                files.append(new_file)
-                log.debug(f"Added proposal file: {file_path}")
+                    files.append(new_file)
+                    log.debug(f"Added proposal file: {file_path}")
 
     log.info(f"Finished adding proposals to site")
     return files
