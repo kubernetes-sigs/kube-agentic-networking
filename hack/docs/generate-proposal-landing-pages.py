@@ -18,7 +18,7 @@
 Generate landing pages for proposals organized by status.
 
 Parses proposal markdown files from docs/proposals/, extracts metadata
-(status, authors, title), and generates status-specific landing pages
+(status, title), and generates status-specific landing pages
 in site-src/proposals/landing/.
 
 Can be used as an MkDocs hook or run standalone.
@@ -49,10 +49,7 @@ def parse_proposal_metadata(file_path):
     Extract metadata from proposal markdown file.
 
     Expected format at top of file:
-    Date: <date>
-    Authors: author1, author2
     Status: <status>
-
     # Title
     """
     with open(file_path, 'r', encoding='utf-8') as f:

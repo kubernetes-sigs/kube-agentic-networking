@@ -6,8 +6,8 @@ docs_dir: site-src
 extra_css:
   - stylesheets/extra.css
 hooks:
-  - hack/generate-proposal-landing-pages.py
-  - hack/mkdocs-copy-proposals.py
+  - hack/docs/generate-proposal-landing-pages.py
+  - hack/docs/mkdocs-copy-proposals.py
 watch:
   - docs/proposals
 theme:
