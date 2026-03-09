@@ -35,7 +35,3 @@ go.work.sum
 
 # generated docs
 site
-# Auto-generated proposal files (originals in docs/proposals/)
-site-src/proposals/*.md
-!site-src/proposals/overview.md
-!site-src/proposals/README.md
