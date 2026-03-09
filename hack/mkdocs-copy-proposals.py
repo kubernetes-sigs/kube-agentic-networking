@@ -47,26 +47,23 @@ def on_files(files, config, **kwargs):
     if site_src_proposals.exists() and site_src_proposals.is_dir():
         log.info("Found site-src/proposals/ directory. Cleaning up auto-copied files...")
 
-        # Iterate over the list of files in this directory and remove auto-copied files from MkDocs
-        for root_dir, _, proposal_files in site_src_proposals.walk():
-            for filename in proposal_files:
-                # Skip files that should be preserved
-                if filename not in preserve_files:
-                    # Exclude the leading 'site-src/' to get the relative path as it
-                    # exists on the site (i.e., proposals/0008-ToolAuthAPI.md)
-                    path = '/'.join(root_dir.parts[1:])
+        # Only clean up files in the root of site-src/proposals/
+        # Don't recurse into subdirectories like landing/
+        for item in site_src_proposals.iterdir():
+            if item.is_file() and item.name not in preserve_files:
+                # This is an auto-copied proposal file, remove it
+                path = '/'.join(item.parts[1:])  # e.g., proposals/0008-ToolAuthAPI.md
 
-                    existing_file = files.get_file_from_path(f'{path}/{filename}')
-                    if existing_file:
-                        files.remove(existing_file)
+                existing_file = files.get_file_from_path(path)
+                if existing_file:
+                    files.remove(existing_file)
 
-                    # Delete the auto-copied file from filesystem
-                    file_to_delete = root_dir / filename
-                    if file_to_delete.exists():
-                        file_to_delete.unlink()
-                        log.debug(f"Deleted auto-copied file: {file_to_delete}")
-                else:
-                    log.debug(f"Preserving {filename}")
+                # Delete the auto-copied file from filesystem
+                if item.exists():
+                    item.unlink()
+                    log.debug(f"Deleted auto-copied file: {item}")
+            else:
+                log.debug(f"Preserving {item.name}")
 
     # Path to source proposals
     proposals_src = Path('docs/proposals')
@@ -75,25 +72,54 @@ def on_files(files, config, **kwargs):
         log.warning("docs/proposals directory not found, skipping proposal copy")
         return files
 
-    # Iterate over all the files in the proposals folder and add them to the site
-    for root_dir, _, proposal_files in proposals_src.walk():
-        for filename in proposal_files:
-            # Skip README.md in the root proposals directory
-            if not (filename == 'README.md' and root_dir == proposals_src):
-                # Calculate relative path from docs/proposals
-                relative_path = root_dir.relative_to('docs')
-                file_path = str(relative_path / filename)
+    # Iterate over proposal files and add them to the site
+    # Only process .md files that match the proposal naming pattern (NNNN-*.md)
+    for proposal_file in proposals_src.glob('*.md'):
+        filename = proposal_file.name
 
-                if files.get_file_from_path(file_path) is None:
-                    new_file = File(
-                        path=file_path,
-                        src_dir='docs/',
-                        dest_dir=config['site_dir'],
-                        use_directory_urls=config['use_directory_urls']
-                    )
+        # Skip README.md and files that don't start with a digit
+        if filename == 'README.md' or not filename[0].isdigit():
+            log.debug(f"Skipping file: {filename}")
+        else:
+            file_path = f'proposals/{filename}'
 
-                    files.append(new_file)
-                    log.debug(f"Added proposal file: {file_path}")
+            if files.get_file_from_path(file_path) is None:
+                new_file = File(
+                    path=file_path,
+                    src_dir='docs/',
+                    dest_dir=config['site_dir'],
+                    use_directory_urls=config['use_directory_urls']
+                )
+
+                files.append(new_file)
+                log.debug(f"Added proposal file: {file_path}")
+
+    # Add landing pages from site-src/proposals/landing/
+    landing_dir = Path('site-src/proposals/landing')
+    log.info(f"Looking for landing pages in {landing_dir}")
+    if landing_dir.exists():
+        log.info(f"Landing directory exists")
+        landing_files = list(landing_dir.glob('*.md'))
+        log.info(f"Found {len(landing_files)} landing files: {[f.name for f in landing_files]}")
+        for landing_file in landing_files:
+            file_path = f'proposals/landing/{landing_file.name}'
+            log.info(f"Processing landing file: {file_path}")
+
+            existing = files.get_file_from_path(file_path)
+            if existing is None:
+                new_file = File(
+                    path=file_path,
+                    src_dir='site-src/',
+                    dest_dir=config['site_dir'],
+                    use_directory_urls=config['use_directory_urls']
+                )
+
+                files.append(new_file)
+                log.info(f"✓ Added landing page: {file_path}")
+            else:
+                log.info(f"Landing page already exists: {file_path}")
+    else:
+        log.warning(f"Landing directory does not exist: {landing_dir}")
 
     log.info(f"Finished adding proposals to site")
     return files
