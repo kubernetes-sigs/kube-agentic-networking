@@ -25,6 +25,7 @@ import (
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	corev1 "k8s.io/api/core/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -34,10 +35,51 @@ import (
 const (
 	// The timeout for new network connections to hosts in the cluster.
 	defaultConnectTimeout = 5 * time.Second
+	// Default service port when BackendRef.Port is not set.
+	defaultServicePort = 80
 )
 
-func (t *Translator) fetchBackend(namespace string, backendRef gatewayv1.BackendRef) (*agenticv0alpha0.XBackend, error) {
-	// 1. Validate that the Kind is Backend.
+// routeBackend represents either an XBackend or a direct Service reference for HTTPRoute backendRefs.
+// Used so we can build clusters and route action from both without duplicating caller logic.
+type routeBackend struct {
+	clusterName string
+	xbackend    *agenticv0alpha0.XBackend // nil if this is a direct Service ref
+	svcNS       string
+	svcName     string
+	svcPort     int32
+}
+
+func (rb *routeBackend) ClusterName() string { return rb.clusterName }
+
+// Hostname returns the host rewrite for external backends; empty for Service or in-cluster XBackend.
+func (rb *routeBackend) Hostname() string {
+	if rb.xbackend != nil && rb.xbackend.Spec.MCP.Hostname != nil {
+		return *rb.xbackend.Spec.MCP.Hostname
+	}
+	return ""
+}
+
+// XBackend returns the XBackend when this is an XBackend ref; nil for direct Service refs (no RBAC from XAccessPolicy).
+func (rb *routeBackend) XBackend() *agenticv0alpha0.XBackend { return rb.xbackend }
+
+// isServiceRef returns true if the BackendRef refers to a core Service (Kind nil or "Service", Group nil or "").
+func isServiceRef(backendRef gatewayv1.BackendRef) bool {
+	kind := "Service"
+	if backendRef.Kind != nil {
+		kind = string(*backendRef.Kind)
+	}
+	group := ""
+	if backendRef.Group != nil {
+		group = string(*backendRef.Group)
+	}
+	return (kind == "Service" || kind == "") && (group == "" || group == "core")
+}
+
+func (t *Translator) fetchBackend(namespace string, backendRef gatewayv1.BackendRef) (*routeBackend, error) {
+	if isServiceRef(backendRef) {
+		return t.fetchServiceBackend(namespace, backendRef)
+	}
+	// XBackend path
 	if backendRef.Kind != nil && *backendRef.Kind != "XBackend" {
 		return nil, &ControllerError{
 			Reason:  string(gatewayv1.RouteReasonInvalidKind),
@@ -50,7 +92,6 @@ func (t *Translator) fetchBackend(namespace string, backendRef gatewayv1.Backend
 		ns = string(*backendRef.Namespace)
 	}
 
-	// 2. Fetch the Backend resource.
 	backend, err := t.backendLister.XBackends(ns).Get(string(backendRef.Name))
 	if err != nil {
 		return nil, &ControllerError{
@@ -59,10 +100,8 @@ func (t *Translator) fetchBackend(namespace string, backendRef gatewayv1.Backend
 		}
 	}
 
-	// 3. Check if the referenced Service exists.
 	if svcName := backend.Spec.MCP.ServiceName; svcName != nil {
 		if _, err := t.serviceLister.Services(ns).Get(*svcName); err != nil {
-			fmt.Printf("Service lookup error for backend %s/%s, error: %v\n", ns, backendRef.Name, err)
 			return nil, &ControllerError{
 				Reason:  string(gatewayv1.RouteReasonBackendNotFound),
 				Message: fmt.Sprintf("failed to get Backend service %s/%s: %v", ns, *svcName, err),
@@ -70,8 +109,55 @@ func (t *Translator) fetchBackend(namespace string, backendRef gatewayv1.Backend
 		}
 	}
 
-	// TODO: Do we need to check hostname resolution for external MCP backends?
-	return backend, nil
+	return &routeBackend{
+		clusterName: fmt.Sprintf(constants.ClusterNameFormat, backend.Namespace, backend.Name),
+		xbackend:    backend,
+	}, nil
+}
+
+// fetchServiceBackend resolves a direct Service backendRef (Kind Service or nil).
+func (t *Translator) fetchServiceBackend(routeNamespace string, backendRef gatewayv1.BackendRef) (*routeBackend, error) {
+	ns := routeNamespace
+	if backendRef.Namespace != nil {
+		ns = string(*backendRef.Namespace)
+	}
+	if t.referenceGrantLister != nil && ns != routeNamespace {
+		if !AllowedByReferenceGrant(routeNamespace, ns, t.referenceGrantLister) {
+			return nil, &ControllerError{
+				Reason:  string(gatewayv1.RouteReasonRefNotPermitted),
+				Message: fmt.Sprintf("cross-namespace reference to Service %s/%s not permitted by ReferenceGrant", ns, backendRef.Name),
+			}
+		}
+	}
+	svc, err := t.serviceLister.Services(ns).Get(string(backendRef.Name))
+	if err != nil {
+		return nil, &ControllerError{
+			Reason:  string(gatewayv1.RouteReasonBackendNotFound),
+			Message: fmt.Sprintf("failed to get Service %s/%s: %v", ns, backendRef.Name, err),
+		}
+	}
+	port := resolveServicePort(svc, backendRef.Port)
+	return &routeBackend{
+		clusterName: fmt.Sprintf(constants.ClusterNameFormat, ns, string(backendRef.Name)),
+		svcNS:       ns,
+		svcName:     string(backendRef.Name),
+		svcPort:     port,
+	}, nil
+}
+
+func resolveServicePort(svc *corev1.Service, backendPort *gatewayv1.PortNumber) int32 {
+	if backendPort != nil {
+		for _, p := range svc.Spec.Ports {
+			if int32(p.Port) == int32(*backendPort) {
+				return int32(p.Port)
+			}
+		}
+		return int32(*backendPort)
+	}
+	if len(svc.Spec.Ports) > 0 {
+		return int32(svc.Spec.Ports[0].Port)
+	}
+	return defaultServicePort
 }
 
 func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Cluster, error) {
@@ -116,14 +202,33 @@ func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Clus
 	return cluster, nil
 }
 
-func buildClustersFromBackends(backends []*agenticv0alpha0.XBackend) ([]*clusterv3.Cluster, error) {
+// buildClustersFromRouteBackends builds Envoy clusters from a mix of XBackend and direct Service refs.
+func buildClustersFromRouteBackends(backends []*routeBackend) ([]*clusterv3.Cluster, error) {
 	var clusters []*clusterv3.Cluster
-	for _, backend := range backends {
-		cluster, err := convertBackendToCluster(backend)
+	for _, rb := range backends {
+		var cluster *clusterv3.Cluster
+		var err error
+		if rb.xbackend != nil {
+			cluster, err = convertBackendToCluster(rb.xbackend)
+		} else {
+			cluster, err = convertServiceRefToCluster(rb.svcNS, rb.svcName, rb.svcPort)
+		}
 		if err != nil {
 			return nil, err
 		}
 		clusters = append(clusters, cluster)
 	}
 	return clusters, nil
+}
+
+func convertServiceRefToCluster(ns, name string, port int32) (*clusterv3.Cluster, error) {
+	clusterName := fmt.Sprintf(constants.ClusterNameFormat, ns, name)
+	serviceFQDN := fmt.Sprintf("%s.%s.svc.cluster.local", name, ns)
+	cluster := &clusterv3.Cluster{
+		Name:                 clusterName,
+		ConnectTimeout:       durationpb.New(defaultConnectTimeout),
+		ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
+		LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, uint32(port)),
+	}
+	return cluster, nil
 }
