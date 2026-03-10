@@ -75,8 +75,15 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 
 // enqueueGatewaysForAccessPolicy enqueues Gateways so they are reconciled.
 // It also enqueues the targeted XBackend for finalizer reconciliation.
+// When an AccessPolicy targets a Gateway, that Gateway is enqueued so its finalizer can be re-evaluated on AccessPolicy delete (avoids deadlock).
 func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAccessPolicy) {
 	for _, targetRef := range policy.Spec.TargetRefs {
+		if isGatewayTargetRef(targetRef) {
+			// Same-namespace policy: targetRef is in policy.Namespace.
+			gatewayKey := policy.Namespace + "/" + string(targetRef.Name)
+			c.gatewayqueue.Add(gatewayKey)
+			continue
+		}
 		if !isXBackendTargetRef(targetRef) {
 			// TODO: Set status condition on AccessPolicy to indicate unsupported targetRef
 			klog.InfoS("AccessPolicy targets an unsupported resource", "accesspolicy", klog.KObj(policy), "targetRef", targetRef)
@@ -100,4 +107,9 @@ func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAcc
 
 func isXBackendTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionName) bool {
 	return targetRef.Group == agenticv0alpha0.GroupName && targetRef.Kind == "XBackend"
+}
+
+// isGatewayTargetRef returns true if the targetRef points to a Gateway (gateway.networking.k8s.io/Gateway).
+func isGatewayTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionName) bool {
+	return targetRef.Group == gwapiv1.GroupName && targetRef.Kind == "Gateway"
 }
