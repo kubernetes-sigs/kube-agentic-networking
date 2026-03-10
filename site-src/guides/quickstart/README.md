@@ -76,8 +76,8 @@ export HF_TOKEN=<your-huggingface-token>
 # 3. Run the quickstart setup
 make quickstart
 
-# 4. Open the agent UI
-#    http://localhost:8081/dev-ui/?app=mcp_agent
+# 4. Open the agent UI at
+http://localhost:8081/dev-ui/?app=mcp_agent
 ```
 
 ### What `make quickstart` Does
@@ -98,13 +98,13 @@ make quickstart
 
 In the agent UI, ensure `mcp_agent` is selected from the dropdown menu in the top-left corner. Try the following prompts:
 
-| Prompt                                                           | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
-| :--------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
-| "What can you do for me?"                                        | `tools/list` on both MCPs           | ✅ **Success**  | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
-| "Can you do 2+3?"                                                | `get-sum` on local MCP              | ✅ **Success**  | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                 |
-| "Can you echo back 'hello'?"                                     | `echo` on local MCP                 | ❌ **Failure**  | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
-| "Read the structure of the `modelcontextprotocol/servers` repo." | `read_wiki_structure` on remote MCP | ✅ **Success**  | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
-| "Read the wiki content of that repo."                            | `read_wiki_content` on remote MCP   | ❌ **Failure**  | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
+| Prompt                                                                 | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
+| :--------------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
+| What can you do?                                                       | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
+| What is the sum of 2 and 3?                                            | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                 |
+| Echo back 'hello'.                                                     | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
+| Read the wiki structure of `modelcontextprotocol/servers` GitHub repo. | `read_wiki_structure` on remote MCP | ✅ **Success**   | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
+| Read the wiki content of that GitHub repo.                             | `read_wiki_content` on remote MCP   | ❌ **Failure**   | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
 
 <details markdown="1">
 <summary style="font-size: 1.5em; font-weight: bold;">🧪 Try Dynamic Policy Updates in Action</summary>
@@ -150,10 +150,10 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
 
 4. **Interact with the Agent again**: Go back to `http://localhost:8081` and try these prompts:
 
-   | Prompt                       | Tool Invoked           | Expected Result | Why?                                                                   |
-   | :--------------------------- | :--------------------- | :-------------- | :--------------------------------------------------------------------- |
-   | "Can you do 2+3?"            | `get-sum` on local MCP | ❌ **Failure**  | The `get-sum` tool is now _disallowed_ by the updated `XAccessPolicy`. |
-   | "Can you echo back 'hello'?" | `echo` on local MCP    | ✅ **Success**  | The `echo` tool is now _allowed_ by the updated `XAccessPolicy`.       |
+    | Prompt                      | Tool Invoked           | Expected Result | Why?                                                                   |
+    | :-------------------------- | :--------------------- | :-------------- | :--------------------------------------------------------------------- |
+    | What is the sum of 2 and 3? | `get-sum` on local MCP | ❌ **Failure**   | The `get-sum` tool is now _disallowed_ by the updated `XAccessPolicy`. |
+    | Echo back 'hello'.          | `echo` on local MCP    | ✅ **Success**   | The `echo` tool is now _allowed_ by the updated `XAccessPolicy`.       |
 
    Observe how the agent's behavior changes instantly based on your policy modifications!
 
