@@ -69,8 +69,12 @@ Each proposal has a state that tracks where it is in the process:
 Before creating a proposal, share your high-level idea with the community. There are
 several places this may be done:
 
+- A [new Github discussion](https://github.com/kubernetes-sigs/kube-agentic-networking/discussions/new)
 - On our [Slack channel](https://kubernetes.slack.com/archives/C09P6KS6EQZ)
-- On our community meetings
+- On our [community meetings](../contributing/index.md#meetings)
+
+Please default to GitHub discussions: they work a lot like GitHub issues which
+makes them easy to search.
 
 ### 2. Create an Issue
 
