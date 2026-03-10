@@ -41,6 +41,7 @@ func (c *Controller) onHTTPRouteAdd(obj interface{}) {
 	route := obj.(*gatewayv1.HTTPRoute)
 	klog.V(4).InfoS("Adding HTTPRoute", "httproute", klog.KObj(route))
 	c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
+	c.enqueueBackendsForHTTPRouteFinalizer(route)
 }
 
 func (c *Controller) onHTTPRouteUpdate(old, new interface{}) {
@@ -49,6 +50,8 @@ func (c *Controller) onHTTPRouteUpdate(old, new interface{}) {
 	if newRoute.Generation != oldRoute.Generation || newRoute.DeletionTimestamp != oldRoute.DeletionTimestamp || !reflect.DeepEqual(newRoute.Annotations, oldRoute.Annotations) {
 		klog.V(4).InfoS("Updating HTTPRoute", "httproute", klog.KObj(oldRoute))
 		c.enqueueGatewaysForHTTPRoute(append(oldRoute.Spec.ParentRefs, newRoute.Spec.ParentRefs...), newRoute.Namespace)
+		c.enqueueBackendsForHTTPRouteFinalizer(oldRoute)
+		c.enqueueBackendsForHTTPRouteFinalizer(newRoute)
 	}
 }
 
@@ -68,6 +71,7 @@ func (c *Controller) onHTTPRouteDelete(obj interface{}) {
 	}
 	klog.V(4).InfoS("Deleting HTTPRoute", "httproute", klog.KObj(route))
 	c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
+	c.enqueueBackendsForHTTPRouteFinalizer(route)
 }
 
 // enqueueGatewaysForHTTPRoute enqueues Gateways so they are reconciled; when an HTTPRoute
