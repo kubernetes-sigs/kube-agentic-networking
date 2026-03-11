@@ -76,8 +76,7 @@ export HF_TOKEN=<your-huggingface-token>
 # 3. Run the quickstart setup
 make quickstart
 
-# 4. Open the agent UI at
-http://localhost:8081/dev-ui/?app=mcp_agent
+# 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
 ```
 
 ### What `make quickstart` Does
