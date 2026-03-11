@@ -71,10 +71,10 @@ metadata:
   namespace: agentic-net-system
   name: agentic-net-controller-role
 rules:
-# Permissions for the rendezvous hasher
-- apiGroups: ["coordination.k8s.io"]
-  resources: ["leases"]
-  verbs: ["create", "get", "list", "watch", "update", "delete"]
+  # Permissions for the rendezvous hasher
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -86,9 +86,9 @@ roleRef:
   kind: Role
   name: agentic-net-controller-role
 subjects:
-- kind: ServiceAccount
-  namespace: agentic-net-system
-  name: agentic-net-controller-sa
+  - kind: ServiceAccount
+    namespace: agentic-net-system
+    name: agentic-net-controller-sa
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -127,30 +127,30 @@ spec:
             - --agentic-identity-ca-pool=/run/agentic-identity-ca-state/ca-pool.json
             - --v=5 # Set log level to 5 (debug)
           volumeMounts:
-          - name: "agentic-identity-ca-state"
-            mountPath: "/run/agentic-identity-ca-state"
+            - name: "agentic-identity-ca-state"
+              mountPath: "/run/agentic-identity-ca-state"
           env:
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          - name: POD_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          - name: POD_UID
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.uid
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
       volumes:
-      - name: "agentic-identity-ca-state"
-        projected:
-          sources:
-          - secret:
-              name: "agentic-identity-ca-pool"
-              items:
-              - key: "ca-pool.json"
-                path: "ca-pool.json"
+        - name: "agentic-identity-ca-state"
+          projected:
+            sources:
+              - secret:
+                  name: "agentic-identity-ca-pool"
+                  items:
+                    - key: "ca-pool.json"
+                      path: "ca-pool.json"
   revisionHistoryLimit: 1
 ---
 apiVersion: v1
