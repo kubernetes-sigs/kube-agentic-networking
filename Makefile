@@ -40,13 +40,13 @@ validate-python:
 # Run go fmt against code
 .PHONY: fmt
 fmt: ;$(info $(M)...Begin to run go fmt against code.)  @ ## Run go fmt against code.
-	gofmt -w ./api ./cmd ./pkg
-	cd tests && gofmt -w .
+	go fmt ./...
+	cd tests && go fmt ./...
 
 # Run go vet against code
 .PHONY: vet
 vet: ;$(info $(M)...Begin to run go vet against code.)  @ ## Run go vet against code.
-	go vet ./api/... ./cmd/... ./pkg/...
+	go vet ./...
 	cd tests && go vet ./...
 
 # Run go test against code

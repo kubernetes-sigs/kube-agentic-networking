@@ -194,6 +194,8 @@ func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0al
 
 // findAccessPoliciesForTarget finds all AccessPolicies that target the given resource.
 // It returns only accepted policies.
+// TODO: Indexing AccessPolicies by their target refs for more efficient lookups.
+// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/168
 func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name string) ([]*agenticv0alpha0.XAccessPolicy, error) {
 	// List all AccessPolicies in the target's namespace.
 	allAccessPolicies, err := t.accessPolicyLister.XAccessPolicies(namespace).List(labels.Everything())

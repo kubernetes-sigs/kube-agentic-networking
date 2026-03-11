@@ -172,8 +172,8 @@ const (
 	// PolicyConditionAccepted indicates whether the policy has been accepted by the controller.
 	PolicyConditionAccepted gwapiv1.PolicyConditionType = "Accepted"
 
-	// PolicyReasonExceededLimit indicates that the policy was rejected because the maximum number of policies per target was exceeded.
-	PolicyReasonExceededLimit gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
+	// PolicyLimitPerTargetExceeded indicates that the policy was rejected because the maximum number of policies per target was exceeded.
+	PolicyLimitPerTargetExceeded gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
 )
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.

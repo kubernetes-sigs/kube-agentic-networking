@@ -20,9 +20,9 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"sort"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -62,12 +62,8 @@ func (c *Controller) onAccessPolicyUpdate(old, new interface{}) {
 	oldPolicy := old.(*agenticv0alpha0.XAccessPolicy)
 	newPolicy := new.(*agenticv0alpha0.XAccessPolicy)
 
-	specChanged := newPolicy.Generation != oldPolicy.Generation || !reflect.DeepEqual(newPolicy.Annotations, oldPolicy.Annotations)
-	deletionTimestampChanged := newPolicy.DeletionTimestamp != oldPolicy.DeletionTimestamp
-	acceptanceChanged := newPolicy.IsAccepted() != oldPolicy.IsAccepted()
-
-	if specChanged || deletionTimestampChanged || acceptanceChanged {
-		klog.V(4).InfoS("Updating AccessPolicy", "accesspolicy", klog.KObj(oldPolicy), "specChanged", specChanged, "acceptanceChanged", acceptanceChanged)
+	if hasAccessPolicyChanged(oldPolicy, newPolicy) {
+		klog.V(4).InfoS("Updating AccessPolicy", "accesspolicy", klog.KObj(oldPolicy))
 
 		// If targets changed, we must re-evaluate the limit as it's equivalent to an 'Add' for the new target.
 		if !reflect.DeepEqual(oldPolicy.Spec.TargetRefs, newPolicy.Spec.TargetRefs) {
@@ -95,6 +91,10 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 		}
 	}
 	klog.V(4).InfoS("Deleting AccessPolicy", "accesspolicy", klog.KObj(policy))
+
+	// TODO: When a policy is deleted, we should re-enqueue all other AccessPolicies
+	// that were targeting the same resources. This allows a previously rejected
+	// policy to be accepted if a "senior" policy has been removed.
 	c.enqueueGatewaysForAccessPolicy(policy)
 }
 
@@ -164,10 +164,29 @@ func isGatewayTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionN
 	return targetRef.Group == gwapiv1.GroupName && targetRef.Kind == "Gateway"
 }
 
+func hasAccessPolicyChanged(old, new *agenticv0alpha0.XAccessPolicy) bool {
+	specChanged := new.Generation != old.Generation || !reflect.DeepEqual(new.Annotations, old.Annotations)
+	deletionTimestampChanged := new.DeletionTimestamp != old.DeletionTimestamp
+	acceptanceChanged := new.IsAccepted() != old.IsAccepted()
+
+	return specChanged || deletionTimestampChanged || acceptanceChanged
+}
+
+// isMoreSenior returns true if p1 is "more senior" (established earlier) than p2.
+// Seniority is determined by CreationTimestamp, with Name as a deterministic tie-breaker.
+func isMoreSenior(p1, p2 *agenticv0alpha0.XAccessPolicy) bool {
+	if !p1.CreationTimestamp.Equal(&p2.CreationTimestamp) {
+		return p1.CreationTimestamp.Before(&p2.CreationTimestamp)
+	}
+	return p1.Name < p2.Name
+}
+
 // isPolicyUnderTargetLimit determines if the policy is within the maximum allowed policies per target.
 // It returns true if accepted for ALL targets, false otherwise.
 // It also updates the policy status accordingly.
 func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agenticv0alpha0.XAccessPolicy) bool {
+	// TODO: Index AccessPolicies by their target refs for more efficient lookups.
+	// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/168
 	allPolicies, err := c.agentic.accessPolicyLister.XAccessPolicies(policy.Namespace).List(labels.Everything())
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("failed to list AccessPolicies: %w", err))
@@ -191,34 +210,10 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 		id := getTargetID(targetRef)
 		policies := targetToPolicies[id]
 
-		if len(policies) <= c.maxAccessPoliciesPerTarget {
-			continue
-		}
-
-		// Informer event order is NOT guaranteed to match resource creation order.
-		// To ensure deterministic behavior (e.g. across controller restarts) and
-		// prioritize established policies (seniority), we sort by creation time.
-		sort.Slice(policies, func(i, j int) bool {
-			if !policies[i].CreationTimestamp.Equal(&policies[j].CreationTimestamp) {
-				return policies[i].CreationTimestamp.Before(&policies[j].CreationTimestamp)
-			}
-			return policies[i].Name < policies[j].Name
-		})
-
-		// Check if the current policy is within the allowed limit (seniority-based).
-		limit := c.maxAccessPoliciesPerTarget
-		isWithinLimit := false
-		for i := 0; i < limit; i++ {
-			if policies[i].Name == policy.Name {
-				isWithinLimit = true
-				break
-			}
-		}
-
-		if !isWithinLimit {
+		if c.seniorPoliciesAtLimit(policy, policies) {
 			shouldAccept = false
-			failureMessage = fmt.Sprintf("Maximum number of AccessPolicies (%d) exceeded for target %s", limit, targetRef.Name)
-			klog.InfoS("AccessPolicy rejected: exceeded limit for target", "accesspolicy", klog.KObj(policy), "target", targetRef.Name, "limit", limit)
+			failureMessage = fmt.Sprintf("Maximum number of AccessPolicies (%d) exceeded for target %s", c.maxAccessPoliciesPerTarget, targetRef.Name)
+			klog.InfoS("AccessPolicy rejected: exceeded limit for target", "accesspolicy", klog.KObj(policy), "target", targetRef.Name, "limit", c.maxAccessPoliciesPerTarget)
 			break
 		}
 	}
@@ -229,7 +224,7 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 		message := "AccessPolicy accepted for target"
 
 		if !shouldAccept {
-			reason = agenticv0alpha0.PolicyReasonExceededLimit
+			reason = agenticv0alpha0.PolicyLimitPerTargetExceeded
 			message = failureMessage
 		}
 
@@ -239,6 +234,29 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 	}
 
 	return shouldAccept
+}
+
+// seniorPoliciesAtLimit returns true if the number of policies with higher seniority
+// targeting the same resource has already reached the configured maximum limit.
+func (c *Controller) seniorPoliciesAtLimit(policy *agenticv0alpha0.XAccessPolicy, allPoliciesForTarget []*agenticv0alpha0.XAccessPolicy) bool {
+	if len(allPoliciesForTarget) <= c.maxAccessPoliciesPerTarget {
+		return false
+	}
+
+	// To avoid sorting on every reconciliation event, we simply count how many
+	// policies for this target have higher seniority than the current one.
+	seniorCount := 0
+	for _, p := range allPoliciesForTarget {
+		if p.Name == policy.Name {
+			continue
+		}
+		if isMoreSenior(p, policy) {
+			seniorCount++
+		}
+	}
+
+	// If there are already 'max' policies more senior than us, we are over the limit.
+	return seniorCount >= c.maxAccessPoliciesPerTarget
 }
 
 func getTargetID(ref gwapiv1.LocalPolicyTargetReferenceWithSectionName) string {
@@ -253,38 +271,40 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 		status = metav1.ConditionFalse
 	}
 
-	ancestorStatus := gwapiv1.PolicyAncestorStatus{
-		AncestorRef: gwapiv1.ParentReference{
-			Group:     ptr.To(targetRef.Group),
-			Kind:      ptr.To(targetRef.Kind),
-			Namespace: ptr.To(gwapiv1.Namespace(policy.Namespace)),
-			Name:      targetRef.Name,
-		},
-		ControllerName: gwapiv1.GatewayController(constants.ControllerName),
-		Conditions: []metav1.Condition{
-			{
-				Type:               string(agenticv0alpha0.PolicyConditionAccepted),
-				Status:             status,
-				Reason:             string(reason),
-				Message:            message,
-				ObservedGeneration: policy.Generation,
-				LastTransitionTime: metav1.Now(),
-			},
-		},
+	newCondition := metav1.Condition{
+		Type:               string(agenticv0alpha0.PolicyConditionAccepted),
+		Status:             status,
+		Reason:             string(reason),
+		Message:            message,
+		ObservedGeneration: policy.Generation,
 	}
 
-	// Update or append ancestor status.
-	found := false
-	for i, existing := range policyCopy.Status.Ancestors {
-		if reflect.DeepEqual(existing.AncestorRef, ancestorStatus.AncestorRef) {
-			policyCopy.Status.Ancestors[i] = ancestorStatus
-			found = true
+	parentRef := gwapiv1.ParentReference{
+		Group:     ptr.To(targetRef.Group),
+		Kind:      ptr.To(targetRef.Kind),
+		Namespace: ptr.To(gwapiv1.Namespace(policy.Namespace)),
+		Name:      targetRef.Name,
+	}
+
+	// Find or create the AncestorStatus for this target.
+	var ancestorStatus *gwapiv1.PolicyAncestorStatus
+	for i := range policyCopy.Status.Ancestors {
+		if reflect.DeepEqual(policyCopy.Status.Ancestors[i].AncestorRef, parentRef) {
+			ancestorStatus = &policyCopy.Status.Ancestors[i]
 			break
 		}
 	}
-	if !found {
-		policyCopy.Status.Ancestors = append(policyCopy.Status.Ancestors, ancestorStatus)
+
+	if ancestorStatus == nil {
+		policyCopy.Status.Ancestors = append(policyCopy.Status.Ancestors, gwapiv1.PolicyAncestorStatus{
+			AncestorRef:    parentRef,
+			ControllerName: gwapiv1.GatewayController(constants.ControllerName),
+		})
+		ancestorStatus = &policyCopy.Status.Ancestors[len(policyCopy.Status.Ancestors)-1]
 	}
+
+	// meta.SetStatusCondition will only update LastTransitionTime if the status, reason or message changes.
+	meta.SetStatusCondition(&ancestorStatus.Conditions, newCondition)
 
 	if reflect.DeepEqual(policy.Status, policyCopy.Status) {
 		return nil
