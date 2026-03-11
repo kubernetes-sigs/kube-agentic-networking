@@ -42,6 +42,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
+	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
@@ -71,6 +72,7 @@ type Translator struct {
 	secretLister               corev1listers.SecretLister
 	gatewayLister              gatewaylisters.GatewayLister
 	httprouteLister            gatewaylisters.HTTPRouteLister
+	referenceGrantLister       gatewaylistersv1beta1.ReferenceGrantLister // optional, for Service ref cross-namespace validation
 	accessPolicyLister         agenticlisters.XAccessPolicyLister
 	backendLister              agenticlisters.XBackendLister
 }
@@ -84,6 +86,7 @@ func New(
 	secretLister corev1listers.SecretLister,
 	gatewayLister gatewaylisters.GatewayLister,
 	httpRouteLister gatewaylisters.HTTPRouteLister,
+	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister,
 	accessPolicyLister agenticlisters.XAccessPolicyLister,
 	backendLister agenticlisters.XBackendLister,
 ) *Translator {
@@ -96,6 +99,7 @@ func New(
 		secretLister,
 		gatewayLister,
 		httpRouteLister,
+		referenceGrantLister,
 		accessPolicyLister,
 		backendLister,
 	}
@@ -240,7 +244,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 					}
 					httpRouteStatuses[key] = currentParentStatuses
 
-					clusters, err := buildClustersFromBackends(allValidBackends)
+					clusters, err := buildClustersFromRouteBackends(allValidBackends)
 					if err != nil {
 						return nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
 					}

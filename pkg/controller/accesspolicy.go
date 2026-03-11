@@ -73,8 +73,8 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 	c.enqueueGatewaysForAccessPolicy(policy)
 }
 
-// enqueueGatewaysForAccessPolicy enqueues Gateways so they are reconciled; when an
-// XAccessPolicy is deleted this ensures stale policy rules are removed from Envoy/xDS config.
+// enqueueGatewaysForAccessPolicy enqueues Gateways so they are reconciled.
+// It also enqueues the targeted XBackend for finalizer reconciliation.
 func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAccessPolicy) {
 	for _, targetRef := range policy.Spec.TargetRefs {
 		if !isXBackendTargetRef(targetRef) {
@@ -94,6 +94,7 @@ func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAcc
 			continue
 		}
 		c.enqueueGatewaysForBackend(backend)
+		c.enqueueBackendForFinalizer(backend)
 	}
 }
 

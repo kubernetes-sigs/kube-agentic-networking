@@ -181,6 +181,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				coreInformerFactory.Core().V1().Secrets().Lister(),
 				gwInformerFactory.Gateway().V1().Gateways().Lister(),
 				gwInformerFactory.Gateway().V1().HTTPRoutes().Lister(),
+				nil, // referenceGrantLister
 				agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister(),
 				agenticInformerFactory.Agentic().V0alpha0().XBackends().Lister(),
 			)

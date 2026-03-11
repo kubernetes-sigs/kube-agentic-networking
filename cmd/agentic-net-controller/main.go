@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -101,6 +102,16 @@ func main() {
 	sharedKubeInformers := kubeinformers.NewSharedInformerFactory(kubeClient, *resyncPeriod)
 	sharedGwInformers := gatewayinformers.NewSharedInformerFactory(gatewayClientset, *resyncPeriod)
 	sharedAgenticInformers := agenticinformers.NewSharedInformerFactory(agenticClientset, *resyncPeriod)
+
+	// Register ServiceRef index on HTTPRoute informer before Start so Service updates
+	// only look up HTTPRoutes that reference that Service instead of listing all.
+	httpRouteInformer := sharedGwInformers.Gateway().V1().HTTPRoutes().Informer()
+	if err := httpRouteInformer.AddIndexers(map[string]cache.IndexFunc{
+		controller.ServiceRefIndex: controller.HTTPRouteServiceRefIndexFunc,
+	}); err != nil {
+		klog.ErrorS(err, "Failed to add ServiceRef index to HTTPRoute informer")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
 
 	c, err := controller.New(
 		ctx,

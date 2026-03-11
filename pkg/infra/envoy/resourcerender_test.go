@@ -148,18 +148,105 @@ func TestRenderDeployment(t *testing.T) {
 }
 
 func TestRenderService(t *testing.T) {
-	gw := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-gw",
-			Namespace: "test-ns",
+	testCases := []struct {
+		name          string
+		listeners     []gatewayv1.Listener
+		expectedPorts []corev1.ServicePort
+	}{
+		{
+			name: "single listener",
+			listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Port:     80,
+					Protocol: "HTTP",
+				},
+			},
+			expectedPorts: []corev1.ServicePort{
+				{
+					Name: "http",
+					Port: 80,
+				},
+			},
+		},
+		{
+			name: "duplicate ports",
+			listeners: []gatewayv1.Listener{
+				{
+					Name:     "https-1",
+					Port:     443,
+					Protocol: "HTTPS",
+				},
+				{
+					Name:     "https-2",
+					Port:     443,
+					Protocol: "HTTPS",
+				},
+			},
+			expectedPorts: []corev1.ServicePort{
+				{
+					Name: "https-1",
+					Port: 443,
+				},
+			},
+		},
+		{
+			name: "multiple unique ports",
+			listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Port:     80,
+					Protocol: "HTTP",
+				},
+				{
+					Name:     "https",
+					Port:     443,
+					Protocol: "HTTPS",
+				},
+			},
+			expectedPorts: []corev1.ServicePort{
+				{
+					Name: "http",
+					Port: 80,
+				},
+				{
+					Name: "https",
+					Port: 443,
+				},
+			},
 		},
 	}
-	rm := NewResourceManager(nil, gw, "envoy-image", "cluster.local")
 
-	svc := rm.renderService()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			gw := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gw",
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: tc.listeners,
+				},
+			}
+			rm := NewResourceManager(nil, gw, "envoy-image", "cluster.local")
 
-	if svc.Labels[constants.GatewayNameLabel] != gw.Name {
-		t.Errorf("Service missing gateway name label: got %s, want %s", svc.Labels[constants.GatewayNameLabel], gw.Name)
+			svc := rm.renderService()
+
+			if svc.Labels[constants.GatewayNameLabel] != gw.Name {
+				t.Errorf("Service missing gateway name label: got %s, want %s", svc.Labels[constants.GatewayNameLabel], gw.Name)
+			}
+			if len(svc.Spec.Ports) != len(tc.expectedPorts) {
+				t.Fatalf("expected %d ports, got %d", len(tc.expectedPorts), len(svc.Spec.Ports))
+			}
+			for i, port := range svc.Spec.Ports {
+				if port.Port != tc.expectedPorts[i].Port {
+					t.Errorf("port mismatch at index %d: got %d, want %d", i, port.Port, tc.expectedPorts[i].Port)
+				}
+				if port.Name != tc.expectedPorts[i].Name {
+					t.Errorf("port name mismatch at index %d: got %s, want %s", i, port.Name, tc.expectedPorts[i].Name)
+				}
+			}
+		})
 	}
 }
 

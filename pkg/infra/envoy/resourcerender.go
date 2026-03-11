@@ -20,6 +20,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"sort"
 	"text/template"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -272,14 +273,25 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 }
 
 func (r *ResourceManager) renderService() *corev1.Service {
-	ports := []corev1.ServicePort{}
+	portsMap := make(map[int32]corev1.ServicePort)
 	for _, listener := range r.gw.Spec.Listeners {
-		ports = append(ports, corev1.ServicePort{
-			Name:     string(listener.Name),
-			Port:     int32(listener.Port),
-			Protocol: corev1.ProtocolTCP, // TODO : Support other protocols if needed.
-		})
+		port := int32(listener.Port)
+		if _, ok := portsMap[port]; !ok {
+			portsMap[port] = corev1.ServicePort{
+				Name:     string(listener.Name),
+				Port:     port,
+				Protocol: corev1.ProtocolTCP, // TODO : Support other protocols if needed.
+			}
+		}
 	}
+
+	ports := make([]corev1.ServicePort, 0, len(portsMap))
+	for _, port := range portsMap {
+		ports = append(ports, port)
+	}
+	sort.Slice(ports, func(i, j int) bool {
+		return ports[i].Port < ports[j].Port
+	})
 
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{

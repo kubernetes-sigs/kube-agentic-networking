@@ -16,3 +16,7 @@ aliases:
 
   kan-reference-implementation-approvers:
     - haiyanmeng
+
+  kan-docs-approvers:
+    - haiyanmeng
+    - evaline-ju

@@ -73,7 +73,8 @@ type gatewayResources struct {
 	gatewayLister gatewaylisters.GatewayLister
 	gatewaySynced cache.InformerSynced
 
-	httprouteLister       gatewaylisters.HTTPRouteLister
+	httprouteLister      gatewaylisters.HTTPRouteLister
+	httprouteIndexer     cache.Indexer
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister
 	httprouteSynced      cache.InformerSynced
 	referenceGrantSynced cache.InformerSynced
@@ -98,10 +99,10 @@ type Controller struct {
 	agenticIdentityTrustDomain string
 	envoyImage                 string
 
-	gatewayqueue            workqueue.TypedRateLimitingInterface[string]
-	backendFinalizerQueue   workqueue.TypedRateLimitingInterface[string]
-	xdsServer               *xds.Server
-	translator              *translator.Translator
+	gatewayqueue          workqueue.TypedRateLimitingInterface[string]
+	backendFinalizerQueue workqueue.TypedRateLimitingInterface[string]
+	xdsServer             *xds.Server
+	translator            *translator.Translator
 }
 
 // New returns a new *Controller with the event handlers setup for types we are interested in.
@@ -115,11 +116,11 @@ func New(
 	namespaceInformer corev1informers.NamespaceInformer,
 	serviceInformer corev1informers.ServiceInformer,
 	secretInformer corev1informers.SecretInformer,
-	gatewayClassInformer    gatewayinformers.GatewayClassInformer,
-	gatewayInformer         gatewayinformers.GatewayInformer,
-	httprouteInformer       gatewayinformers.HTTPRouteInformer,
+	gatewayClassInformer gatewayinformers.GatewayClassInformer,
+	gatewayInformer gatewayinformers.GatewayInformer,
+	httprouteInformer gatewayinformers.HTTPRouteInformer,
 	referenceGrantInformer gatewayinformersv1beta1.ReferenceGrantInformer,
-	backendInformer         agenticinformers.XBackendInformer,
+	backendInformer agenticinformers.XBackendInformer,
 	accessPolicyInformer agenticinformers.XAccessPolicyInformer,
 ) (*Controller, error) {
 	c := &Controller{
@@ -133,15 +134,16 @@ func New(
 			secretSynced: secretInformer.Informer().HasSynced,
 		},
 		gateway: gatewayResources{
-			client:             gwClientSet,
-			gatewayClassLister: gatewayClassInformer.Lister(),
-			gatewayClassSynced: gatewayClassInformer.Informer().HasSynced,
-			gatewayLister:      gatewayInformer.Lister(),
-			gatewaySynced:      gatewayInformer.Informer().HasSynced,
-			httprouteLister:       httprouteInformer.Lister(),
-			referenceGrantLister:  referenceGrantInformer.Lister(),
-			httprouteSynced:       httprouteInformer.Informer().HasSynced,
-			referenceGrantSynced:  referenceGrantInformer.Informer().HasSynced,
+			client:               gwClientSet,
+			gatewayClassLister:   gatewayClassInformer.Lister(),
+			gatewayClassSynced:   gatewayClassInformer.Informer().HasSynced,
+			gatewayLister:        gatewayInformer.Lister(),
+			gatewaySynced:        gatewayInformer.Informer().HasSynced,
+			httprouteLister:      httprouteInformer.Lister(),
+			httprouteIndexer:     httprouteInformer.Informer().GetIndexer(),
+			referenceGrantLister: referenceGrantInformer.Lister(),
+			httprouteSynced:      httprouteInformer.Informer().HasSynced,
+			referenceGrantSynced: referenceGrantInformer.Informer().HasSynced,
 		},
 		agentic: agenticNetResources{
 			client:             agenticClientSet,
@@ -172,6 +174,7 @@ func New(
 		secretInformer.Lister(),
 		gatewayInformer.Lister(),
 		httprouteInformer.Lister(),
+		referenceGrantInformer.Lister(),
 		accessPolicyInformer.Lister(),
 		backendInformer.Lister(),
 	)
