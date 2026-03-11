@@ -24,5 +24,5 @@ The `deployment.yaml` file contains the Kubernetes manifests for deploying the a
     -   An `initContainer` that configures `iptables` to redirect traffic to the Envoy sidecar.
     -   The OpenAI agent container.
     -   An Envoy sidecar container that proxies requests to the MCP servers.
--   **Service**: `openai-agent-svc` - A `LoadBalancer` service that exposes the agent and Envoy proxy.
+-   **Service**: `openai-agent-svc` - A `LoadBalancer` service that exposes the agent at port 7860 and Envoy proxy at port 10001.
 
