@@ -35,3 +35,6 @@ go.work.sum
 
 # generated docs
 site
+
+# Auto-generated API reference
+site-src/reference/spec.md

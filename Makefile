@@ -163,16 +163,20 @@ quickstart: ## Run the quickstart setup (requires HF_TOKEN env var, kind, kubect
 ##@Docs
 
 .PHONY: build-docs
-build-docs:
+build-docs: api-ref-docs
 	docker build --pull -t kube-agentic-networking/mkdocs hack/mkdocs/image
 	docker run --rm -v ${PWD}:/docs kube-agentic-networking/mkdocs build
 
 .PHONY: build-docs-netlify
-build-docs-netlify:
+build-docs-netlify: api-ref-docs
 	pip install -r hack/mkdocs/image/requirements.txt
 	python -m mkdocs build
 
 .PHONY: live-docs
-live-docs:
+live-docs: api-ref-docs
 	docker build -t kube-agentic-networking/mkdocs hack/mkdocs/image
 	docker run --rm -it -p 3000:3000 -v ${PWD}:/docs kube-agentic-networking/mkdocs
+
+.PHONY: api-ref-docs
+api-ref-docs:
+	hack/mkdocs/generate.sh
