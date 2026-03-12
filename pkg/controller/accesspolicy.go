@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -46,9 +47,9 @@ func (c *Controller) onAccessPolicyAdd(obj interface{}) {
 	c.enqueueGatewaysForAccessPolicy(policy)
 }
 
-func (c *Controller) onAccessPolicyUpdate(old, new interface{}) {
+func (c *Controller) onAccessPolicyUpdate(old, newObj interface{}) {
 	oldPolicy := old.(*agenticv0alpha0.XAccessPolicy)
-	newPolicy := new.(*agenticv0alpha0.XAccessPolicy)
+	newPolicy := newObj.(*agenticv0alpha0.XAccessPolicy)
 	if newPolicy.Generation != oldPolicy.Generation || newPolicy.DeletionTimestamp != oldPolicy.DeletionTimestamp || !reflect.DeepEqual(newPolicy.Annotations, oldPolicy.Annotations) {
 		klog.V(4).InfoS("Updating AccessPolicy", "accesspolicy", klog.KObj(oldPolicy))
 		c.enqueueGatewaysForAccessPolicy(newPolicy)

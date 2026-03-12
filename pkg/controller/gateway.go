@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
@@ -70,14 +71,14 @@ func (c *Controller) onGatewayAdd(obj interface{}) {
 // deletion timestamp, or annotations have changed. This prevents the
 // controller from re-triggering a reconciliation in response to its own status
 // updates or periodic informer resyncs.
-func (c *Controller) onGatewayUpdate(old, new interface{}) {
+func (c *Controller) onGatewayUpdate(old, newObj interface{}) {
 	oldGW := old.(*gatewayv1.Gateway)
-	newGW := new.(*gatewayv1.Gateway)
+	newGW := newObj.(*gatewayv1.Gateway)
 	if !c.isGatewayOwnedByController(newGW) {
 		return
 	}
 	if newGW.Generation != oldGW.Generation || newGW.DeletionTimestamp != oldGW.DeletionTimestamp || !reflect.DeepEqual(newGW.Annotations, oldGW.Annotations) {
-		key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(new)
+		key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(newObj)
 		if err == nil {
 			c.gatewayqueue.Add(key)
 		}
@@ -110,7 +111,7 @@ func (c *Controller) onGatewayDelete(obj interface{}) {
 	klog.V(4).InfoS("Gateway deleted", "gateway", key)
 
 	// Trigger GatewayClass sync to allow it to remove finalizer if it was waiting on this Gateway.
-	c.syncGatewayClass(string(gw.Spec.GatewayClassName))
+	c.syncGatewayClass(context.Background(), string(gw.Spec.GatewayClassName))
 }
 
 // setGatewayConditions calculates and sets the final status conditions for the Gateway

@@ -27,7 +27,9 @@ import (
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
+
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 )
@@ -285,7 +287,7 @@ func TestConvertSAtoSPIFFEID(t *testing.T) {
 // rules are absent, no RBAC enforcement occurs.
 func TestRbacConfigFromAccessPolicy_DeletionBehaviour(t *testing.T) {
 	// Use a cache.Indexer to back the lister (simulates informer cache).
-	// Empty indexer = no AccessPolicies = "after deletion" behaviour.
+	// Empty indexer = no AccessPolicies = "after deletion" behavior.
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
 		cache.NamespaceIndex: cache.MetaNamespaceIndexFunc,
 	})
@@ -305,7 +307,7 @@ func TestRbacConfigFromAccessPolicy_DeletionBehaviour(t *testing.T) {
 	}
 
 	if rbacConfig.GetRules() != nil {
-		t.Errorf("expected no RBAC rules when no XAccessPolicy targets backend (deletion behaviour); rules present with %d policies", len(rbacConfig.GetRules().GetPolicies()))
+		t.Errorf("expected no RBAC rules when no XAccessPolicy targets backend (deletion behavior); rules present with %d policies", len(rbacConfig.GetRules().GetPolicies()))
 	}
 }
 
@@ -395,16 +397,16 @@ func verifyRBACConfigContainsRule(t *testing.T, rules *rbacconfigv3.RBAC, expect
 }
 
 func verifyRBACPolicyPrincipals(t *testing.T, policy *rbacconfigv3.Policy, expectedPrincipals []string) {
-	if len(policy.Principals) != len(expectedPrincipals) {
-		t.Errorf("expected %d principals, got %d", len(expectedPrincipals), len(policy.Principals))
+	if len(policy.GetPrincipals()) != len(expectedPrincipals) {
+		t.Errorf("expected %d principals, got %d", len(expectedPrincipals), len(policy.GetPrincipals()))
 	}
 	foundPrincipals := make(map[string]bool)
-	for _, p := range policy.Principals {
+	for _, p := range policy.GetPrincipals() {
 		auth := p.GetAuthenticated()
 		if auth != nil {
-			foundPrincipals[auth.PrincipalName.GetExact()] = true
-			if !slices.Contains(expectedPrincipals, auth.PrincipalName.GetExact()) {
-				t.Errorf("unexpected principal %q found in policy", auth.PrincipalName.GetExact())
+			foundPrincipals[auth.GetPrincipalName().GetExact()] = true
+			if !slices.Contains(expectedPrincipals, auth.GetPrincipalName().GetExact()) {
+				t.Errorf("unexpected principal %q found in policy", auth.GetPrincipalName().GetExact())
 			}
 		}
 	}
@@ -416,11 +418,11 @@ func verifyRBACPolicyPrincipals(t *testing.T, policy *rbacconfigv3.Policy, expec
 }
 
 func verifyRBACPolicyPermissions(t *testing.T, policy *rbacconfigv3.Policy, expectedPermissions []string) {
-	if len(policy.Permissions) != len(expectedPermissions) {
-		t.Errorf("expected %d permissions, got %d", len(expectedPermissions), len(policy.Permissions))
+	if len(policy.GetPermissions()) != len(expectedPermissions) {
+		t.Errorf("expected %d permissions, got %d", len(expectedPermissions), len(policy.GetPermissions()))
 	}
 	foundPermissions := make(map[string]bool)
-	for _, p := range policy.Permissions {
+	for _, p := range policy.GetPermissions() {
 		permExpr := permissionToExpr(p)
 		foundPermissions[permExpr] = true
 		if !slices.Contains(expectedPermissions, permExpr) {
@@ -441,26 +443,26 @@ func permissionToExpr(p *rbacconfigv3.Permission) string {
 		return "nil"
 	}
 
-	switch rule := p.Rule.(type) {
+	switch rule := p.GetRule().(type) {
 	case *rbacconfigv3.Permission_Any:
 		return "any"
 
 	case *rbacconfigv3.Permission_AndRules:
-		if rule.AndRules == nil || len(rule.AndRules.Rules) == 0 {
+		if rule.AndRules == nil || len(rule.AndRules.GetRules()) == 0 {
 			return ""
 		}
 		var exprs []string
-		for _, subRule := range rule.AndRules.Rules {
+		for _, subRule := range rule.AndRules.GetRules() {
 			exprs = append(exprs, permissionToExpr(subRule))
 		}
 		return "(" + strings.Join(exprs, " && ") + ")"
 
 	case *rbacconfigv3.Permission_OrRules:
-		if rule.OrRules == nil || len(rule.OrRules.Rules) == 0 {
+		if rule.OrRules == nil || len(rule.OrRules.GetRules()) == 0 {
 			return ""
 		}
 		var exprs []string
-		for _, subRule := range rule.OrRules.Rules {
+		for _, subRule := range rule.OrRules.GetRules() {
 			exprs = append(exprs, permissionToExpr(subRule))
 		}
 		return "(" + strings.Join(exprs, " || ") + ")"
@@ -472,9 +474,9 @@ func permissionToExpr(p *rbacconfigv3.Permission) string {
 		if rule.Header == nil {
 			return "header_match(nil)"
 		}
-		headerName := rule.Header.Name
+		headerName := rule.Header.GetName()
 		var matchValue string
-		switch match := rule.Header.HeaderMatchSpecifier.(type) {
+		switch match := rule.Header.GetHeaderMatchSpecifier().(type) {
 		case *routev3.HeaderMatcher_StringMatch:
 			matchValue = stringMatcherToExpr(match.StringMatch)
 		case *routev3.HeaderMatcher_PresentMatch:
@@ -485,20 +487,20 @@ func permissionToExpr(p *rbacconfigv3.Permission) string {
 		return fmt.Sprintf("request.header[%q]%s", headerName, matchValue)
 
 	case *rbacconfigv3.Permission_SourcedMetadata:
-		if rule.SourcedMetadata == nil || rule.SourcedMetadata.MetadataMatcher == nil {
+		if rule.SourcedMetadata == nil || rule.SourcedMetadata.GetMetadataMatcher() == nil {
 			return "metadata_match(nil)"
 		}
-		mm := rule.SourcedMetadata.MetadataMatcher
-		filter := mm.Filter
+		mm := rule.SourcedMetadata.GetMetadataMatcher()
+		filter := mm.GetFilter()
 		var pathStr string
-		for _, segment := range mm.Path {
-			if key, ok := segment.Segment.(*matcherv3.MetadataMatcher_PathSegment_Key); ok {
+		for _, segment := range mm.GetPath() {
+			if key, ok := segment.GetSegment().(*matcherv3.MetadataMatcher_PathSegment_Key); ok {
 				pathStr += "[" + fmt.Sprintf("%q", key.Key) + "]"
 			}
 		}
 		var valueStr string
-		if mm.Value != nil {
-			valueStr = valueMatcherToExpr(mm.Value)
+		if mm.GetValue() != nil {
+			valueStr = valueMatcherToExpr(mm.GetValue())
 		}
 		return fmt.Sprintf("metadata[%q]%s %s", filter, pathStr, valueStr)
 
@@ -513,7 +515,7 @@ func stringMatcherToExpr(sm *matcherv3.StringMatcher) string {
 		return "string_match(nil)"
 	}
 
-	switch strPattern := sm.MatchPattern.(type) {
+	switch strPattern := sm.GetMatchPattern().(type) {
 	case *matcherv3.StringMatcher_Exact:
 		return fmt.Sprintf("== %q", strPattern.Exact)
 	case *matcherv3.StringMatcher_Prefix:
@@ -531,16 +533,16 @@ func valueMatcherToExpr(vm *matcherv3.ValueMatcher) string {
 		return "nil"
 	}
 
-	switch pattern := vm.MatchPattern.(type) {
+	switch pattern := vm.GetMatchPattern().(type) {
 	case *matcherv3.ValueMatcher_StringMatch:
 		return stringMatcherToExpr(pattern.StringMatch)
 
 	case *matcherv3.ValueMatcher_OrMatch:
-		if pattern.OrMatch == nil || len(pattern.OrMatch.ValueMatchers) == 0 {
+		if pattern.OrMatch == nil || len(pattern.OrMatch.GetValueMatchers()) == 0 {
 			return ""
 		}
 		var exprs []string
-		for _, matcher := range pattern.OrMatch.ValueMatchers {
+		for _, matcher := range pattern.OrMatch.GetValueMatchers() {
 			exprs = append(exprs, valueMatcherToExpr(matcher))
 		}
 		return "(" + strings.Join(exprs, " || ") + ")"

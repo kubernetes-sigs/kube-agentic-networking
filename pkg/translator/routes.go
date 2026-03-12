@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -71,6 +72,9 @@ func isAllowedByListener(gateway *gatewayv1.Gateway, listener gatewayv1.Listener
 			return false
 		}
 		namespaceAllowed = selector.Matches(labels.Set(routeNsObj.GetLabels()))
+	case gatewayv1.NamespacesFromNone:
+		klog.Warningf("Route %s/%s is not allowed to attach to Gateway %s/%s, Listener %s because allowed.namespaces.from is set to None", routeNamespace, route.GetName(), gatewayNamespace, gateway.GetName(), listener.Name)
+		return false
 	default:
 		klog.Errorf("Unknown 'From' value %q in AllowedRoutes.Namespaces for Gateway %s/%s, Listener %s", effectiveFrom, gatewayNamespace, gateway.GetName(), listener.Name)
 		return false

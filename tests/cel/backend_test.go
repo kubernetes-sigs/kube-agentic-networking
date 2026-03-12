@@ -23,6 +23,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
@@ -48,7 +49,7 @@ func TestValidateXBackend(t *testing.T) {
 	}{
 		{
 			desc: "valid backend with serviceName",
-			mutate: func(b *v0alpha0.XBackend) {
+			mutate: func(_ *v0alpha0.XBackend) {
 			},
 		},
 		{

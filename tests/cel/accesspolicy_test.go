@@ -24,7 +24,9 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
@@ -66,7 +68,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 	}{
 		{
 			desc: "valid policy",
-			mutate: func(p *v0alpha0.XAccessPolicy) {
+			mutate: func(_ *v0alpha0.XAccessPolicy) {
 			},
 		},
 		{
@@ -173,7 +175,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			desc: "missing authorization for ExternalAuth type",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
-					Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+					Type:  v0alpha0.AuthorizationRuleTypeExternalAuth,
 					Tools: []string{"tool-1"},
 				}
 			},
@@ -183,7 +185,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			desc: "multiple authorization rule types specified",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
-					Type: v0alpha0.AuthorizationRuleTypeInlineTools,
+					Type:  v0alpha0.AuthorizationRuleTypeInlineTools,
 					Tools: []string{"tool-1"},
 					ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
 						ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
@@ -198,7 +200,6 @@ func TestValidateXAccessPolicy(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-
 			p := basePolicy.DeepCopy()
 			p.Name = fmt.Sprintf("foo-%v", time.Now().UnixNano())
 

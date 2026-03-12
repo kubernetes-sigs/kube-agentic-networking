@@ -31,7 +31,9 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
@@ -42,7 +44,6 @@ import (
 func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 	httpRoute *gatewayv1.HTTPRoute,
 ) ([]*routev3.Route, []*routeBackend, metav1.Condition) {
-
 	var envoyRoutes []*routev3.Route
 	var allValidBackends []*routeBackend
 	overallCondition := createSuccessCondition(httpRoute.Generation)
@@ -69,6 +70,12 @@ func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 				headersToRemove = append(headersToRemove, removes...)
 			case gatewayv1.HTTPRouteFilterURLRewrite:
 				urlRewriteAction = processURLRewriteFilter(filter.URLRewrite)
+			case gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+				gatewayv1.HTTPRouteFilterRequestMirror,
+				gatewayv1.HTTPRouteFilterCORS,
+				gatewayv1.HTTPRouteFilterExternalAuth,
+				gatewayv1.HTTPRouteFilterExtensionRef:
+				klog.Warningf("Unsupported HTTPRoute filter type: %s", filter.Type)
 			default:
 				// Unsupported/ignored filter types are skipped here.
 				klog.Warningf("Unsupported HTTPRoute filter type: %s", filter.Type)
@@ -114,9 +121,9 @@ func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 
 				// If a URLRewrite filter was present, merge its properties into the RouteAction.
 				if urlRewriteAction != nil {
-					routeAction.HostRewriteSpecifier = urlRewriteAction.HostRewriteSpecifier
-					routeAction.RegexRewrite = urlRewriteAction.RegexRewrite
-					routeAction.PrefixRewrite = urlRewriteAction.PrefixRewrite
+					routeAction.HostRewriteSpecifier = urlRewriteAction.GetHostRewriteSpecifier()
+					routeAction.RegexRewrite = urlRewriteAction.GetRegexRewrite()
+					routeAction.PrefixRewrite = urlRewriteAction.GetPrefixRewrite()
 				}
 
 				envoyRoute.Action = &routev3.Route_Route{
@@ -155,7 +162,6 @@ func processURLRewriteFilter(f *gatewayv1.HTTPURLRewriteFilter) *routev3.RouteAc
 			HostRewriteLiteral: string(*f.Hostname),
 		}
 		rewriteActionSet = true
-
 	}
 
 	// Handle path rewrite.
@@ -258,9 +264,10 @@ func processRequestHeaderModifierFilter(f *gatewayv1.HTTPHeaderFilter) ([]*corev
 }
 
 // buildHTTPRouteAction returns an action, a list of *valid* route backends (XBackend or Service), and a structured error.
-func (t *Translator) buildHTTPRouteAction(namespace string,
-	backendRefs []gatewayv1.HTTPBackendRef) (*routev3.RouteAction, []*routeBackend, error) {
-
+func (t *Translator) buildHTTPRouteAction(
+	namespace string,
+	backendRefs []gatewayv1.HTTPBackendRef,
+) (*routev3.RouteAction, []*routeBackend, error) {
 	weightedClusters := &routev3.WeightedCluster{}
 	var validBackends []*routeBackend
 
@@ -279,7 +286,8 @@ func (t *Translator) buildHTTPRouteAction(namespace string,
 		}
 
 		clusterWeight := &routev3.WeightedCluster_ClusterWeight{
-			Name:   rb.ClusterName(),
+			Name: rb.ClusterName(),
+			//nolint:gosec // G115: weight values are safe to cast to uint32
 			Weight: &wrapperspb.UInt32Value{Value: uint32(weight)},
 		}
 
@@ -299,7 +307,7 @@ func (t *Translator) buildHTTPRouteAction(namespace string,
 		weightedClusters.Clusters = append(weightedClusters.Clusters, clusterWeight)
 	}
 
-	if len(weightedClusters.Clusters) == 0 {
+	if len(weightedClusters.GetClusters()) == 0 {
 		return nil, nil, &ControllerError{Reason: string(gatewayv1.RouteReasonUnsupportedValue), Message: "no valid backends provided with a weight > 0"}
 	}
 

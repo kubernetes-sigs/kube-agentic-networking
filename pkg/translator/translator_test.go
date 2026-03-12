@@ -34,9 +34,11 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions"
+
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/fake"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
@@ -207,6 +209,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			ctx := context.Background()
 			k8sClient := fake.NewClientset(tc.mcpSvc)
 			gwClient := gatewayclient.NewClientset(tc.gw, tc.route)
+			//nolint:staticcheck // generated clientset doesn't have NewClientset without applyconfig
 			agenticClient := agenticclient.NewSimpleClientset(tc.backend, tc.policy)
 
 			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
@@ -250,7 +253,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				found := false
 				for _, res := range listeners {
 					lis := res.(*listenerv3.Listener)
-					if lis.Name == expectedName {
+					if lis.GetName() == expectedName {
 						found = true
 						checkListenerMTLS(t, lis)
 					}
@@ -269,7 +272,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				found := false
 				for _, res := range routes {
 					rc := res.(*routev3.RouteConfiguration)
-					if rc.Name == expectedName {
+					if rc.GetName() == expectedName {
 						found = true
 						checkRouteRBAC(t, rc, tc.expected.spiffeID)
 					}
@@ -288,7 +291,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				found := false
 				for _, res := range clusters {
 					cl := res.(*clusterv3.Cluster)
-					if cl.Name == expectedName {
+					if cl.GetName() == expectedName {
 						found = true
 					}
 				}
@@ -345,40 +348,40 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 
 func checkListenerMTLS(t *testing.T, lis *listenerv3.Listener) {
 	foundTLS := false
-	for _, fc := range lis.FilterChains {
-		if fc.TransportSocket != nil && fc.TransportSocket.Name == "envoy.transport_sockets.tls" {
+	for _, fc := range lis.GetFilterChains() {
+		if fc.GetTransportSocket() != nil && fc.GetTransportSocket().GetName() == "envoy.transport_sockets.tls" {
 			foundTLS = true
 			tlsContext := &tlsv3.DownstreamTlsContext{}
-			if err := fc.TransportSocket.GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
+			if err := fc.GetTransportSocket().GetTypedConfig().UnmarshalTo(tlsContext); err != nil {
 				t.Fatalf("failed to unmarshal TLS context: %v", err)
 			}
-			if !tlsContext.RequireClientCertificate.GetValue() {
+			if !tlsContext.GetRequireClientCertificate().GetValue() {
 				t.Error("RequireClientCertificate should be true for mTLS")
 			}
 
 			// Verify SDS config names
-			common := tlsContext.CommonTlsContext
-			if common.TlsCertificateSdsSecretConfigs[0].Name != constants.SpiffeIdentitySdsConfigName {
-				t.Errorf("Identity SDS config name mismatch: got %s, want %s", common.TlsCertificateSdsSecretConfigs[0].Name, constants.SpiffeIdentitySdsConfigName)
+			common := tlsContext.GetCommonTlsContext()
+			if common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != constants.SpiffeIdentitySdsConfigName {
+				t.Errorf("Identity SDS config name mismatch: got %s, want %s", common.GetTlsCertificateSdsSecretConfigs()[0].GetName(), constants.SpiffeIdentitySdsConfigName)
 			}
-			if common.GetValidationContextSdsSecretConfig().Name != constants.SpiffeTrustSdsConfigName {
-				t.Errorf("Trust SDS config name mismatch: got %s, want %s", common.GetValidationContextSdsSecretConfig().Name, constants.SpiffeTrustSdsConfigName)
+			if common.GetValidationContextSdsSecretConfig().GetName() != constants.SpiffeTrustSdsConfigName {
+				t.Errorf("Trust SDS config name mismatch: got %s, want %s", common.GetValidationContextSdsSecretConfig().GetName(), constants.SpiffeTrustSdsConfigName)
 			}
 		}
 	}
 	if !foundTLS {
-		t.Errorf("mTLS transport socket configuration not found in listener %s", lis.Name)
+		t.Errorf("mTLS transport socket configuration not found in listener %s", lis.GetName())
 	}
 }
 
 func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrincipal string) {
 	foundRBAC := false
-	for _, vh := range rc.VirtualHosts {
-		for _, r := range vh.Routes {
+	for _, vh := range rc.GetVirtualHosts() {
+		for _, r := range vh.GetRoutes() {
 			if routeAction := r.GetRoute(); routeAction != nil {
 				if weightedClusters := routeAction.GetWeightedClusters(); weightedClusters != nil {
-					for _, wc := range weightedClusters.Clusters {
-						if rbacAny, ok := wc.TypedPerFilterConfig[wellknown.HTTPRoleBasedAccessControl]; ok {
+					for _, wc := range weightedClusters.GetClusters() {
+						if rbacAny, ok := wc.GetTypedPerFilterConfig()[wellknown.HTTPRoleBasedAccessControl]; ok {
 							foundRBAC = true
 							rbacPerRoute := &rbacv3.RBACPerRoute{}
 							if err := rbacAny.UnmarshalTo(rbacPerRoute); err != nil {
@@ -386,10 +389,10 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 							}
 
 							foundPrincipal := false
-							for _, policy := range rbacPerRoute.Rbac.Rules.Policies {
-								for _, princ := range policy.Principals {
+							for _, policy := range rbacPerRoute.GetRbac().GetRules().GetPolicies() {
+								for _, princ := range policy.GetPrincipals() {
 									if auth := princ.GetAuthenticated(); auth != nil {
-										if auth.PrincipalName.GetExact() == expectedPrincipal {
+										if auth.GetPrincipalName().GetExact() == expectedPrincipal {
 											foundPrincipal = true
 											break
 										}
@@ -400,7 +403,7 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 								}
 							}
 							if !foundPrincipal {
-								t.Errorf("RBAC policy for cluster %s missing expected principal: %s", wc.Name, expectedPrincipal)
+								t.Errorf("RBAC policy for cluster %s missing expected principal: %s", wc.GetName(), expectedPrincipal)
 							}
 						}
 					}
@@ -409,6 +412,6 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 		}
 	}
 	if !foundRBAC {
-		t.Errorf("RBAC per-cluster config not found in route configuration %s", rc.Name)
+		t.Errorf("RBAC per-cluster config not found in route configuration %s", rc.GetName())
 	}
 }

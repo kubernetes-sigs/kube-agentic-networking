@@ -44,7 +44,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
@@ -176,7 +178,7 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 	// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/95
 	if lis.Protocol == gatewayv1.HTTPSProtocolType || lis.Protocol == gatewayv1.TLSProtocolType {
 		if lis.Hostname != nil && *lis.Hostname != "" {
-			if filterChain.FilterChainMatch == nil {
+			if filterChain.GetFilterChainMatch() == nil {
 				filterChain.FilterChainMatch = &listener.FilterChainMatch{}
 			}
 			filterChain.FilterChainMatch.ServerNames = []string{string(*lis.Hostname)}
@@ -577,11 +579,11 @@ func buildDownstreamTLSContext() (*anypb.Any, error) {
 		RequireClientCertificate: wrapperspb.Bool(true),
 	}
 
-	any, err := anypb.New(tlsContext)
+	anyObj, err := anypb.New(tlsContext)
 	if err != nil {
 		return nil, err
 	}
-	return any, nil
+	return anyObj, nil
 }
 
 func createEnvoyAddress(port uint32) *corev3.Address {

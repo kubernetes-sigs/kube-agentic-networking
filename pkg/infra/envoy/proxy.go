@@ -33,6 +33,7 @@ import (
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -174,8 +175,8 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		}
 	}
 
-	if err := waitForServiceReady(ctx, r.client, service.Namespace, service.Name); err != nil {
-		return "", err
+	if errWait := waitForServiceReady(ctx, r.client, service.Namespace, service.Name); errWait != nil {
+		return "", errWait
 	}
 	logger.Info("Envoy proxy service is ready!")
 

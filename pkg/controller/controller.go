@@ -44,6 +44,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
@@ -184,7 +185,7 @@ func New(
 	)
 
 	// Setup event handlers for all relevant resources.
-	if err := c.setupGatewayClassEventHandlers(gatewayClassInformer); err != nil {
+	if err := c.setupGatewayClassEventHandlers(ctx, gatewayClassInformer); err != nil {
 		return nil, err
 	}
 	if err := c.setupGatewayEventHandlers(gatewayInformer); err != nil {
@@ -313,7 +314,7 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		runtime.HandleError(fmt.Errorf("invalid resource key: %s", key))
+		runtime.HandleError(fmt.Errorf("invalid resource key: %s (err: %w)", key, err))
 		return nil
 	}
 
@@ -344,13 +345,13 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 			logger.V(4).Info("Gateway has HTTPRoutes still referencing it, blocking deletion")
 			return nil
 		}
-		if err := envoy.DeleteProxy(ctx, c.core.client, namespace, name); err != nil {
-			return err
+		if errDel := envoy.DeleteProxy(ctx, c.core.client, namespace, name); errDel != nil {
+			return errDel
 		}
 		newGW := gateway.DeepCopy()
 		if removeFinalizer(&newGW.ObjectMeta, constants.GatewayFinalizer) {
-			if _, err := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); err != nil {
-				return fmt.Errorf("failed to remove finalizer from Gateway: %w", err)
+			if _, errUpdate := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); errUpdate != nil {
+				return fmt.Errorf("failed to remove finalizer from Gateway: %w", errUpdate)
 			}
 		}
 		return nil
@@ -358,8 +359,8 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 
 	newGW := gateway.DeepCopy()
 	if ensureFinalizer(&newGW.ObjectMeta, constants.GatewayFinalizer) {
-		if _, err := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("failed to add finalizer to Gateway: %w", err)
+		if _, errUpdate := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); errUpdate != nil {
+			return fmt.Errorf("failed to add finalizer to Gateway: %w", errUpdate)
 		}
 		c.gatewayqueue.Add(key)
 		return nil

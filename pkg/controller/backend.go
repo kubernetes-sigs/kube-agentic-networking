@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -50,9 +51,9 @@ func (c *Controller) onBackendAdd(obj interface{}) {
 	c.enqueueGatewaysForBackend(backend)
 }
 
-func (c *Controller) onBackendUpdate(old, new interface{}) {
+func (c *Controller) onBackendUpdate(old, newObj interface{}) {
 	oldBackend := old.(*agenticv0alpha0.XBackend)
-	newBackend := new.(*agenticv0alpha0.XBackend)
+	newBackend := newObj.(*agenticv0alpha0.XBackend)
 	if newBackend.Generation != oldBackend.Generation || newBackend.DeletionTimestamp != oldBackend.DeletionTimestamp || !reflect.DeepEqual(newBackend.Annotations, oldBackend.Annotations) {
 		klog.V(4).InfoS("Updating Backend", "backend", klog.KObj(oldBackend))
 		c.enqueueBackendForFinalizer(newBackend)

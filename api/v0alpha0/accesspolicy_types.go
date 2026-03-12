@@ -20,6 +20,7 @@ package v0alpha0
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -65,7 +66,6 @@ type AccessRule struct {
 // Type must be set to indicate the type of source type.
 // Similarly, either SPIFFE or Serviceaccount can be set based on the type.
 type Source struct {
-
 	// +unionDiscriminator
 	// +required
 	Type AuthorizationSourceType `json:"type"`

@@ -26,6 +26,7 @@ import (
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
@@ -73,9 +74,9 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 	c.enqueueGatewaysForService(svc)
 }
 
-func (c *Controller) onServiceUpdate(old, new interface{}) {
+func (c *Controller) onServiceUpdate(old, newObj interface{}) {
 	oldSvc := old.(*corev1.Service)
-	newSvc := new.(*corev1.Service)
+	newSvc := newObj.(*corev1.Service)
 
 	if !reflect.DeepEqual(oldSvc.Spec.ClusterIPs, newSvc.Spec.ClusterIPs) ||
 		newSvc.DeletionTimestamp != oldSvc.DeletionTimestamp ||

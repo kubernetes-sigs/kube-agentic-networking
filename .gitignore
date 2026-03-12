@@ -1,6 +1,7 @@
 # Binaries
 bin/
 cache/
+.cache/
 
 # Python cache files
 **/__pycache__/
