@@ -247,6 +247,7 @@ Q: I see errors like `litellm.BadRequestError: HuggingfaceException - {"object":
 A: Hugging Face model public inferencing endpoints can be unstable. As a quick mitigation, point the agent at a different model by overriding the HF_MODEL env var in the agent deployment and restart the pods.
 
 Examples of alternative model IDs to try:
+
 - huggingface/Qwen/Qwen2.5-72B-Instruct
 - huggingface/meta-llama/Llama-3.1-8B-Instruct
 - huggingface/google/gemma-2-2b-it
@@ -260,6 +261,7 @@ kubectl rollout restart deployment/adk-agent -n quickstart-ns
 ```
 
 Tips:
+
 - Try smaller models first to avoid backend load/timeouts.
 - Check agent and sidecar logs for more details when errors occur.
 - Consider a paid Hugging Face Inference API or self-hosting if reliability is critical.
