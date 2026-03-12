@@ -184,7 +184,7 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 
 // addPolicyToRBACRules mutates the RBAC config by adding the given policy to the Rules section with the specified name.
 func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
-	if rbacConfig.Rules == nil {
+	if rbacConfig.GetRules() == nil {
 		rbacConfig.Rules = &rbacconfigv3.RBAC{
 			Action:   rbacconfigv3.RBAC_ALLOW,
 			Policies: map[string]*rbacconfigv3.Policy{},
@@ -195,7 +195,7 @@ func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rb
 
 // addPolicyToRBACRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
 func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
-	if rbacConfig.ShadowRules == nil {
+	if rbacConfig.GetShadowRules() == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
 			Action:   rbacconfigv3.RBAC_DENY, // the action for the shadow rule doesn't really matter in this case since we only use it to trigger ext_authz from emitted stats
 			Policies: map[string]*rbacconfigv3.Policy{},

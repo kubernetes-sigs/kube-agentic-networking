@@ -180,7 +180,7 @@ func New(
 	)
 
 	// Setup event handlers for all relevant resources.
-	if err := c.setupGatewayClassEventHandlers(gatewayClassInformer); err != nil {
+	if err := c.setupGatewayClassEventHandlers(ctx, gatewayClassInformer); err != nil {
 		return nil, err
 	}
 	if err := c.setupGatewayEventHandlers(gatewayInformer); err != nil {
@@ -304,7 +304,7 @@ func (c *Controller) syncHandler(ctx context.Context, key string) error {
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		runtime.HandleError(fmt.Errorf("invalid resource key: %s", key))
+		runtime.HandleError(fmt.Errorf("invalid resource key: %s (err: %w)", key, err))
 		return nil
 	}
 

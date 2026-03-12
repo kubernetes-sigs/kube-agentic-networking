@@ -71,6 +71,8 @@ func isAllowedByListener(gateway *gatewayv1.Gateway, listener gatewayv1.Listener
 			return false
 		}
 		namespaceAllowed = selector.Matches(labels.Set(routeNsObj.GetLabels()))
+	case gatewayv1.NamespacesFromNone:
+		return false
 	default:
 		klog.Errorf("Unknown 'From' value %q in AllowedRoutes.Namespaces for Gateway %s/%s, Listener %s", effectiveFrom, gatewayNamespace, gateway.GetName(), listener.Name)
 		return false

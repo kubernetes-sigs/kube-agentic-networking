@@ -50,9 +50,9 @@ func (c *Controller) onBackendAdd(obj interface{}) {
 	c.enqueueGatewaysForBackend(backend)
 }
 
-func (c *Controller) onBackendUpdate(old, new interface{}) {
+func (c *Controller) onBackendUpdate(old, newObj interface{}) {
 	oldBackend := old.(*agenticv0alpha0.XBackend)
-	newBackend := new.(*agenticv0alpha0.XBackend)
+	newBackend := newObj.(*agenticv0alpha0.XBackend)
 	if newBackend.Generation != oldBackend.Generation || newBackend.DeletionTimestamp != oldBackend.DeletionTimestamp || !reflect.DeepEqual(newBackend.Annotations, oldBackend.Annotations) {
 		klog.V(4).InfoS("Updating Backend", "backend", klog.KObj(oldBackend))
 		c.enqueueBackendForFinalizer(newBackend)

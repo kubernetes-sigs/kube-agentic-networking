@@ -33,7 +33,7 @@ type mockAccessPolicyLister struct {
 	agenticlisters.XAccessPolicyLister
 }
 
-func (m *mockAccessPolicyLister) List(selector labels.Selector) (ret []*apiv0alpha0.XAccessPolicy, err error) {
+func (m *mockAccessPolicyLister) List(_ labels.Selector) ([]*apiv0alpha0.XAccessPolicy, error) {
 	return nil, nil
 }
 
@@ -53,18 +53,18 @@ func TestBuildDownstreamTLSContext(t *testing.T) {
 	}
 
 	// Verify mTLS requirement
-	if tlsContext.RequireClientCertificate == nil || !tlsContext.RequireClientCertificate.Value {
+	if tlsContext.GetRequireClientCertificate() == nil || !tlsContext.GetRequireClientCertificate().GetValue() {
 		t.Errorf("RequireClientCertificate should be true for mTLS")
 	}
 
 	// Verify SDS Config Names
-	common := tlsContext.CommonTlsContext
-	if len(common.TlsCertificateSdsSecretConfigs) != 1 || common.TlsCertificateSdsSecretConfigs[0].Name != constants.SpiffeIdentitySdsConfigName {
+	common := tlsContext.GetCommonTlsContext()
+	if len(common.GetTlsCertificateSdsSecretConfigs()) != 1 || common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != constants.SpiffeIdentitySdsConfigName {
 		t.Errorf("Identity SDS secret config name mismatch")
 	}
 
 	validation := common.GetValidationContextSdsSecretConfig()
-	if validation == nil || validation.Name != constants.SpiffeTrustSdsConfigName {
+	if validation == nil || validation.GetName() != constants.SpiffeTrustSdsConfigName {
 		t.Errorf("Trust SDS secret config name mismatch")
 	}
 }
@@ -117,16 +117,14 @@ func TestTranslateListenerToFilterChain(t *testing.T) {
 			}
 
 			if len(tc.expectedServerNames) > 0 {
-				if fc.FilterChainMatch == nil {
+				if fc.GetFilterChainMatch() == nil {
 					t.Fatal("expected FilterChainMatch to be set")
 				}
-				if !reflect.DeepEqual(fc.FilterChainMatch.ServerNames, tc.expectedServerNames) {
-					t.Errorf("expected ServerNames %v, got %v", tc.expectedServerNames, fc.FilterChainMatch.ServerNames)
+				if !reflect.DeepEqual(fc.GetFilterChainMatch().GetServerNames(), tc.expectedServerNames) {
+					t.Errorf("expected ServerNames %v, got %v", tc.expectedServerNames, fc.GetFilterChainMatch().GetServerNames())
 				}
-			} else {
-				if fc.FilterChainMatch != nil && len(fc.FilterChainMatch.ServerNames) > 0 {
-					t.Errorf("expected no ServerNames in FilterChainMatch, got %v", fc.FilterChainMatch.ServerNames)
-				}
+			} else if fc.GetFilterChainMatch() != nil && len(fc.GetFilterChainMatch().GetServerNames()) > 0 {
+				t.Errorf("expected no ServerNames in FilterChainMatch, got %v", fc.GetFilterChainMatch().GetServerNames())
 			}
 		})
 	}

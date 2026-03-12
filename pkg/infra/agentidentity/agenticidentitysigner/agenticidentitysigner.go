@@ -109,7 +109,7 @@ func (h *Impl) DesiredClusterTrustBundles() []*certsv1beta1.ClusterTrustBundle {
 	}
 }
 
-func (h *Impl) MakeCert(ctx context.Context, pcr *certsv1beta1.PodCertificateRequest) (*certsv1beta1.PodCertificateRequest, error) {
+func (h *Impl) MakeCert(_ context.Context, pcr *certsv1beta1.PodCertificateRequest) (*certsv1beta1.PodCertificateRequest, error) {
 	curPool := h.caSource.Pool()
 
 	lifetime := 24 * time.Hour

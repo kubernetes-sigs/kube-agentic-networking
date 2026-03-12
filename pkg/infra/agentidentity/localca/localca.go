@@ -139,13 +139,13 @@ type CA struct {
 }
 
 type serializedPool struct {
-	CAs []*serializedCA
+	CAs []*serializedCA `json:"cas"`
 }
 type serializedCA struct {
-	ID                          string
-	SigningKeyPKCS8             []byte
-	RootCertificateDER          []byte
-	IntermediateCertificatesDER [][]byte
+	ID                          string   `json:"id"`
+	SigningKeyPKCS8             []byte   `json:"signingKeyPKCS8"`
+	RootCertificateDER          []byte   `json:"rootCertificateDER"`
+	IntermediateCertificatesDER [][]byte `json:"intermediateCertificatesDER"`
 }
 
 // Marshal writes the given Pool to JSON.
