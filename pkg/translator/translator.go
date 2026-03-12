@@ -23,7 +23,6 @@ import (
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	httpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
@@ -286,7 +285,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			}
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
-			filterChain, err := t.translateListenerToFilterChain(listener, routeName, t.accessPolicyLister)
+			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway)
 			if err != nil {
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
@@ -346,7 +345,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			// For HTTPS, we create one filter chain per listener because they have unique
 			// SNI matches and TLS settings.
 			if listeners[0].Protocol == gatewayv1.HTTPProtocolType {
-				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, t.accessPolicyLister)
+				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, gateway)
 				envoyListener.FilterChains = []*listenerv3.FilterChain{filterChain}
 			}
 			finalEnvoyListeners = append(finalEnvoyListeners, envoyListener)
@@ -526,34 +525,6 @@ func (t *Translator) validateHTTPRoute(
 	}
 
 	return parentStatuses, allAcceptingListeners
-}
-
-func createClusterLoadAssignment(clusterName, serviceHost string, servicePort uint32) *endpointv3.ClusterLoadAssignment {
-	return &endpointv3.ClusterLoadAssignment{
-		ClusterName: clusterName,
-		Endpoints: []*endpointv3.LocalityLbEndpoints{
-			{
-				LbEndpoints: []*endpointv3.LbEndpoint{
-					{
-						HostIdentifier: &endpointv3.LbEndpoint_Endpoint{
-							Endpoint: &endpointv3.Endpoint{
-								Address: &corev3.Address{
-									Address: &corev3.Address_SocketAddress{
-										SocketAddress: &corev3.SocketAddress{
-											Address: serviceHost,
-											PortSpecifier: &corev3.SocketAddress_PortValue{
-												PortValue: servicePort,
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
 }
 
 func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolicyLister) map[string]envoyproxytypes.Resource {

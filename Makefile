@@ -40,20 +40,23 @@ validate-python:
 # Run go fmt against code
 .PHONY: fmt
 fmt: ;$(info $(M)...Begin to run go fmt against code.)  @ ## Run go fmt against code.
-	gofmt -w ./pkg
+	go fmt ./...
+	cd tests && go fmt ./...
 
 # Run go vet against code
 .PHONY: vet
 vet: ;$(info $(M)...Begin to run go vet against code.)  @ ## Run go vet against code.
-	go vet ./pkg/...
+	go vet ./...
+	cd tests && go vet ./...
 
 # Run go test against code
 .PHONY: test
-test: vet test-pkg test-cel test-crd ## Run all tests.
+test: vet test-unit test-cel test-crd ## Run all tests.
 
-.PHONY: test-pkg
-test-pkg: ;$(info $(M)...Running pkg tests.) @ ## Run pkg tests.
-	go test -race -cover ./pkg/...
+.PHONY: test-unit
+test-unit: ;$(info $(M)...Running unit tests.) @ ## Run unit tests for packages with test files.
+	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./api/... ./pkg/... | xargs go test -race -cover
+
 
 .PHONY: test-cel
 test-cel: ;$(info $(M)...Running CEL tests.) @ ## Run CEL tests.
@@ -87,7 +90,7 @@ SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/
 # The root directory where client code will be placed.
 CLIENT_OUTPUT_DIR := $(REPO_ROOT)/k8s/client
 # The root Go package for your generated client code.
-CLIENT_OUTPUT_PKG := $(shell go list -m)/k8s/client
+CLIENT_OUTPUT_PKG := $(shell go list -m | head -n 1)/k8s/client
 BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 
 

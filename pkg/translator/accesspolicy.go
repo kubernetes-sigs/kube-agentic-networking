@@ -22,11 +22,15 @@ import (
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
+	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
-	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 const (
@@ -55,55 +59,166 @@ const (
 	externalAuthzShadowRulePrefix = "access_policy_ext_authz"
 )
 
-// rbacConfigFromAccessPolicy generates all RBAC policies for a given backend, including common policies
-// and those derived from AccessPolicy resources.
-func (t *Translator) rbacConfigFromAccessPolicy(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (*rbacv3.RBAC, error) {
-	rbacConfig := &rbacv3.RBAC{}
+// buildGatewayLevelRBACFilters finds all AccessPolicies targeting the Gateway and translates them into HTTP filters.
+func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
+	gwPolicies, err := t.findAccessPoliciesForTarget(gatewayv1.GroupName, "Gateway", gateway.Namespace, gateway.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
+	}
 
-	// Add AccessPolicy-derived RBAC policies when one targets this backend.
-	// Currently, we assume only one AccessPolicy targets a given backend.
-	accessPolicy, err := findAccessPolicyForBackend(backend, accessPolicyLister)
+	var filters []*hcm.HttpFilter
+	for i, policy := range gwPolicies {
+		rbacProto := t.buildRBACConfigWithCommonPolicies(policy)
+		rbacAny, err := anypb.New(rbacProto)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, &hcm.HttpFilter{
+			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, i+1),
+			ConfigType: &hcm.HttpFilter_TypedConfig{
+				TypedConfig: rbacAny,
+			},
+		})
+	}
+	return filters, nil
+}
+
+// buildBackendLevelRBACFilters creates placeholder RBAC filters for backends.
+// These will be overridden at the cluster level by actual policies.
+func (t *Translator) buildBackendLevelRBACFilters(count int) ([]*hcm.HttpFilter, error) {
+	var filters []*hcm.HttpFilter
+	rbacProto := &rbacv3.RBAC{}
+	rbacAny, err := anypb.New(rbacProto)
 	if err != nil {
 		return nil, err
 	}
-	if accessPolicy != nil {
-		rbacConfig = t.translatesAccessPolicyToRBAC(accessPolicy)
-	} else {
-		// No AccessPolicy targets this backend. Per Envoy RBAC docs, when rules are absent, no RBAC enforcement occurs (allow all).
-		// See https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/rbac/v3/rbac.proto
-		return rbacConfig, nil
+
+	for i := 0; i < count; i++ {
+		filters = append(filters, &hcm.HttpFilter{
+			Name: fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1),
+			ConfigType: &hcm.HttpFilter_TypedConfig{
+				TypedConfig: rbacAny,
+			},
+		})
+	}
+	return filters, nil
+}
+
+// calculateMaxBackendRBACFilters determines the maximum number of backend-level RBAC filters
+// needed for a Gateway by inspecting all reachable XBackends.
+func (t *Translator) calculateMaxBackendRBACFilters(gateway *gatewayv1.Gateway) int {
+	maxCount := 0
+
+	// 1. Identify all HTTPRoutes targeting this Gateway.
+	routes := t.getHTTPRoutesForGateway(gateway)
+
+	// 2. Identify all unique XBackends referenced by these routes.
+	backendNames := make(map[types.NamespacedName]struct{})
+	for _, route := range routes {
+		for _, rule := range route.Spec.Rules {
+			for _, beRef := range rule.BackendRefs {
+				if beRef.Group != nil && *beRef.Group == agenticv0alpha0.GroupName &&
+					beRef.Kind != nil && *beRef.Kind == "XBackend" {
+
+					ns := route.Namespace
+					if beRef.Namespace != nil {
+						ns = string(*beRef.Namespace)
+					}
+					backendNames[types.NamespacedName{Namespace: ns, Name: string(beRef.Name)}] = struct{}{}
+				}
+			}
+		}
 	}
 
-	// It's deny-by-default (a.k.a ALLOW action), we explicitly allow necessary
-	// MCP operations for all backends. These policies are essential for MCP
-	// session management and tool initialization.
+	// 3. For each backend, count its accepted policies.
+	for beKey := range backendNames {
+		policies, err := t.findAccessPoliciesForTarget(agenticv0alpha0.GroupName, "XBackend", beKey.Namespace, beKey.Name)
+		if err != nil {
+			klog.Errorf("Failed to count policies for backend %s: %v", beKey, err)
+			continue
+		}
+
+		count := len(policies)
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+
+	return maxCount
+}
+
+// buildBackendLevelRBACOverrides creates the TypedPerFilterConfig for a cluster, specifically for the RBAC filter overrides.
+func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBackend) (map[string]*anypb.Any, error) {
+	perFilterConfig := make(map[string]*anypb.Any)
+
+	// 1. Find and sort AccessPolicies targeting the Backend.
+	backendPolicies, err := t.findAccessPoliciesForTarget(agenticv0alpha0.GroupName, "XBackend", backend.Namespace, backend.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, policy := range backendPolicies {
+		// Envoy's per-cluster configuration requires an RBACPerRoute message containing
+		// RBAC rules derived from AccessPolicy resources targeting this backend.
+		rbacConfig := t.buildRBACConfigWithCommonPolicies(policy)
+		rbacPerRouteProto := &rbacv3.RBACPerRoute{
+			Rbac: rbacConfig,
+		}
+
+		// Marshal the RBAC config into an Any proto.
+		rbacAny, err := anypb.New(rbacPerRouteProto)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal RBACPerRoute proto: %w", err)
+		}
+
+		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
+		perFilterConfig[filterName] = rbacAny
+	}
+
+	return perFilterConfig, nil
+}
+
+// buildRBACConfigWithCommonPolicies generates an RBAC config for an AccessPolicy.
+// It includes the common policies needed for MCP session management to avoid blocking basic operations.
+func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
+	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy)
+
+	// Add common policies to avoid blocking basic MCP operations.
+	// These are added to the 'Rules' section which is where allowed traffic is defined.
 	addPolicyToRBACRules(rbacConfig, allowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
 	addPolicyToRBACRules(rbacConfig, allowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
 	addPolicyToRBACRules(rbacConfig, allowHTTPGet, buildAllowHTTPGetPolicy())
 
-	return rbacConfig, nil
+	return rbacConfig
 }
 
-// findAccessPolicyForBackend finds the AccessPolicy that targets the given backend.
-// It assumes that there is only one AccessPolicy for each backend.
-func findAccessPolicyForBackend(backend *agenticv0alpha0.XBackend, accessPolicyLister agenticlisters.XAccessPolicyLister) (*agenticv0alpha0.XAccessPolicy, error) {
-	// List all AccessPolicies in the Backend's namespace.
-	allAccessPolicies, err := accessPolicyLister.XAccessPolicies(backend.Namespace).List(labels.Everything())
+// findAccessPoliciesForTarget finds all AccessPolicies that target the given resource.
+// It returns only accepted policies.
+// TODO: Indexing AccessPolicies by their target refs for more efficient lookups.
+// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/168
+func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name string) ([]*agenticv0alpha0.XAccessPolicy, error) {
+	// List all AccessPolicies in the target's namespace.
+	allAccessPolicies, err := t.accessPolicyLister.XAccessPolicies(namespace).List(labels.Everything())
 	if err != nil {
-		return nil, fmt.Errorf("failed to list AccessPolicies in namespace %s: %w", backend.Namespace, err)
+		return nil, fmt.Errorf("failed to list AccessPolicies in namespace %s: %w", namespace, err)
 	}
 
-	// Find the first AuthPolicy that targets this specific backend.
-	// We assume only one AccessPolicy will target a given backend.
-	// TODO: Enforce this uniqueness constraint at the API level or merge multiple policies if needed.
+	var policies []*agenticv0alpha0.XAccessPolicy
 	for _, accessPolicy := range allAccessPolicies {
+		// Only consider policies that have been accepted by the controller.
+		if !accessPolicy.IsAccepted() {
+			continue
+		}
+
 		for _, targetRef := range accessPolicy.Spec.TargetRefs {
-			if targetRef.Kind == "XBackend" && string(targetRef.Name) == backend.Name {
-				return accessPolicy, nil
+			if string(targetRef.Group) == group && string(targetRef.Kind) == kind && string(targetRef.Name) == name {
+				policies = append(policies, accessPolicy)
+				break
 			}
 		}
 	}
-	return nil, nil // No AccessPolicy found for the backend.
+
+	return policies, nil
 }
 
 // convertSAtoSPIFFEID constructs a standard SPIFFE ID for a Kubernetes ServiceAccount.
@@ -112,30 +227,16 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 	return fmt.Sprintf(spiffeIDFormat, trustDomain, namespace, saName)
 }
 
-func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
+func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
 
+	// Each AccessRule in the XAccessPolicy is translated into a named policy within the Envoy RBAC filter.
 	for _, rule := range accessPolicy.Spec.Rules {
 		policyName := rule.Name
+
+		source := t.ruleSourceToPrincipalName(accessPolicy.Namespace, rule.Source)
+
 		var principalIDs []*rbacconfigv3.Principal
-
-		var source string
-		switch rule.Source.Type {
-		case agenticv0alpha0.AuthorizationSourceTypeSPIFFE:
-			if rule.Source.SPIFFE != nil {
-				source = string(*rule.Source.SPIFFE)
-			}
-		case agenticv0alpha0.AuthorizationSourceTypeServiceAccount:
-			if rule.Source.ServiceAccount != nil {
-				ns := rule.Source.ServiceAccount.Namespace
-				if ns == "" {
-					ns = accessPolicy.Namespace
-				}
-				// Convert K8s ServiceAccount to SPIFFE ID
-				source = convertSAtoSPIFFEID(t.agenticIdentityTrustDomain, ns, rule.Source.ServiceAccount.Name)
-			}
-		}
-
 		if source != "" {
 			principalIDs = append(principalIDs, &rbacconfigv3.Principal{
 				Identifier: &rbacconfigv3.Principal_Authenticated_{
@@ -152,7 +253,7 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 			principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
 		}
 
-		policy := &rbacconfigv3.Policy{
+		rbacPolicy := &rbacconfigv3.Policy{
 			Principals: principalIDs,
 		}
 
@@ -160,7 +261,7 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 			switch rule.Authorization.Type {
 			case agenticv0alpha0.AuthorizationRuleTypeInlineTools:
 				if permission := translateInlineToolsToRBACPermission(rule.Authorization.Tools); permission != nil {
-					policy.Permissions = []*rbacconfigv3.Permission{permission}
+					rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
 				}
 			case agenticv0alpha0.AuthorizationRuleTypeExternalAuth:
 				if rule.Authorization.ExternalAuth != nil {
@@ -170,16 +271,42 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 						continue
 					}
 					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash)
-					policy.Permissions = []*rbacconfigv3.Permission{buildTooslCallMethodPermission()}
-					addPolicyToRBACShadowRules(rbacConfig, policyName, policy)
+					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
+					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 				}
 			}
 		}
 
-		addPolicyToRBACRules(rbacConfig, policyName, policy)
+		// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
+		// If authorization is omitted or unsupported, we default to a "Never match" permission.
+		if len(rbacPolicy.Permissions) == 0 {
+			rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildNeverMatchPermission()}
+		}
+
+		addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
 	}
 
 	return rbacConfig
+}
+
+// ruleSourceToPrincipalName converts an AccessRule source into a SPIFFE ID string.
+func (t *Translator) ruleSourceToPrincipalName(policyNamespace string, source agenticv0alpha0.Source) string {
+	switch source.Type {
+	case agenticv0alpha0.AuthorizationSourceTypeSPIFFE:
+		if source.SPIFFE != nil {
+			return string(*source.SPIFFE)
+		}
+	case agenticv0alpha0.AuthorizationSourceTypeServiceAccount:
+		if source.ServiceAccount != nil {
+			ns := source.ServiceAccount.Namespace
+			if ns == "" {
+				ns = policyNamespace
+			}
+			// Convert K8s ServiceAccount to SPIFFE ID
+			return convertSAtoSPIFFEID(t.agenticIdentityTrustDomain, ns, source.ServiceAccount.Name)
+		}
+	}
+	return ""
 }
 
 // addPolicyToRBACRules mutates the RBAC config by adding the given policy to the Rules section with the specified name.
@@ -193,7 +320,7 @@ func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rb
 	rbacConfig.Rules.Policies[policyName] = policy
 }
 
-// addPolicyToRBACRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
+// addPolicyToRBACShadowRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
 func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
 	if rbacConfig.ShadowRules == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
@@ -204,9 +331,24 @@ func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, poli
 	rbacConfig.ShadowRules.Policies[policyName] = policy
 }
 
+// buildNeverMatchPermission returns a permission that can never match.
+// This is used to satisfy Envoy RBAC's requirement that the permissions list must have
+// at least one item (min_items: 1) while effectively denying access.
+func buildNeverMatchPermission() *rbacconfigv3.Permission {
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_NotRule{
+			NotRule: &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_Any{
+					Any: true,
+				},
+			},
+		},
+	}
+}
+
 func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permission {
 	if len(tools) == 0 {
-		return nil
+		return buildNeverMatchPermission()
 	}
 
 	var toolValueMatchers []*matcherv3.ValueMatcher
@@ -233,7 +375,7 @@ func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permissi
 		Rule: &rbacconfigv3.Permission_AndRules{
 			AndRules: &rbacconfigv3.Permission_Set{
 				Rules: []*rbacconfigv3.Permission{
-					buildTooslCallMethodPermission(),
+					buildToolsCallMethodPermission(),
 					{
 						Rule: &rbacconfigv3.Permission_SourcedMetadata{
 							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
@@ -293,7 +435,7 @@ func buildAnyPermission() *rbacconfigv3.Permission {
 	}
 }
 
-func buildTooslCallMethodPermission() *rbacconfigv3.Permission {
+func buildToolsCallMethodPermission() *rbacconfigv3.Permission {
 	return &rbacconfigv3.Permission{
 		Rule: &rbacconfigv3.Permission_SourcedMetadata{
 			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
