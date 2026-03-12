@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 envoy_service = os.environ.get("ENVOY_SERVICE")
 hf_model = os.environ.get("HF_MODEL")
 ollama_base_url = os.environ.get("OLLAMA_BASE_URL")
-ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2")
+ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 
 # Automatically determine which model to use based on available credentials
 if hf_model:
@@ -40,7 +40,7 @@ if hf_model:
     )
 else:
     # Use Ollama (either custom URL or default local)
-    base_url = ollama_base_url or "http://localhost:11434"
+    base_url = ollama_base_url or "http://host.docker.internal:11434"
 
     # Set dummy OPENAI_API_KEY if not available (required for openai/ usage in LiteLLM)
     if not os.environ.get("OPENAI_API_KEY"):
@@ -82,8 +82,8 @@ root_agent = LlmAgent(
     model=model,
     name="multi_mcp_agent",
     instruction="""You are an AI assistant that interacts with the world primarily
-    via the provided MCP tools. When processing a user's prompt, you must use the 
-    available tools to answer the user's question. If you don't know the answer, 
+    via the provided MCP tools. When processing a user's prompt, you must use the
+    available tools to answer the user's question. If you don't know the answer,
     say you can not find available tools to answer the question.""",
     tools=[local_mcp, remote_mcp],
 )
