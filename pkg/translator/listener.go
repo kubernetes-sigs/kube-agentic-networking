@@ -35,6 +35,9 @@ import (
 	udpproxy "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/udp/udp_proxy/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	metadatav3 "github.com/envoyproxy/go-control-plane/envoy/type/metadata/v3"
+	tracingv3 "github.com/envoyproxy/go-control-plane/envoy/type/tracing/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -270,6 +273,8 @@ func buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, accessPolicy
 			},
 		},
 		HttpFilters: httpFilters,
+		// Enable tracing with custom tags for policy enforcement visibility
+		Tracing: buildTracingConfig(),
 	}
 	hcmAny, err := anypb.New(hcmConfig)
 	if err != nil {
@@ -328,6 +333,113 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 			},
 		}},
 	}, nil
+}
+
+// buildTracingConfig creates tracing configuration with custom tags for policy enforcement visibility
+func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
+	return &hcm.HttpConnectionManager_Tracing{
+		// Enable tracing for all requests
+		RandomSampling:  &typev3.Percent{Value: 100.0},
+		ClientSampling:  &typev3.Percent{Value: 100.0},
+		OverallSampling: &typev3.Percent{Value: 100.0},
+		CustomTags: []*tracingv3.CustomTag{
+			{
+				Tag: "security_rule.ruleset.name",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Route_{
+								Route: &metadatav3.MetadataKind_Route{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.rbac",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "access_policy_name"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
+			{
+				Tag: "security_rule.name",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Route_{
+								Route: &metadatav3.MetadataKind_Route{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.rbac",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "policy_name"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
+			{
+				Tag: "event.action",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Route_{
+								Route: &metadatav3.MetadataKind_Route{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.rbac",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "action"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
+			{
+				Tag: "event.outcome",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Route_{
+								Route: &metadatav3.MetadataKind_Route{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.rbac",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "result"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
+			{
+				Tag: "peer.spiffe.id",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Request_{
+								Request: &metadatav3.MetadataKind_Request{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.rbac",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "principal"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
+		},
+	}
 }
 
 func buildHTTPFilters(accessPolicyLister agenticlisters.XAccessPolicyLister) ([]*hcm.HttpFilter, error) {

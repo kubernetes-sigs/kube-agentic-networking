@@ -23,6 +23,8 @@ data:
     receivers:
       otlp:
         protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
           http:
             endpoint: 0.0.0.0:4318
 
@@ -33,16 +35,38 @@ data:
 
       batch: {}
 
+      # Add resource attributes from Kubernetes
+      resource:
+        attributes:
+          - key: service.namespace
+            from_attribute: k8s.namespace.name
+            action: upsert
+          - key: service.instance.id
+            from_attribute: k8s.pod.name
+            action: upsert
+
+      # Transform spans to add semantic attributes
+      transform:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              # Mark RBAC-related spans
+              - set(attributes["component"], "envoy.rbac") where name == "envoy.filters.http.rbac"
+              # Add event kind for security events
+              - set(attributes["event.kind"], "event") where attributes["event.action"] != nil
+              # Categorize security events
+              - set(attributes["event.category"], ["authentication", "authorization"]) where attributes["security_rule.name"] != nil
+
     exporters:
       debug:
         verbosity: detailed
 
-      # Export to a trace backend (e.g. Phoenix, Jaeger)
-      # Uncomment and configure the endpoint for your backend:
-      # otlp/traces:
-      #   endpoint: <trace-backend>:4317
-      #   tls:
-      #     insecure: true
+      # Export to the Phoenix instance in kagenti-system
+      otlp/phoenix:
+        endpoint: phoenix.kagenti-system.svc.cluster.local:4317
+        tls:
+          insecure: true
 
     extensions:
       health_check: {}
@@ -52,8 +76,8 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
-          exporters: [debug]
+          processors: [memory_limiter, resource, transform, batch]
+          exporters: [debug, otlp/phoenix]
 
 ---
 apiVersion: apps/v1
@@ -78,6 +102,8 @@ spec:
           - "/otelcol-contrib"
           - "--config=/etc/otelcol-config/base.yaml"
         ports:
+        - containerPort: 4317
+          name: otlp-grpc
         - containerPort: 4318
           name: otlp-http
         volumeMounts:
@@ -104,6 +130,10 @@ metadata:
 spec:
   type: ClusterIP
   ports:
+  - port: 4317
+    targetPort: 4317
+    protocol: TCP
+    name: otlp-grpc
   - port: 4318
     targetPort: 4318
     protocol: TCP
