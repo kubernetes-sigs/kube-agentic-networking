@@ -434,7 +434,7 @@ The audience (`aud`) claim is critical for preventing token misuse:
 - Always specify and validate audiences. Omitting audience validation (as shown in the standalone example with `kubernetes: {}`) should only be used in controlled development environments
 - Reject tokens that do not contain the expected audience in their `aud` claim
 - Use backend-specific audiences to ensure tokens issued for one backend cannot be used to access another
-- Be aware that some identity providers may return `aud` as a string or an array; implementations must handle both cases (see [Example 3](#example-3--multiple-identity-providers))
+- Be aware that some identity providers may return `aud` as a string or an array; implementations must handle both cases (see [Example 3](#example-3-multiple-oidc-sources-used-in-combination-with-cel-authorization))
 - For multi-tenant environments, consider including tenant identifiers in the audience claim
 
 #### Risk of Overly Permissive CEL Expressions
