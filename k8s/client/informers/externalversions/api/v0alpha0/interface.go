@@ -24,6 +24,8 @@ import (
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
+	// KANConfigs returns a KANConfigInformer.
+	KANConfigs() KANConfigInformer
 	// XAccessPolicies returns a XAccessPolicyInformer.
 	XAccessPolicies() XAccessPolicyInformer
 	// XBackends returns a XBackendInformer.
@@ -39,6 +41,11 @@ type version struct {
 // New returns a new Interface.
 func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakListOptions internalinterfaces.TweakListOptionsFunc) Interface {
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
+}
+
+// KANConfigs returns a KANConfigInformer.
+func (v *version) KANConfigs() KANConfigInformer {
+	return &kANConfigInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // XAccessPolicies returns a XAccessPolicyInformer.
