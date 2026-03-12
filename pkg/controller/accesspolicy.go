@@ -46,9 +46,9 @@ func (c *Controller) onAccessPolicyAdd(obj interface{}) {
 	c.enqueueGatewaysForAccessPolicy(policy)
 }
 
-func (c *Controller) onAccessPolicyUpdate(old, new interface{}) {
+func (c *Controller) onAccessPolicyUpdate(old, newObj interface{}) {
 	oldPolicy := old.(*agenticv0alpha0.XAccessPolicy)
-	newPolicy := new.(*agenticv0alpha0.XAccessPolicy)
+	newPolicy := newObj.(*agenticv0alpha0.XAccessPolicy)
 	if newPolicy.Generation != oldPolicy.Generation || newPolicy.DeletionTimestamp != oldPolicy.DeletionTimestamp || !reflect.DeepEqual(newPolicy.Annotations, oldPolicy.Annotations) {
 		klog.V(4).InfoS("Updating AccessPolicy", "accesspolicy", klog.KObj(oldPolicy))
 		c.enqueueGatewaysForAccessPolicy(newPolicy)

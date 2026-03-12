@@ -69,7 +69,7 @@ func (c *MakeCAPoolSecretCommand) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&c.name, "name", "", "Create the secret with this name")
 }
 
-func (c *MakeCAPoolSecretCommand) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (c *MakeCAPoolSecretCommand) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if err := c.do(ctx); err != nil {
 		klog.ErrorS(err, "Error while executing")
 		return subcommands.ExitFailure

@@ -43,9 +43,9 @@ func (c *Controller) onHTTPRouteAdd(obj interface{}) {
 	c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
 }
 
-func (c *Controller) onHTTPRouteUpdate(old, new interface{}) {
+func (c *Controller) onHTTPRouteUpdate(old, newObj interface{}) {
 	oldRoute := old.(*gatewayv1.HTTPRoute)
-	newRoute := new.(*gatewayv1.HTTPRoute)
+	newRoute := newObj.(*gatewayv1.HTTPRoute)
 	if newRoute.Generation != oldRoute.Generation || newRoute.DeletionTimestamp != oldRoute.DeletionTimestamp || !reflect.DeepEqual(newRoute.Annotations, oldRoute.Annotations) {
 		klog.V(4).InfoS("Updating HTTPRoute", "httproute", klog.KObj(oldRoute))
 		c.enqueueGatewaysForHTTPRoute(append(oldRoute.Spec.ParentRefs, newRoute.Spec.ParentRefs...), newRoute.Namespace)

@@ -73,9 +73,9 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 	c.enqueueGatewaysForService(svc)
 }
 
-func (c *Controller) onServiceUpdate(old, new interface{}) {
+func (c *Controller) onServiceUpdate(old, newObj interface{}) {
 	oldSvc := old.(*corev1.Service)
-	newSvc := new.(*corev1.Service)
+	newSvc := newObj.(*corev1.Service)
 
 	if !reflect.DeepEqual(oldSvc.Spec.ClusterIPs, newSvc.Spec.ClusterIPs) ||
 		newSvc.DeletionTimestamp != oldSvc.DeletionTimestamp ||

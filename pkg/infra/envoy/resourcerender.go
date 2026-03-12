@@ -275,7 +275,7 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 func (r *ResourceManager) renderService() *corev1.Service {
 	portsMap := make(map[int32]corev1.ServicePort)
 	for _, listener := range r.gw.Spec.Listeners {
-		port := int32(listener.Port)
+		port := listener.Port
 		if _, ok := portsMap[port]; !ok {
 			portsMap[port] = corev1.ServicePort{
 				Name:     string(listener.Name),
@@ -326,5 +326,6 @@ func (r *ResourceManager) renderServiceAccount() *corev1.ServiceAccount {
 }
 
 func ownerRef(gw *gatewayv1.Gateway) []metav1.OwnerReference {
+	//nolint:staticcheck // generated clientset object relies on the deprecated SchemeGroupVersion.WithKind method
 	return []metav1.OwnerReference{*metav1.NewControllerRef(gw, gatewayv1.SchemeGroupVersion.WithKind("Gateway"))}
 }

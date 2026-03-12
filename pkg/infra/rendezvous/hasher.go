@@ -177,7 +177,7 @@ func (h *Hasher) ensureLease(ctx context.Context) error {
 		},
 		Spec: coordinationv1.LeaseSpec{
 			HolderIdentity:       &h.replicaName,
-			LeaseDurationSeconds: ptr.To(int32(int64(leaseDuration) / 1_000_000_000)),
+			LeaseDurationSeconds: ptr.To(int32(leaseDuration.Seconds())),
 			AcquireTime:          ptr.To(metav1.NewMicroTime(now)),
 			RenewTime:            ptr.To(metav1.NewMicroTime(now)),
 			LeaseTransitions:     ptr.To[int32](1),
@@ -277,7 +277,6 @@ func (h *Hasher) AssignedToThisReplica(ctx context.Context, item string) bool {
 	}
 
 	return maxReplica == h.replicaName
-
 }
 
 func fnvhash(key string) uint64 {

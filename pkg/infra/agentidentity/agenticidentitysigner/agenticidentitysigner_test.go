@@ -184,7 +184,6 @@ func TestCertificateIssuance(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func mustRFC3339(t *testing.T, ts string) time.Time {
