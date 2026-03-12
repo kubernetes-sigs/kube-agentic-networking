@@ -1483,3 +1483,102 @@
   </body>
 </html>
 
+
+/* Landing Page Styles */
+.landing-page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+    font-family: 'Roboto', sans-serif;
+      /* Setup in mkdocs.yml or assume default material font */
+}
+
+/* Hero Section */
+.hero-section {
+    text-align: center;
+    padding: 6rem 1rem;
+    margin-bottom: 4rem;
+}
+
+.hero-content h1 {
+    font-size: 3.5rem;
+    font-weight: 800;
+    margin-bottom: 1.5rem;
+    line-height: 1.2;
+    background: linear-gradient(120deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.hero-subtitle {
+    font-size: 1.5rem;
+    color: var(--md-typeset-color);
+    opacity: 0.8;
+    max-width: 800px;
+    margin: 0 auto 3rem;
+    line-height: 1.6;
+}
+
+.hero-buttons {
+    display: flex;
+    gap: 1.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.hero-buttons .md-button {
+    font-size: 1.1rem;
+    padding: 0.8rem 2rem;
+    border-radius: 50px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hero-buttons .md-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+
+.hero-buttons .md-button--primary {
+    background-color: var(--md-primary-fg-color);
+    color: var(--md-primary-bg-color);
+    border: none;
+}
+
+/* Feature Grid */
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+    margin-bottom: 6rem;
+}
+
+.feature-card {
+    background: var(--md-default-bg-color);
+    padding: 2.5rem;
+    border-radius: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.feature-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.feature-icon {
+    font-size: 3rem;
+    margin-bottom: 1.5rem;
+}
+
+.feature-card h3 {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+    color: var(--md-typeset-color);
+}
+
+.feature-card p {
+    color: var(--md-typeset-color);
+    opacity: 0.8;
+    line-height: 1.6;
+}

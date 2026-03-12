@@ -26,7 +26,7 @@ rules:
     verbs: ["update", "patch"]
   - apiGroups: ["agentic.prototype.x-k8s.io"]
     resources: ["xbackends", "xaccesspolicies"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["agentic.prototype.x-k8s.io"]
     resources: ["xbackends/status", "xaccesspolicies/status"]
     verbs: ["update", "patch"]
@@ -167,3 +167,10 @@ spec:
   selector:
     app: agentic-net-controller
   type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kube-agentic-networking
+spec:
+  controllerName: sigs.k8s.io/kube-agentic-networking-controller

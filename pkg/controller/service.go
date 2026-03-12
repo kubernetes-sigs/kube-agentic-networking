@@ -26,9 +26,37 @@ import (
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
+
+// ServiceRefIndex is the name of the index that maps Service namespace/name to HTTPRoutes
+// that reference that Service in their backendRefs (direct refs only, not XBackend).
+const ServiceRefIndex = "serviceRef"
+
+// HTTPRouteServiceRefIndexFunc returns index keys "namespace/name" for each Service
+// referenced by an HTTPRoute's backendRefs (skips XBackend refs).
+func HTTPRouteServiceRefIndexFunc(obj interface{}) ([]string, error) {
+	route, ok := obj.(*gatewayv1.HTTPRoute)
+	if !ok {
+		return nil, nil
+	}
+	var keys []string
+	for _, rule := range route.Spec.Rules {
+		for _, backend := range rule.BackendRefs {
+			if isXBackendRef(backend.BackendRef) {
+				continue
+			}
+			backendNS := route.Namespace
+			if backend.Namespace != nil {
+				backendNS = string(*backend.Namespace)
+			}
+			keys = append(keys, backendNS+"/"+string(backend.Name))
+		}
+	}
+	return keys, nil
+}
 
 func (c *Controller) setupServiceEventHandlers(informer corev1informers.ServiceInformer) error {
 	_, err := informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -86,20 +114,46 @@ func (c *Controller) enqueueGatewaysForService(svc *corev1.Service) {
 }
 
 // enqueueGatewaysForServiceDirectHTTPRouteRefs enqueues Gateways for HTTPRoutes
-// that reference this Service directly in their backendRefs
+// that reference this Service directly in their backendRefs. Uses the ServiceRef
+// index so we only consider routes that reference this Service instead of listing all.
 func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefs(svc *corev1.Service) {
+	if c.gateway.httprouteIndexer == nil {
+		c.enqueueGatewaysForServiceDirectHTTPRouteRefsList(svc)
+		return
+	}
+	svcKey := svc.Namespace + "/" + svc.Name
+	objs, err := c.gateway.httprouteIndexer.ByIndex(ServiceRefIndex, svcKey)
+	if err != nil {
+		runtime.HandleError(err)
+		return
+	}
+	for _, obj := range objs {
+		route := obj.(*gatewayv1.HTTPRoute)
+		// Cross-namespace refs require a ReferenceGrant in the backend namespace.
+		if !translator.AllowedByReferenceGrant(route.Namespace, svc.Namespace, c.gateway.referenceGrantLister) {
+			continue
+		}
+		klog.V(4).InfoS(
+			"HTTPRoute references Service directly",
+			"service", klog.KObj(svc),
+			"httproute", klog.KObj(route),
+		)
+		c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
+	}
+}
+
+// enqueueGatewaysForServiceDirectHTTPRouteRefsList is the list-based implementation
+// used when the ServiceRef index is not available (e.g. in tests).
+func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefsList(svc *corev1.Service) {
 	routes, err := c.gateway.httprouteLister.List(labels.Everything())
 	if err != nil {
 		runtime.HandleError(err)
 		return
 	}
-
 	for _, route := range routes {
 		matched := false
-
 		for _, rule := range route.Spec.Rules {
 			for _, backend := range rule.BackendRefs {
-				// Skip XBackend refs; see isXBackendRef in backend.go.
 				if isXBackendRef(backend.BackendRef) {
 					continue
 				}
@@ -107,31 +161,18 @@ func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefs(svc *corev1.Se
 				if backend.Namespace != nil {
 					backendNS = string(*backend.Namespace)
 				}
-
-				if backendNS == svc.Namespace &&
-					string(backend.Name) == svc.Name {
-
-					// Cross-namespace refs require a ReferenceGrant in the backend namespace.
-					// See https://gateway-api.sigs.k8s.io/api-types/referencegrant/
+				if backendNS == svc.Namespace && string(backend.Name) == svc.Name {
 					if !translator.AllowedByReferenceGrant(route.Namespace, backendNS, c.gateway.referenceGrantLister) {
 						continue
 					}
 					matched = true
-
-					klog.V(4).InfoS(
-						"HTTPRoute references Service directly",
-						"service", klog.KObj(svc),
-						"httproute", klog.KObj(route),
-					)
 					break
 				}
 			}
-
 			if matched {
 				break
 			}
 		}
-
 		if matched {
 			c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
 		}

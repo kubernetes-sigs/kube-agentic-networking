@@ -50,20 +50,6 @@ graph TD
     style RemoteMCP fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
-## What the Script Does
-
-The `make quickstart` command runs a single script that automates the entire setup:
-
-1. **Creates a kind cluster** (`kan-quickstart`) with Kubernetes v1.35 and required feature gates enabled.
-2. **Installs Gateway API CRDs** (standard v1.4.0 install).
-3. **Installs Agentic Networking CRDs** (`XBackend` and `XAccessPolicy`).
-4. **Creates the `quickstart-ns` namespace**.
-5. **Deploys the in-cluster MCP server** (the `everything` reference server).
-6. **Deploys the Agentic Networking controller** and creates the CA pool secret for mTLS identity.
-7. **Applies network policies** (Gateway, HTTPRoutes, XBackends, XAccessPolicies) and waits for the Envoy proxy to be provisioned.
-8. **Deploys the AI agent** with an Envoy sidecar, configured with the discovered Gateway address and SPIFFE identity.
-9. **Sets up port-forwarding** to the agent UI on `localhost:8081`.
-
 ## Prerequisites
 
 Before you begin, ensure you have the following:
@@ -90,21 +76,35 @@ export HF_TOKEN=<your-huggingface-token>
 # 3. Run the quickstart setup
 make quickstart
 
-# 4. Open the agent UI
-#    http://localhost:8081/dev-ui/?app=mcp_agent
+# 4. Open the agent UI at
+http://localhost:8081/dev-ui/?app=mcp_agent
 ```
+
+### What `make quickstart` Does
+
+`make quickstart` automates the entire setup by running [`run-quickstart.sh`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/run-quickstart.sh):
+
+1. **Creates a kind cluster** (`kan-quickstart`) with Kubernetes v1.35 and required feature gates enabled.
+2. **Installs Gateway API CRDs** (standard v1.4.0 install).
+3. **Installs Agentic Networking CRDs** (`XBackend` and `XAccessPolicy`).
+4. **Creates the `quickstart-ns` namespace**.
+5. **Deploys the in-cluster MCP server** (the `everything` reference server).
+6. **Deploys the Agentic Networking controller** and creates the CA pool secret for mTLS identity.
+7. **Applies network policies** (Gateway, HTTPRoutes, XBackends, XAccessPolicies) and waits for the Envoy proxy to be provisioned.
+8. **Deploys the AI agent** with an Envoy sidecar, configured with the discovered Gateway address and SPIFFE identity.
+9. **Sets up port-forwarding** to the agent UI on `localhost:8081`.
 
 ## Chat with the Agent
 
 In the agent UI, ensure `mcp_agent` is selected from the dropdown menu in the top-left corner. Try the following prompts:
 
-| Prompt                                                           | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
-| :--------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
-| "What can you do for me?"                                        | `tools/list` on both MCPs           | ✅ **Success**  | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
-| "Can you do 2+3?"                                                | `get-sum` on local MCP                  | ✅ **Success**  | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                     |
-| "Can you echo back 'hello'?"                                     | `echo` on local MCP                 | ❌ **Failure**  | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
-| "Read the structure of the `modelcontextprotocol/servers` repo." | `read_wiki_structure` on remote MCP | ✅ **Success**  | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
-| "Read the wiki content of that repo."                            | `read_wiki_content` on remote MCP   | ❌ **Failure**  | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
+| Prompt                                                                 | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
+| :--------------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
+| What can you do?                                                       | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
+| What is the sum of 2 and 3?                                            | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                 |
+| Echo back 'hello'.                                                     | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
+| Read the wiki structure of `modelcontextprotocol/servers` GitHub repo. | `read_wiki_structure` on remote MCP | ✅ **Success**   | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
+| Read the wiki content of that GitHub repo.                             | `read_wiki_content` on remote MCP   | ❌ **Failure**   | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
 
 <details markdown="1">
 <summary style="font-size: 1.5em; font-weight: bold;">🧪 Try Dynamic Policy Updates in Action</summary>
@@ -112,51 +112,50 @@ In the agent UI, ensure `mcp_agent` is selected from the dropdown menu in the to
 Want to see policy changes in action? Let's flip the script for the `local-mcp-backend`!
 
 1. **Edit the `XAccessPolicy`**: Open `quickstart/policy/e2e.yaml` and modify the `auth-policy-local-mcp` resource to:
+   - **Remove** the `"get-sum"` tool.
+   - **Add** the `"echo"` tool.
 
-    - **Remove** the `"get-sum"` tool.
-    - **Add** the `"echo"` tool.
+   Your `auth-policy-local-mcp` section should look like this:
 
-    Your `auth-policy-local-mcp` section should look like this:
-
-    ```yaml
-    apiVersion: agentic.prototype.x-k8s.io/v0alpha0
-    kind: XAccessPolicy
-    metadata:
-      name: auth-policy-local-mcp
-      namespace: quickstart-ns
-    spec:
-      targetRefs:
-        - kind: XBackend
-          name: local-mcp-backend
-      rules:
-        - name: updated-rule
-          source:
-            type: ServiceAccount
-            serviceAccount:
-              name: adk-agent-sa
-          authorization:
-            type: InlineTools
-            tools:
-              - "get-tiny-image"
-              - "echo" # Now allowed!
-    ```
+   ```yaml
+   apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+   kind: XAccessPolicy
+   metadata:
+     name: auth-policy-local-mcp
+     namespace: quickstart-ns
+   spec:
+     targetRefs:
+       - kind: XBackend
+         name: local-mcp-backend
+     rules:
+       - name: updated-rule
+         source:
+           type: ServiceAccount
+           serviceAccount:
+             name: adk-agent-sa
+         authorization:
+           type: InlineTools
+           tools:
+             - "get-tiny-image"
+             - "echo" # Now allowed!
+   ```
 
 2. **Apply the updated policy**:
 
-    ```shell
-    kubectl apply -n quickstart-ns -f quickstart/policy/e2e.yaml
-    ```
+   ```shell
+   kubectl apply -n quickstart-ns -f quickstart/policy/e2e.yaml
+   ```
 
 3. **Wait for the controller to update Envoy**: The Agentic Networking controller will detect the change to the `XAccessPolicy` and dynamically update the running Envoy proxy with the new rules via xDS. No restart is needed!
 
 4. **Interact with the Agent again**: Go back to `http://localhost:8081` and try these prompts:
 
-    | Prompt                       | Tool Invoked             | Expected Result | Why?                                                                    |
-    | :--------------------------- | :----------------------- | :-------------- | :---------------------------------------------------------------------- |
-    | "Can you do 2+3?"            | `get-sum` on local MCP   | ❌ **Failure**  | The `get-sum` tool is now _disallowed_ by the updated `XAccessPolicy`.  |
-    | "Can you echo back 'hello'?" | `echo` on local MCP      | ✅ **Success**  | The `echo` tool is now _allowed_ by the updated `XAccessPolicy`.        |
+    | Prompt                      | Tool Invoked           | Expected Result | Why?                                                                   |
+    | :-------------------------- | :--------------------- | :-------------- | :--------------------------------------------------------------------- |
+    | What is the sum of 2 and 3? | `get-sum` on local MCP | ❌ **Failure**   | The `get-sum` tool is now _disallowed_ by the updated `XAccessPolicy`. |
+    | Echo back 'hello'.          | `echo` on local MCP    | ✅ **Success**   | The `echo` tool is now _allowed_ by the updated `XAccessPolicy`.       |
 
-    Observe how the agent's behavior changes instantly based on your policy modifications!
+   Observe how the agent's behavior changes instantly based on your policy modifications!
 
 </details>
 
@@ -165,12 +164,13 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
 
 The quickstart script already deployed the sample ADK agent with a fully configured Envoy sidecar. The steps below are only needed if you want to integrate a **different** agent of your own into the Agentic Networking infrastructure.
 
-### Prerequisites
+**Prerequisites**
+
 - You have completed the quickstart (the kind cluster, controller, and Gateway are running)
 - Your agent deployment, service, and MCP tools are running
 - Your agent can communicate with MCP tool servers
 
-### Step 1: Ensure your agent has a ServiceAccount
+**Step 1: Ensure your agent has a ServiceAccount**
 
 The mTLS identity system issues SPIFFE certificates based on the pod's ServiceAccount. The resulting identity will be `spiffe://cluster.local/ns/<namespace>/sa/<service-account>`, which is used for RBAC policy matching.
 
@@ -181,7 +181,7 @@ kubectl create serviceaccount <agent-sa> -n <agent-namespace>
 kubectl set serviceaccount deployment/<agent-deployment> <agent-sa> -n <agent-namespace>
 ```
 
-### Step 2: Define or update access policies
+**Step 2: Define or update access policies**
 
 Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your agent's ServiceAccount and tool endpoints (see the `quickstart/policy/e2e.yaml` file for examples):
 
@@ -189,9 +189,9 @@ Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your 
 kubectl apply -f <policy-file>.yaml
 ```
 
-### Step 3: Create the Envoy sidecar ConfigMap
+**Step 3: Create the Envoy sidecar ConfigMap**
 
-The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Use the template at [`quickstart/adk-agent/sidecar/sidecar-configs.yaml`](/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
+The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Use the template at [`quickstart/adk-agent/sidecar/sidecar-configs.yaml`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
 
 1.  **Copy the template** and update `metadata.namespace` to your agent's namespace:
 
@@ -208,13 +208,13 @@ The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations fo
     envsubst < <your-sidecar-configs>.yaml | kubectl apply -f -
     ```
 
-### Step 4: Add the Envoy sidecar to your agent deployment
+**Step 4: Add the Envoy sidecar to your agent deployment**
 
-Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
+Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
 
 > **Note**: The ADK agent deployment also includes a `proxy-init` init container with iptables rules. This is **not required** — the Envoy sidecar already listens on port 10001 within the pod, so `127.0.0.1:10001` reaches it directly. Omitting it avoids the `NET_ADMIN` capability requirement and speeds up pod startup.
 
-### Step 5: Configure your agent to route through Envoy
+**Step 5: Configure your agent to route through Envoy**
 
 Update your agent's tool endpoint to use the local Envoy sidecar. Use **plain HTTP** (not HTTPS) — the sidecar handles mTLS to the Gateway transparently:
 

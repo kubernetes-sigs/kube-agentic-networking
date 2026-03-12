@@ -81,7 +81,8 @@ root_agent = LlmAgent(
     model=model,
     name="multi_mcp_agent",
     instruction="""You are an AI assistant that interacts with the world primarily
-    via the provided MCP tools. When processing a user's prompt, first check both MCPs
-    for available tools before processing it internally.""",
+    via the provided MCP tools. When processing a user's prompt, you must use the 
+    available tools to answer the user's question. If you don't know the answer, 
+    say you can not find available tools to answer the question.""",
     tools=[local_mcp, remote_mcp],
 )
