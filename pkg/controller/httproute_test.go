@@ -1,3 +1,19 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package controller
 
 import (
@@ -111,7 +127,7 @@ func TestOnHTTPRouteAddUpdateDelete(t *testing.T) {
 	}
 }
 
-func TestUpdateRouteStatuses(t *testing.T) {
+func TestUpdateHTTPRouteStatuses(t *testing.T) {
 	routeNS := "default"
 	routeName := "my-route"
 
@@ -142,7 +158,7 @@ func TestUpdateRouteStatuses(t *testing.T) {
 		statuses := map[types.NamespacedName][]gatewayv1.RouteParentStatus{
 			{Namespace: routeNS, Name: routeName}: {},
 		}
-		err := c.updateRouteStatuses(context.Background(), statuses, nil)
+		err := c.updateHTTPRouteStatuses(context.Background(), statuses)
 		if err != nil {
 			t.Fatalf("expected no error when route is not found, got %v", err)
 		}
@@ -151,7 +167,9 @@ func TestUpdateRouteStatuses(t *testing.T) {
 	t.Run("status unchanged avoids update", func(t *testing.T) {
 		client := gatewayclientfake.NewClientset(baseRoute)
 		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-		indexer.Add(baseRoute)
+		if err := indexer.Add(baseRoute); err != nil {
+			t.Fatalf("indexer.Add: %v", err)
+		}
 		lister := gatewaylisters.NewHTTPRouteLister(indexer)
 
 		c := &Controller{
@@ -165,7 +183,7 @@ func TestUpdateRouteStatuses(t *testing.T) {
 		statuses := map[types.NamespacedName][]gatewayv1.RouteParentStatus{
 			{Namespace: routeNS, Name: routeName}: {},
 		}
-		err := c.updateRouteStatuses(context.Background(), statuses, nil)
+		err := c.updateHTTPRouteStatuses(context.Background(), statuses)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -180,7 +198,9 @@ func TestUpdateRouteStatuses(t *testing.T) {
 	t.Run("status changed performs update", func(t *testing.T) {
 		client := gatewayclientfake.NewClientset(baseRoute)
 		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-		indexer.Add(baseRoute)
+		if err := indexer.Add(baseRoute); err != nil {
+			t.Fatalf("indexer.Add: %v", err)
+		}
 		lister := gatewaylisters.NewHTTPRouteLister(indexer)
 
 		c := &Controller{
@@ -198,7 +218,7 @@ func TestUpdateRouteStatuses(t *testing.T) {
 		statuses := map[types.NamespacedName][]gatewayv1.RouteParentStatus{
 			{Namespace: routeNS, Name: routeName}: newStatus,
 		}
-		err := c.updateRouteStatuses(context.Background(), statuses, nil)
+		err := c.updateHTTPRouteStatuses(context.Background(), statuses)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}

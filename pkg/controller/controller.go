@@ -387,7 +387,7 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
 
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
-	resources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
+	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
 		// TODO: Update Gateway status with the error.
 		return fmt.Errorf("failed to translate gateway to xDS resources: %w", err)
@@ -407,9 +407,9 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 			klog.Errorf("Failed to update gateway status: %v", err)
 			return err
 		}
+		logger.Info("Updated gateway status")
 	}
-	logger.Info("Updated gateway status")
-	return c.updateRouteStatuses(ctx, httpRouteStatuses, grpcRouteStatuses)
+	return c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
 }
 
 // hasHTTPRoutesReferencingGateway returns true if any HTTPRoute has a ParentRef to the given Gateway.

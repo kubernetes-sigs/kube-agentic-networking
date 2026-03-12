@@ -99,10 +99,9 @@ func (c *Controller) enqueueGatewaysForHTTPRoute(references []gatewayv1.ParentRe
 	}
 }
 
-func (c *Controller) updateRouteStatuses(
+func (c *Controller) updateHTTPRouteStatuses(
 	ctx context.Context,
 	httpRouteStatuses map[types.NamespacedName][]gatewayv1.RouteParentStatus,
-	_ map[types.NamespacedName][]gatewayv1.RouteParentStatus, // placeholder for grpcRoutesStatuses
 ) error {
 	var errGroup []error
 
@@ -136,8 +135,6 @@ func (c *Controller) updateRouteStatuses(
 			errGroup = append(errGroup, fmt.Errorf("failed to update status for HTTPRoute %s: %w", key, err))
 		}
 	}
-
-	// TODO: Process GRPCRoutes (repeat the same logic)
 
 	return errors.Join(errGroup...)
 }
