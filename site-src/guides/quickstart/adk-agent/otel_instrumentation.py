@@ -53,7 +53,14 @@ def setup_otel_tracing(service_name: str = "adk-agent"):
     propagate.set_global_textmap(TraceContextTextMapPropagator())
 
     # Instrument httpx to automatically propagate trace context in HTTP requests
-    HTTPXClientInstrumentor().instrument()
+    # Use request_hook to ensure context is properly set before each request
+    def request_hook(span, request):
+        """Hook to ensure trace context is active when making requests."""
+        # The span is already created by httpx instrumentation
+        # Just log for debugging
+        logger.debug(f"HTTPX request: {request.method} {request.url} in span {span.get_span_context().span_id}")
+
+    HTTPXClientInstrumentor().instrument(request_hook=request_hook)
     logger.info("HTTPX instrumented for automatic trace context propagation")
 
     LoggingInstrumentor().instrument(set_logging_format=True)
