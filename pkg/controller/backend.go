@@ -79,10 +79,40 @@ func (c *Controller) onBackendDelete(obj interface{}) {
 	c.enqueueGatewaysForBackend(backend)
 }
 
-// enqueueBackendForFinalizer enqueues the XBackend for finalizer sync only (add/remove finalizer based on XAccessPolicy targetRefs). It does not enqueue Gateways.
+// enqueueBackendForFinalizer enqueues the XBackend for finalizer sync only (add/remove finalizer based on XAccessPolicy and HTTPRoute references). It does not enqueue Gateways.
 func (c *Controller) enqueueBackendForFinalizer(backend *agenticv0alpha0.XBackend) {
 	key := backend.Namespace + "/" + backend.Name
 	c.backendFinalizerQueue.Add(key)
+}
+
+// enqueueBackendsForHTTPRouteFinalizer enqueues each XBackend referenced by the HTTPRoute's backendRefs for finalizer sync.
+// Call this when an HTTPRoute is added, updated, or deleted so XBackends can re-evaluate and remove their finalizer when no longer referenced.
+func (c *Controller) enqueueBackendsForHTTPRouteFinalizer(route *gatewayv1.HTTPRoute) {
+	seen := make(map[string]struct{})
+	for _, rule := range route.Spec.Rules {
+		for _, ref := range rule.BackendRefs {
+			if !isXBackendRef(ref.BackendRef) {
+				continue
+			}
+			ns := route.Namespace
+			if ref.Namespace != nil {
+				ns = string(*ref.Namespace)
+			}
+			key := ns + "/" + string(ref.Name)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			backend, err := c.agentic.backendLister.XBackends(ns).Get(string(ref.Name))
+			if err != nil {
+				if !apierrors.IsNotFound(err) {
+					runtime.HandleError(fmt.Errorf("failed to get XBackend %s/%s for HTTPRoute finalizer enqueue: %w", ns, ref.Name, err))
+				}
+				continue
+			}
+			c.enqueueBackendForFinalizer(backend)
+		}
+	}
 }
 
 // syncBackendFinalizer manages the XBackend finalizer.
@@ -104,6 +134,10 @@ func (c *Controller) syncBackendFinalizer(ctx context.Context, key string) error
 	if backend.DeletionTimestamp != nil {
 		if hasAccessPoliciesTargetingBackend(c, backend) {
 			klog.V(4).InfoS("XBackend has XAccessPolicies still targeting it, blocking deletion", "backend", klog.KObj(backend))
+			return nil
+		}
+		if hasHTTPRoutesReferencingBackend(c, backend) {
+			klog.V(4).InfoS("XBackend is still referenced by HTTPRoute(s), blocking deletion", "backend", klog.KObj(backend))
 			return nil
 		}
 		if removeFinalizer(&newBackend.ObjectMeta, constants.XBackendFinalizer) {
@@ -137,6 +171,32 @@ func hasAccessPoliciesTargetingBackend(c *Controller, backend *agenticv0alpha0.X
 			}
 			if string(targetRef.Name) == backend.Name {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasHTTPRoutesReferencingBackend returns true if any HTTPRoute has a backendRef to the given XBackend.
+func hasHTTPRoutesReferencingBackend(c *Controller, backend *agenticv0alpha0.XBackend) bool {
+	routes, err := c.gateway.httprouteLister.List(labels.Everything())
+	if err != nil {
+		klog.V(4).ErrorS(err, "failed to list HTTPRoutes for XBackend finalizer")
+		return true
+	}
+	for _, route := range routes {
+		for _, rule := range route.Spec.Rules {
+			for _, ref := range rule.BackendRefs {
+				if !isXBackendRef(ref.BackendRef) {
+					continue
+				}
+				refNamespace := route.Namespace
+				if ref.Namespace != nil {
+					refNamespace = string(*ref.Namespace)
+				}
+				if string(ref.Name) == backend.Name && refNamespace == backend.Namespace {
+					return true
+				}
 			}
 		}
 	}
