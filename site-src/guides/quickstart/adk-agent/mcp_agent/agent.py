@@ -80,16 +80,20 @@ genai_helper = GenAISpanHelper(tracer)
 
 
 def _init_mcp(name: str, mcp_type: str) -> McpToolset:
-    """Initialize an MCP toolset with tracing and trace context propagation."""
+    """Initialize an MCP toolset with tracing.
+
+    Note: Trace context propagation is handled automatically by httpx instrumentation.
+    The httpx client will inject traceparent headers into all outgoing requests
+    based on the current active span context.
+    """
     url = f"http://{envoy_service}/{mcp_type}/mcp"
     with genai_helper.create_tool_call_span(f"{mcp_type}_mcp_init") as span:
         try:
             span.set_attribute("mcp.type", mcp_type)
             span.set_attribute("mcp.url", url)
-            headers: dict = {}
-            propagator.inject(headers)
+            # No need to manually inject headers - httpx instrumentation handles it
             toolset = McpToolset(
-                connection_params=StreamableHTTPConnectionParams(url=url, headers=headers),
+                connection_params=StreamableHTTPConnectionParams(url=url),
             )
             logger.info(f"McpToolset {name} initialized successfully.")
             genai_helper.set_success_status(span)
@@ -119,8 +123,8 @@ root_agent = LlmAgent(
     model=model,
     name=AGENT_NAME,
     instruction="""You are an AI assistant that interacts with the world primarily
-    via the provided MCP tools. When processing a user's prompt, you must use the 
-    available tools to answer the user's question. If you don't know the answer, 
+    via the provided MCP tools. When processing a user's prompt, you must use the
+    available tools to answer the user's question. If you don't know the answer,
     say you can not find available tools to answer the question.""",
     tools=[local_mcp, remote_mcp],
 )

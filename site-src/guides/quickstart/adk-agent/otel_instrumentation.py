@@ -22,6 +22,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
@@ -50,6 +51,10 @@ def setup_otel_tracing(service_name: str = "adk-agent"):
     # and propagated to outgoing requests automatically
     from opentelemetry import propagate
     propagate.set_global_textmap(TraceContextTextMapPropagator())
+
+    # Instrument httpx to automatically propagate trace context in HTTP requests
+    HTTPXClientInstrumentor().instrument()
+    logger.info("HTTPX instrumented for automatic trace context propagation")
 
     LoggingInstrumentor().instrument(set_logging_format=True)
 

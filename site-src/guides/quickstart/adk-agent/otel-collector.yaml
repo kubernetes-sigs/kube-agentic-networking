@@ -51,12 +51,24 @@ data:
         trace_statements:
           - context: span
             statements:
-              # Mark RBAC-related spans
-              - set(attributes["component"], "envoy.rbac") where name == "envoy.filters.http.rbac"
-              # Add event kind for security events
-              - set(attributes["event.kind"], "event") where attributes["event.action"] != nil
-              # Categorize security events
-              - set(attributes["event.category"], ["authentication", "authorization"]) where attributes["security_rule.name"] != nil
+              # Map RBAC shadow_engine_result to event.action
+              # shadow_engine_result values: "allowed", "denied"
+              - set(attributes["event.action"], "allow") where attributes["rbac.shadow_engine_result"] == "allowed"
+              - set(attributes["event.action"], "deny") where attributes["rbac.shadow_engine_result"] == "denied"
+
+              # Derive event.outcome from HTTP status code
+              # 2xx = success, 4xx/5xx = failure
+              - set(attributes["event.outcome"], "success") where attributes["http.status_code"] != nil and Int(attributes["http.status_code"]) >= 200 and Int(attributes["http.status_code"]) < 300
+              - set(attributes["event.outcome"], "failure") where attributes["http.status_code"] != nil and Int(attributes["http.status_code"]) >= 400
+
+              # Add event kind for security events (when we have RBAC evaluation)
+              - set(attributes["event.kind"], "event") where attributes["security_rule.name"] != nil
+
+              # Categorize as authorization events for tool calls
+              - set(attributes["event.category"], ["authorization"]) where attributes["mcp.method.name"] == "tools/call"
+
+              # Mark gateway spans with component attribute
+              - set(attributes["component"], "envoy.gateway") where name == "ingress"
 
     exporters:
       debug:
@@ -65,6 +77,12 @@ data:
       # Export to the Phoenix instance in kagenti-system
       otlp/phoenix:
         endpoint: phoenix.kagenti-system.svc.cluster.local:4317
+        tls:
+          insecure: true
+
+      # Export to Tempo in quickstart-ns for Grafana visualization
+      otlp/tempo:
+        endpoint: tempo.quickstart-ns.svc.cluster.local:4317
         tls:
           insecure: true
 
@@ -77,7 +95,7 @@ data:
         traces:
           receivers: [otlp]
           processors: [memory_limiter, resource, transform, batch]
-          exporters: [debug, otlp/phoenix]
+          exporters: [debug, otlp/phoenix, otlp/tempo]
 
 ---
 apiVersion: apps/v1

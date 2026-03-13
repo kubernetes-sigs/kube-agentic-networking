@@ -44,7 +44,8 @@ static_resources:
                 port_value: {{ .ControlPlanePort }}
   # OpenTelemetry Collector cluster for trace export
   - name: otel_collector
-    type: STRICT_DNS
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
     typed_extension_protocol_options:
       envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
         "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions

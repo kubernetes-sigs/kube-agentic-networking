@@ -339,61 +339,26 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 	return &hcm.HttpConnectionManager_Tracing{
 		// Enable tracing for all requests
+		// The provider is configured globally in bootstrap.yaml
 		RandomSampling:  &typev3.Percent{Value: 100.0},
 		ClientSampling:  &typev3.Percent{Value: 100.0},
 		OverallSampling: &typev3.Percent{Value: 100.0},
+		// Set the span name to "ingress" for gateway-level spans
+		SpawnUpstreamSpan: wrapperspb.Bool(true),
 		CustomTags: []*tracingv3.CustomTag{
-			{
-				Tag: "security_rule.ruleset.name",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Route_{
-								Route: &metadatav3.MetadataKind_Route{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.rbac",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "access_policy_name"}},
-							},
-						},
-						DefaultValue: "",
-					},
-				},
-			},
 			{
 				Tag: "security_rule.name",
 				Type: &tracingv3.CustomTag_Metadata_{
 					Metadata: &tracingv3.CustomTag_Metadata{
 						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Route_{
-								Route: &metadatav3.MetadataKind_Route{},
+							Kind: &metadatav3.MetadataKind_Request_{
+								Request: &metadatav3.MetadataKind_Request{},
 							},
 						},
 						MetadataKey: &metadatav3.MetadataKey{
 							Key: "envoy.filters.http.rbac",
 							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "policy_name"}},
-							},
-						},
-						DefaultValue: "",
-					},
-				},
-			},
-			{
-				Tag: "event.action",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Route_{
-								Route: &metadatav3.MetadataKind_Route{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.rbac",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "action"}},
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "shadow_effective_policy_id"}},
 							},
 						},
 						DefaultValue: "",
@@ -405,14 +370,14 @@ func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 				Type: &tracingv3.CustomTag_Metadata_{
 					Metadata: &tracingv3.CustomTag_Metadata{
 						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Route_{
-								Route: &metadatav3.MetadataKind_Route{},
+							Kind: &metadatav3.MetadataKind_Request_{
+								Request: &metadatav3.MetadataKind_Request{},
 							},
 						},
 						MetadataKey: &metadatav3.MetadataKey{
 							Key: "envoy.filters.http.rbac",
 							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "result"}},
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "shadow_engine_result"}},
 							},
 						},
 						DefaultValue: "",
