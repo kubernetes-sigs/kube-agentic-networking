@@ -26,7 +26,7 @@ if not envoy_service:
     raise ValueError("the ENVOY_SERVICE environment variable is missing.")
 
 DEEPWIKI_URL = f"http://{envoy_service}/remote/mcp"
-EVERYTHINGMCP_URL = f"http://{envoy_service}/local/mcp",
+EVERYTHINGMCP_URL = f"http://{envoy_service}/local/mcp"
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
@@ -40,7 +40,7 @@ client = AsyncOpenAI(
     base_url="https://router.huggingface.co/v1",
     api_key=HF_TOKEN
 )
-MODEL_NAME = "deepseek-ai/DeepSeek-R1-0528"
+MODEL_NAME = hf_model.removeprefix("huggingface/")
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
