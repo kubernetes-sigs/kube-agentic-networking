@@ -31,6 +31,26 @@ import (
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
 )
 
+// AccessPolicyTargetRefIndex is the index name for looking up AccessPolicies by target ref (namespace/name of XBackend).
+const AccessPolicyTargetRefIndex = "targetRef"
+
+// accessPolicyTargetRefIndexFunc indexes AccessPolicies by each XBackend targetRef (namespace/name).
+// Used by the informer cache to support O(1) lookup of policies targeting a given backend.
+func accessPolicyTargetRefIndexFunc(obj interface{}) ([]string, error) {
+	policy, ok := obj.(*agenticv0alpha0.XAccessPolicy)
+	if !ok {
+		return nil, nil
+	}
+	var keys []string
+	for _, targetRef := range policy.Spec.TargetRefs {
+		if !isXBackendTargetRef(targetRef) {
+			continue
+		}
+		keys = append(keys, policy.Namespace+"/"+string(targetRef.Name))
+	}
+	return keys, nil
+}
+
 func (c *Controller) setupAccessPolicyEventHandlers(accessPolicyInformer agenticinformers.XAccessPolicyInformer) error {
 	_, err := accessPolicyInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onAccessPolicyAdd,
