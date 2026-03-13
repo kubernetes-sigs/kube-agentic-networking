@@ -97,13 +97,16 @@ make quickstart
 
 In the agent UI, ensure `mcp_agent` is selected from the dropdown menu in the top-left corner. Try the following prompts:
 
-| Prompt                                                                 | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
-| :--------------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
-| What can you do?                                                       | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
-| What is the sum of 2 and 3?                                            | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                 |
-| Echo back 'hello'.                                                     | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
-| Read the wiki structure of `modelcontextprotocol/servers` GitHub repo. | `read_wiki_structure` on remote MCP | ✅ **Success**   | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
-| Read the wiki content of that GitHub repo.                             | `read_wiki_content` on remote MCP   | ❌ **Failure**   | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
+| Prompt                                                                               | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
+| :----------------------------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
+| What can you do?                                                                     | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
+| What is the sum of 2 and 3?                                                          | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                 |
+| Echo back 'hello'.                                                                   | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
+| Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking   | `read_wiki_structure` on remote MCP | ✅ **Success**   | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
+| Read the wiki content of the GitHub repo kubernetes-sigs/kube-agentic-networking     | `read_wiki_content` on remote MCP   | ❌ **Failure**   | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
+| How to contribute to the GitHub repo kubernetes-sigs/kube-agentic-networking         | `ask_question` on remote MCP        | ❌ **Failure**   | The `ask_question` tool is not in the allowlist for the remote backend.                                                                         |
+
+*Note: The `XAccessPolicy` resources used in this quickstart are defined [here](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/policy/e2e.yaml).*
 
 <details markdown="1">
 <summary style="font-size: 1.5em; font-weight: bold;">🧪 Try Dynamic Policy Updates in Action</summary>
