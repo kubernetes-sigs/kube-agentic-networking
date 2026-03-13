@@ -15,21 +15,28 @@
 # We need all the Make variables exported as env vars.
 # Note that the ?= operator works regardless.
 
-include $(CURDIR)/hack/build/Makefile.common.in
-
 # Enable Go modules.
 export GO111MODULE=on
+# Warn if undefined variables are referenced.
+MAKEFLAGS += --warn-undefined-variablesm
 
-# Print the help menu.
-.PHONY: help
+# First target in the Makefile is a default target when run with no
+# arguments.
+default: all
+.PHONY: default
+
+# This must be included after the default target (it defines targets
+# so we cannot have it be first in the Makefile).
+include $(CURDIR)/hack/build/Makefile.common.in
+
+.PHONY: help ## Print this help menu.
 help:
 	@grep -hE '^[ a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-17s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: all
-all: validate-python vet fmt verify test build;$(info $(M)...Begin to test, verify and build this project.) @ ## Test, verify and build this project.
+all: validate-python vet fmt verify test build  ## Test, verify and build this project.
 
-# Check Python syntax
 PYTHON_FILES := $(shell find . -type f -name "*.py")
 .PHONY: validate-python
 validate-python:
@@ -37,40 +44,41 @@ validate-python:
 	@echo "$(PYTHON_FILES)"
 	@if [ -n "$(PYTHON_FILES)" ]; then python -m py_compile $(PYTHON_FILES); else echo "No Python files found."; fi
 
-# Run go fmt against code
 .PHONY: fmt
-fmt: ;$(info $(M)...Begin to run go fmt against code.)  @ ## Run go fmt against code.
+fmt:  ## Run go fmt against code.
+	$(info ...Begin to run go fmt against code.)
 	gofmt -w ./pkg
 
-# Run go vet against code
 .PHONY: vet
-vet: ;$(info $(M)...Begin to run go vet against code.)  @ ## Run go vet against code.
+vet: ## Run go vet against code.
+	$(info ...Begin to run go vet against code.)
 	go vet ./pkg/...
 
-# Run go test against code
 .PHONY: test
-test: vet test-pkg test-cel test-crd ## Run all tests.
+test: test-pkg test-cel test-crd ## Run all tests.
 
 .PHONY: test-pkg
-test-pkg: ;$(info $(M)...Running pkg tests.) @ ## Run pkg tests.
+test-pkg: ## Run pkg tests.
+	$(info ...Running pkg tests.)
 	go test -race -cover ./pkg/...
 
 .PHONY: test-cel
-test-cel: ;$(info $(M)...Running CEL tests.) @ ## Run CEL tests.
+test-cel: ## Run CEL tests.
+	$(info ...Running CEL tests.)
 	cd tests && go test -v ./cel/...
 
 .PHONY: test-crd
-test-crd: ;$(info $(M)...Running CRD tests.) @ ## Run CRD tests.
+test-crd: ## Run CRD tests.
+	$(info ...Running CRD tests.)
 	cd tests && go test -v ./crd/...
 
 .PHONY: test-e2e
-test-e2e: ;$(info $(M)...Running full E2E pipeline (setup + test).) @ ## Run full E2E tests including cluster setup and controller deployment.
+test-e2e: ## Run full E2E tests including cluster setup and controller deployment.
+	$(info ...Running full E2E pipeline (setup + test).)
 	./dev/ci/run-e2e.sh
 
-
-# Run static analysis.
 .PHONY: verify
-verify:
+verify: ## Run go vet
 	hack/verify-all.sh -v
 
 REPO_ROOT:=${CURDIR}
