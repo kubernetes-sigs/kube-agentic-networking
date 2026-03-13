@@ -196,7 +196,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 			name: "0 Gateway-level Policies, 0 Backend-level policies, 2 external auth policies",
 			policies: []runtime.Object{
 				func() *agenticv0alpha0.XAccessPolicy {
-					p := newTestAccessPolicy("ext-auth-policy-1", ns, "dummy", "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p := newTestAccessPolicy("ext-auth-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1") // gateway we check the expected filters for
 					p.Spec.Rules[0].Name = "ext-rule-1"
 					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
 						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
@@ -210,53 +210,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 					return p
 				}(),
 				func() *agenticv0alpha0.XAccessPolicy {
-					p := newTestAccessPolicy("ext-auth-policy-2", ns, "dummy", "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
-					p.Spec.Rules[0].Name = "ext-rule-2"
-					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
-							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-							BackendRef: gatewayv1.BackendObjectReference{
-								Name: "ext-auth-svc-2",
-							},
-						},
-					}
-					return p
-				}(),
-			},
-			expected: []string{
-				"envoy.filters.http.mcp",
-				"envoy.filters.http.ext_authz",
-				"envoy.filters.http.ext_authz",
-				"envoy.filters.http.router",
-			},
-		},
-		{
-			name: "2 Gateway-level Policies, 2 Backend-level policies, 2 external auth policies",
-			routes: []*gatewayv1.HTTPRoute{
-				newTestHTTPRoute("route-1", ns, gwName, "backend-1"),
-			},
-			policies: []runtime.Object{
-				newTestAccessPolicy("gw-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
-				newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2"),
-				newTestAccessPolicy("be-policy-1", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns3/sa/sa3"),
-				newTestAccessPolicy("be-policy-2", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns4/sa/sa4"),
-				func() *agenticv0alpha0.XAccessPolicy {
-					p := newTestAccessPolicy("ext-auth-policy-1", ns, "dummy", "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
-					p.Spec.Rules[0].Name = "ext-rule-1"
-					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
-							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-							BackendRef: gatewayv1.BackendObjectReference{
-								Name: "ext-auth-svc-1",
-							},
-						},
-					}
-					return p
-				}(),
-				func() *agenticv0alpha0.XAccessPolicy {
-					p := newTestAccessPolicy("ext-auth-policy-2", ns, "dummy", "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p := newTestAccessPolicy("ext-auth-policy-2", ns, "dummy", "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2") // NOT the gateway we check the expected filters for
 					p.Spec.Rules[0].Name = "ext-rule-2"
 					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
 						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
@@ -273,11 +227,75 @@ func TestBuildHTTPFilters(t *testing.T) {
 			expected: []string{
 				"envoy.filters.http.mcp",
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
+				"envoy.filters.http.ext_authz",
+				"envoy.filters.http.router",
+			},
+		},
+		{
+			name: "2 Gateway-level Policies, 2 Backend-level policies, 3 external auth policies",
+			routes: []*gatewayv1.HTTPRoute{
+				newTestHTTPRoute("route-1", ns, gwName, "backend-1"),
+			},
+			policies: []runtime.Object{
+				newTestAccessPolicy("gw-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
+				newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2"),
+				newTestAccessPolicy("be-policy-1", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns3/sa/sa3"),
+				newTestAccessPolicy("be-policy-2", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns4/sa/sa4"),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("ext-auth-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.Spec.Rules[0].Name = "ext-rule-1"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gatewayv1.BackendObjectReference{
+								Name: "ext-auth-svc-1",
+							},
+						},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("ext-auth-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.Spec.Rules[0].Name = "ext-rule-2"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gatewayv1.BackendObjectReference{
+								Name: "ext-auth-svc-2",
+							},
+						},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("ext-auth-policy-3", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.Spec.Rules[0].Name = "ext-rule-1"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gatewayv1.BackendObjectReference{
+								Name: "ext-auth-svc-1",
+							},
+						},
+					}
+					return p
+				}(),
+			},
+			expected: []string{
+				"envoy.filters.http.mcp",
+				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2),
+				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 3), // ext_authz-policy-1
+				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 4), // ext_authz-policy-2
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2),
-				"envoy.filters.http.ext_authz",
-				"envoy.filters.http.ext_authz",
+				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 3), // ext_authz-policy-3
+				"envoy.filters.http.ext_authz",                                // ext-auth-policy-1 | envoy.filters.http.rbac.gateway_level_3
+				"envoy.filters.http.ext_authz",                                // ext-auth-policy-2 | envoy.filters.http.rbac.gateway_level_4
+				"envoy.filters.http.ext_authz",                                // ext-auth-policy-3 | envoy.filters.http.rbac.backend_level_3
 				"envoy.filters.http.router",
 			},
 		},

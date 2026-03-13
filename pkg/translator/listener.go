@@ -362,22 +362,27 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 2. Add Gateway-level RBAC filters.
-	gatewayRBACFilters, err := t.buildGatewayLevelRBACFilters(gateway)
+	gatewayRBACFilters, gatewayRBACFiltersWithExtAuthz, err := t.buildGatewayLevelRBACFilters(gateway)
 	if err != nil {
 		return nil, err
 	}
 
 	// 3. Add Backend-level RBAC filters.
-	// We add the exact number of placeholder filters needed based on the maximum policies
-	// targeting any reachable backend. These will be overridden at the cluster/route level.
-	backendRBACFiltersCount := t.calculateMaxBackendRBACFilters(gateway)
-	backendRBACFilters, err := t.buildBackendLevelRBACFilters(backendRBACFiltersCount)
+	// We build only placeholder filters for backends that have policies at this stage.
+	// These will be overridden at the cluster/route level.
+	backendRBACFilters, backendRBACFiltersWithExtAuthz, err := t.buildBackendLevelRBACFilters(gateway)
 	if err != nil {
 		return nil, err
 	}
 
+	// merges the two maps of ext_authz unique ID to RBAC filter names, since both Gateway-level and Backend-level RBAC filters can reference the same ext_authz config, and we need to build the ext_authz filter with metadata matchers for all referencing RBAC filters.
+	rbacFiltersWithExtAuthz := gatewayRBACFiltersWithExtAuthz // ExternalAuthz unique ID → list of RBAC filters that reference it
+	for extAuthUniqueID, filterNames := range backendRBACFiltersWithExtAuthz {
+		rbacFiltersWithExtAuthz[extAuthUniqueID] = append(rbacFiltersWithExtAuthz[extAuthUniqueID], filterNames...)
+	}
+
 	// 4. Add ext_authz filters.
-	extAuthzFilters, err := t.buildExtAuthzFilters()
+	extAuthzFilters, err := t.buildExtAuthzFilters(rbacFiltersWithExtAuthz)
 	if err != nil {
 		return nil, err
 	}
@@ -420,112 +425,143 @@ func buildMCPFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-func (t *Translator) buildExtAuthzFilters() ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildExtAuthzFilters(rbacFiltersWithExtAuthz map[string][]string) ([]*hcm.HttpFilter, error) {
 	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
 	}
 
 	var filters []*hcm.HttpFilter
-	hashes := make(map[string]struct{}) // To track unique externalAuth configs and avoid duplicate filters
+	uniqueExtAuthzConfigs := make(map[string]struct{}) // To track unique externalAuth configs and avoid duplicate filters
 	for _, ap := range accessPolicies {
 		for _, rule := range ap.Spec.Rules {
 			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
 				continue
 			}
 			extAuthz := rule.Authorization.ExternalAuth
-			hash, err := externalAuthUniqueID(extAuthz)
+			uniqueID, err := externalAuthUniqueID(extAuthz)
 			if err != nil {
 				klog.Error(err)
 				continue
 			}
-			if _, exists := hashes[hash]; exists {
-				continue // Skip if we've already created a filter for this config
-			}
-			hashes[hash] = struct{}{}
-			extAuthzProto := buildExtAuthzConfig(hash)
-			backendRef := extAuthz.BackendRef
-			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuthz.ExternalAuthProtocol))
-			switch extAuthz.ExternalAuthProtocol {
-			case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
-				extAuthzProto.Services = &ext_authzv3.ExtAuthz_GrpcService{
-					GrpcService: &corev3.GrpcService{
-						TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
-							EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{
-								ClusterName: clusterName,
-								Authority:   fqdnFromBackendRef(backendRef, ap.GetNamespace()),
-							},
-						},
-					},
+			// Build one ext_authz filter for each RBAC filter that references it, since the ext_authz filter will trigger conditionally based on metadata set by the RBAC filters.
+			rbacFilterNames := rbacFiltersWithExtAuthz[uniqueID] // Get the list of RBAC filters that reference this ext_authz config
+			for _, rbacFilterName := range rbacFilterNames {
+				if _, exists := uniqueExtAuthzConfigs[uniqueID+rbacFilterName]; exists {
+					continue // Skip if we've already built an ext_authz filter for this config and RBAC filter combination
 				}
-				if extAuthz.GRPCAuthConfig != nil && len(extAuthz.GRPCAuthConfig.AllowedRequestHeaders) > 0 {
-					extAuthzProto.AllowedHeaders = &matcherv3.ListStringMatcher{
-						Patterns: toEnvoyExactStringMatchers(extAuthz.GRPCAuthConfig.AllowedRequestHeaders),
-					}
+				uniqueExtAuthzConfigs[uniqueID+rbacFilterName] = struct{}{}
+
+				// Build the ext_authz filter for this RBAC filter and ext_authz config combination
+				extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, rbacFilterName, ap.GetNamespace())
+				if err != nil {
+					klog.Error(err)
+					continue
 				}
-			case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
-				if config := extAuthz.HTTPAuthConfig; config != nil {
-					if backendRef.Kind != nil && *backendRef.Kind != "Service" {
-						klog.Errorf("Unsupported backend ref kind for ext_authz HTTP protocol: %s", *backendRef.Kind)
-						continue
-					}
-					uri := fmt.Sprintf("http://%s", backendRef.Name)
-					if namespace := backendRef.Namespace; namespace != nil {
-						uri = fmt.Sprintf("%s.%s.svc.cluster.local", uri, *namespace)
-					}
-					if port := backendRef.Port; port != nil {
-						uri = fmt.Sprintf("%s:%d", uri, *port)
-					}
-					httpService := &ext_authzv3.ExtAuthz_HttpService{
-						HttpService: &ext_authzv3.HttpService{
-							ServerUri: &corev3.HttpUri{
-								Uri: uri,
-								HttpUpstreamType: &corev3.HttpUri_Cluster{
-									Cluster: clusterName,
-								},
-								Timeout: durationpb.New(uriTimeout),
-							},
-							PathPrefix: config.Path,
-						},
-					}
-					if len(config.AllowedResponseHeaders) > 0 {
-						httpService.HttpService.AuthorizationResponse = &ext_authzv3.AuthorizationResponse{
-							AllowedUpstreamHeaders: &matcherv3.ListStringMatcher{
-								Patterns: toEnvoyExactStringMatchers(config.AllowedResponseHeaders),
-							},
-						}
-					}
-					extAuthzProto.Services = httpService
-					if len(config.AllowedRequestHeaders) > 0 {
-						extAuthzProto.AllowedHeaders = &matcherv3.ListStringMatcher{
-							Patterns: toEnvoyExactStringMatchers(config.AllowedRequestHeaders),
-						}
-					}
-					// We don't support AllowedResponseHeaders yet
-				}
+				filters = append(filters, extAuthzFilter)
 			}
-			if forwardRequestBody := extAuthz.ForwardBody; forwardRequestBody != nil {
-				extAuthzProto.WithRequestBody = &ext_authzv3.BufferSettings{
-					MaxRequestBytes:     uint32(forwardRequestBody.MaxSize),
-					AllowPartialMessage: true,
-				}
-			}
-			extAuthzAny, err := anypb.New(extAuthzProto)
-			if err != nil {
-				klog.Errorf("Failed to marshal ext_authz config: %v", err)
-				return nil, err
-			}
-			extAuthzFilter := &hcm.HttpFilter{
-				Name: wellknown.HTTPExternalAuthorization,
-				ConfigType: &hcm.HttpFilter_TypedConfig{
-					TypedConfig: extAuthzAny,
-				},
-			}
-			filters = append(filters, extAuthzFilter)
 		}
 	}
 
 	return filters, nil
+}
+
+func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter, extAuthzUniqueID, rbacFilterName, namespace string) (*hcm.HttpFilter, error) {
+	extAuthzProto := &ext_authzv3.ExtAuthz{
+		FailureModeAllow: false,
+		FilterEnabledMetadata: &matcherv3.MetadataMatcher{
+			Filter: rbacFilterName,
+			Path: []*matcherv3.MetadataMatcher_PathSegment{
+				{
+					Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
+						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", externalAuthzShadowRulePrefix, extAuthzUniqueID),
+					},
+				},
+			},
+			Value: &matcherv3.ValueMatcher{
+				MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
+			},
+		},
+		MetadataContextNamespaces: []string{
+			mcpProxyFilterName,
+			wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
+		},
+	}
+	backendRef := extAuthz.BackendRef
+	clusterName := clusterNameForBackendRefAndProtocol(backendRef, namespace, string(extAuthz.ExternalAuthProtocol))
+	switch extAuthz.ExternalAuthProtocol {
+	case gatewayv1.HTTPRouteExternalAuthGRPCProtocol: // grpc protocol
+		extAuthzProto.Services = &ext_authzv3.ExtAuthz_GrpcService{
+			GrpcService: &corev3.GrpcService{
+				TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
+					EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{
+						ClusterName: clusterName,
+						Authority:   fqdnFromBackendRef(backendRef, namespace),
+					},
+				},
+			},
+		}
+		if extAuthz.GRPCAuthConfig != nil && len(extAuthz.GRPCAuthConfig.AllowedRequestHeaders) > 0 {
+			extAuthzProto.AllowedHeaders = &matcherv3.ListStringMatcher{
+				Patterns: toEnvoyExactStringMatchers(extAuthz.GRPCAuthConfig.AllowedRequestHeaders),
+			}
+		}
+	case gatewayv1.HTTPRouteExternalAuthHTTPProtocol: // http protocol
+		if config := extAuthz.HTTPAuthConfig; config != nil {
+			if backendRef.Kind != nil && *backendRef.Kind != "Service" {
+				return nil, fmt.Errorf("Unsupported backend ref kind for ext_authz HTTP protocol: %s", *backendRef.Kind)
+			}
+			uri := fmt.Sprintf("http://%s", backendRef.Name)
+			if namespace := backendRef.Namespace; namespace != nil {
+				uri = fmt.Sprintf("%s.%s.svc.cluster.local", uri, *namespace)
+			}
+			if port := backendRef.Port; port != nil {
+				uri = fmt.Sprintf("%s:%d", uri, *port)
+			}
+			httpService := &ext_authzv3.ExtAuthz_HttpService{
+				HttpService: &ext_authzv3.HttpService{
+					ServerUri: &corev3.HttpUri{
+						Uri: uri,
+						HttpUpstreamType: &corev3.HttpUri_Cluster{
+							Cluster: clusterName,
+						},
+						Timeout: durationpb.New(uriTimeout),
+					},
+					PathPrefix: config.Path,
+				},
+			}
+			if len(config.AllowedResponseHeaders) > 0 {
+				httpService.HttpService.AuthorizationResponse = &ext_authzv3.AuthorizationResponse{
+					AllowedUpstreamHeaders: &matcherv3.ListStringMatcher{
+						Patterns: toEnvoyExactStringMatchers(config.AllowedResponseHeaders),
+					},
+				}
+			}
+			extAuthzProto.Services = httpService
+			if len(config.AllowedRequestHeaders) > 0 {
+				extAuthzProto.AllowedHeaders = &matcherv3.ListStringMatcher{
+					Patterns: toEnvoyExactStringMatchers(config.AllowedRequestHeaders),
+				}
+			}
+			// We don't support AllowedResponseHeaders yet
+		}
+	}
+	if forwardRequestBody := extAuthz.ForwardBody; forwardRequestBody != nil {
+		extAuthzProto.WithRequestBody = &ext_authzv3.BufferSettings{
+			MaxRequestBytes:     uint32(forwardRequestBody.MaxSize),
+			AllowPartialMessage: true,
+		}
+	}
+	extAuthzAny, err := anypb.New(extAuthzProto)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to marshal ext_authz config: %v", err)
+	}
+	return &hcm.HttpFilter{
+		Name: wellknown.HTTPExternalAuthorization,
+		ConfigType: &hcm.HttpFilter_TypedConfig{
+			TypedConfig: extAuthzAny,
+		},
+	}, nil
 }
 
 func buildRouterFilter() (*hcm.HttpFilter, error) {
@@ -542,29 +578,6 @@ func buildRouterFilter() (*hcm.HttpFilter, error) {
 			TypedConfig: routerAny,
 		},
 	}, nil
-}
-
-func buildExtAuthzConfig(hash string) *ext_authzv3.ExtAuthz {
-	return &ext_authzv3.ExtAuthz{
-		FailureModeAllow: false,
-		FilterEnabledMetadata: &matcherv3.MetadataMatcher{
-			Filter: wellknown.HTTPRoleBasedAccessControl,
-			Path: []*matcherv3.MetadataMatcher_PathSegment{
-				{
-					Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
-						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", externalAuthzShadowRulePrefix, hash),
-					},
-				},
-			},
-			Value: &matcherv3.ValueMatcher{
-				MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
-			},
-		},
-		MetadataContextNamespaces: []string{
-			mcpProxyFilterName,
-			wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
-		},
-	}
 }
 
 // TODO: We may want to optimize this in the future by supporting both listener's TLS config and the shared TLS context.

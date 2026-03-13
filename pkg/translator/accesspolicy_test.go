@@ -159,7 +159,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 
 			for gwn, expectedNames := range tt.gatewaysToCheck {
 				gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwn, Namespace: ns}}
-				filters, err := tr.buildGatewayLevelRBACFilters(gw)
+				filters, _, err := tr.buildGatewayLevelRBACFilters(gw)
 				if err != nil {
 					t.Fatalf("Gateway %s: Failed to build filters: %v", gwn, err)
 				}
@@ -179,31 +179,6 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 }
 
 func TestBuildBackendLevelRBACFilters(t *testing.T) {
-	tr := &Translator{}
-	filters, err := tr.buildBackendLevelRBACFilters(5)
-	if err != nil {
-		t.Fatalf("Failed to build filters: %v", err)
-	}
-
-	if len(filters) != 5 {
-		t.Errorf("Expected 5 filters, got %d", len(filters))
-	}
-
-	for i, f := range filters {
-		expectedName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
-		if f.GetName() != expectedName {
-			t.Errorf("Filter %d: expected name %s, got %s", i, expectedName, f.GetName())
-		}
-
-		// Verify it's an RBAC filter
-		rbac := &rbacv3.RBAC{}
-		if err := f.GetTypedConfig().UnmarshalTo(rbac); err != nil {
-			t.Errorf("Filter %d: failed to unmarshal to RBAC: %v", i, err)
-		}
-	}
-}
-
-func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 	ns := "test-ns"
 	gwName := "test-gw"
 
@@ -321,9 +296,21 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns},
 			}
 
-			got := tr.calculateMaxBackendRBACFilters(gw)
-			if got != tt.want {
-				t.Errorf("calculateMaxBackendRBACFilters() = %v, want %v", got, tt.want)
+			filters, _, err := tr.buildBackendLevelRBACFilters(gw)
+			if err != nil {
+				t.Fatalf("Failed to build filters: %v", err)
+			}
+			for i, f := range filters {
+				expectedName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
+				if f.GetName() != expectedName {
+					t.Errorf("Filter %d: expected name %s, got %s", i, expectedName, f.GetName())
+				}
+
+				// Verify it's an RBAC filter
+				rbac := &rbacv3.RBAC{}
+				if err := f.GetTypedConfig().UnmarshalTo(rbac); err != nil {
+					t.Errorf("Filter %d: failed to unmarshal to RBAC: %v", i, err)
+				}
 			}
 		})
 	}
