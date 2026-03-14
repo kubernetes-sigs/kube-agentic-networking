@@ -37,8 +37,8 @@ spec:
               iptables -t nat -A OUTPUT -p tcp --dport 10001 -m owner ! --uid-owner 1337 -j REDIRECT --to-ports 10001
       containers:
         - name: adk-agent
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-adk-agent:main
-          imagePullPolicy: Always
+          image: adk-agent:latest
+          imagePullPolicy: IfNotPresent
           resources:
             limits:
               memory: "512Mi"
@@ -75,6 +75,14 @@ spec:
               value: "http://otel-collector.quickstart-ns.svc.cluster.local:4318"
             - name: OTEL_SERVICE_NAME
               value: "adk-agent"
+            # Enable ADK OpenTelemetry integration
+            - name: ADK_ENABLE_OTEL
+              value: "true"
+            - name: OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED
+              value: "true"
+            # Ensure trace context propagation
+            - name: OTEL_PROPAGATORS
+              value: "tracecontext,baggage"
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
