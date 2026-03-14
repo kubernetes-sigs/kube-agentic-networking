@@ -31,9 +31,8 @@ hf_model = os.environ.get("HF_MODEL")
 ollama_base_url = os.environ.get("OLLAMA_BASE_URL")
 ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 
-# Automatically determine which model to use based on available credentials
+# Default to Hugging Face mode if provided
 if hf_model:
-    # Use Hugging Face model
     logger.info(f"Using Hugging Face model: {hf_model}")
     model = LiteLlm(
         model=hf_model,
