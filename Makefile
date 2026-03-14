@@ -165,8 +165,12 @@ SHELL = /usr/bin/env bash -o pipefail
 ##@Quickstart
 
 .PHONY: quickstart
-quickstart: ## Run the quickstart setup (requires HF_TOKEN env var, kind, kubectl, go).
+quickstart: ## Run the quickstart setup with HuggingFace (requires HF_TOKEN env var, kind, kubectl, go).
 	site-src/guides/quickstart/run-quickstart.sh
+
+.PHONY: quickstart-ollama
+quickstart-ollama: ## Run the quickstart setup with Ollama
+	site-src/guides/quickstart/run-quickstart.sh --ollama
 
 ##@Docs
 

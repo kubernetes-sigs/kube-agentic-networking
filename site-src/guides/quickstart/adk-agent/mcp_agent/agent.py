@@ -40,7 +40,7 @@ if hf_model:
     )
 else:
     # Use Ollama (either custom URL or default local)
-    base_url = ollama_base_url or "http://host.docker.internal:11434"
+    base_url = ollama_base_url or "http://localhost:11434"
 
     # Set dummy OPENAI_API_KEY if not available (required for openai/ usage in LiteLLM)
     if not os.environ.get("OPENAI_API_KEY"):
