@@ -1,1 +1,1 @@
-include $(CURDIR)/../../../hack/build/Makefile.common.in
+include $(CURDIR)/../../../../../hack/build/Makefile.common.in
