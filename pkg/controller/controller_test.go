@@ -20,10 +20,11 @@ import (
 	"testing"
 
 	"k8s.io/client-go/tools/cache"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
+	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 )
 
 func TestHasHTTPRoutesReferencingGateway(t *testing.T) {
@@ -213,6 +214,119 @@ func TestHasHTTPRoutesReferencingGateway(t *testing.T) {
 		}
 		if !hasHTTPRoutesReferencingGateway(c, gw) {
 			t.Error("expected true when one parentRef references this gateway")
+		}
+	})
+}
+
+func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
+	gwNamespace := "default"
+	gwName := "my-gateway"
+
+	t.Run("no policies in namespace", func(t *testing.T) {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		c := &Controller{
+			agentic: agenticNetResources{
+				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+			},
+		}
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: gwName},
+		}
+		if hasAccessPoliciesTargetingGateway(c, gw) {
+			t.Error("expected false when no AccessPolicies exist in namespace")
+		}
+	})
+
+	t.Run("policy targets different gateway", func(t *testing.T) {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		policy := &agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: "policy-1"},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
+					{
+						LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+							Group: gatewayv1.GroupName, Kind: "Gateway", Name: gatewayv1.ObjectName("other-gateway"),
+						},
+					},
+				},
+				Rules: []agenticv0alpha0.AccessRule{{Name: "r1", Source: agenticv0alpha0.Source{Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE}}},
+			},
+		}
+		if err := indexer.Add(policy); err != nil {
+			t.Fatalf("indexer.Add: %v", err)
+		}
+		c := &Controller{
+			agentic: agenticNetResources{
+				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+			},
+		}
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: gwName},
+		}
+		if hasAccessPoliciesTargetingGateway(c, gw) {
+			t.Error("expected false when policy targets a different gateway")
+		}
+	})
+
+	t.Run("policy targets this gateway", func(t *testing.T) {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		policy := &agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: "policy-1"},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
+					{
+						LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+							Group: gatewayv1.GroupName, Kind: "Gateway", Name: gatewayv1.ObjectName(gwName),
+						},
+					},
+				},
+				Rules: []agenticv0alpha0.AccessRule{{Name: "r1", Source: agenticv0alpha0.Source{Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE}}},
+			},
+		}
+		if err := indexer.Add(policy); err != nil {
+			t.Fatalf("indexer.Add: %v", err)
+		}
+		c := &Controller{
+			agentic: agenticNetResources{
+				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+			},
+		}
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: gwName},
+		}
+		if !hasAccessPoliciesTargetingGateway(c, gw) {
+			t.Error("expected true when policy targets this gateway")
+		}
+	})
+
+	t.Run("policy with XBackend targetRef only", func(t *testing.T) {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		policy := &agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: "policy-1"},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
+					{
+						LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+							Group: agenticv0alpha0.GroupName, Kind: "XBackend", Name: gatewayv1.ObjectName("some-backend"),
+						},
+					},
+				},
+				Rules: []agenticv0alpha0.AccessRule{{Name: "r1", Source: agenticv0alpha0.Source{Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE}}},
+			},
+		}
+		if err := indexer.Add(policy); err != nil {
+			t.Fatalf("indexer.Add: %v", err)
+		}
+		c := &Controller{
+			agentic: agenticNetResources{
+				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+			},
+		}
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: gwName},
+		}
+		if hasAccessPoliciesTargetingGateway(c, gw) {
+			t.Error("expected false when policy only targets XBackend, not Gateway")
 		}
 	})
 }
