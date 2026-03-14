@@ -34,6 +34,11 @@ GATEWAY_API_VERSION="v1.5.0"
 AGENT_UI_PORT="8081"
 AGENT_UI_URL="http://localhost:${AGENT_UI_PORT}/dev-ui/?app=mcp_agent"
 
+# Default to HuggingFace, can be overridden with --ollama flag
+USE_OLLAMA=false
+OLLAMA_BASE_URL="http://localhost:11434"
+OLLAMA_MODEL="qwen2.5:7b"
+
 # --- Helper Functions ---
 
 info() {
@@ -62,6 +67,51 @@ wait_for_deployment() {
   kubectl wait --timeout=5m -n "${namespace}" deployment ${selector} --for=condition=Available
 }
 
+# --- Parse Command Line Arguments ---
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --ollama)
+      USE_OLLAMA=true
+      shift
+      ;;
+    --ollama-url)
+      OLLAMA_BASE_URL="$2"
+      shift 2
+      ;;
+    --ollama-model)
+      OLLAMA_MODEL="$2"
+      shift 2
+      ;;
+    --help|-h)
+      echo "Usage: $0 [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --ollama              Use Ollama instead of HuggingFace (default: false)"
+      echo "  --ollama-url URL      Ollama base URL (default: http://localhost:11434)"
+      echo "  --ollama-model MODEL  Ollama model name (default: qwen2.5:7b)"
+      echo "  --help, -h            Show this help message"
+      echo ""
+      echo "Examples:"
+      echo "  # Use HuggingFace (requires HF_TOKEN):"
+      echo "  export HF_TOKEN=<your-token>"
+      echo "  $0"
+      echo ""
+      echo "  # Use Ollama with defaults:"
+      echo "  $0 --ollama"
+      echo ""
+      echo "  # Use Ollama with custom settings:"
+      echo "  $0 --ollama --ollama-url http://192.168.1.100:11434 --ollama-model llama3.2"
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1"
+      echo "Run '$0 --help' for usage information."
+      exit 1
+      ;;
+  esac
+done
+
 # --- Prerequisite Checks ---
 
 info "Checking prerequisites..."
@@ -70,14 +120,23 @@ check_command kubectl
 check_command go
 check_command envsubst
 
-if [[ -z "${HF_TOKEN:-}" ]]; then
-  error "HF_TOKEN environment variable is not set."
-  echo "  Please export your HuggingFace token before running this script:"
-  echo "    export HF_TOKEN=<your-huggingface-token>"
-  echo ""
-  echo "  You need a token with 'Make calls to Inference Providers' permission."
-  echo "  See: https://huggingface.co/docs/hub/en/security-tokens"
-  exit 1
+if [[ "${USE_OLLAMA}" == "false" ]]; then
+  if [[ -z "${HF_TOKEN:-}" ]]; then
+    error "HF_TOKEN environment variable is not set."
+    echo "  Please export your HuggingFace token before running this script:"
+    echo "    export HF_TOKEN=<your-huggingface-token>"
+    echo ""
+    echo "  You need a token with 'Make calls to Inference Providers' permission."
+    echo "  See: https://huggingface.co/docs/hub/en/security-tokens"
+    echo ""
+    echo "  Alternatively, use --ollama flag to use Ollama instead:"
+    echo "    $0 --ollama"
+    exit 1
+  fi
+  info "Using HuggingFace model (HF_TOKEN is set)."
+else
+  info "Using Ollama model: ${OLLAMA_MODEL} at ${OLLAMA_BASE_URL}"
+  warn "Make sure Ollama is running and accessible at ${OLLAMA_BASE_URL}"
 fi
 
 info "All prerequisites satisfied."
@@ -213,13 +272,27 @@ deploy_agent() {
   GATEWAY_ADDRESS="${gateway_address}" GATEWAY_SPIFFE_ID="${gateway_spiffe_id}" \
     envsubst < "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/sidecar/sidecar-configs.yaml" | kubectl apply -f -
 
-  # Create HuggingFace secret (idempotent via dry-run).
-  kubectl create secret generic hf-secret -n "${NAMESPACE}" \
-    --from-literal=hf-token-key="${HF_TOKEN}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+  # Configure agent deployment based on model choice
+  if [[ "${USE_OLLAMA}" == "true" ]]; then
+    info "Configuring agent for Ollama..."
+    # Patch deployment to use Ollama
+    kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/deployment.yaml"
+    kubectl set env deployment/adk-agent -n "${NAMESPACE}" \
+      HF_MODEL- \
+      HF_TOKEN- \
+      OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
+      OLLAMA_MODEL="${OLLAMA_MODEL}"
+  else
+    info "Configuring agent for HuggingFace..."
+    # Create HuggingFace secret (idempotent via dry-run).
+    kubectl create secret generic hf-secret -n "${NAMESPACE}" \
+      --from-literal=hf-token-key="${HF_TOKEN}" \
+      --dry-run=client -o yaml | kubectl apply -f -
 
-  # Deploy agent.
-  kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/deployment.yaml"
+    # Deploy agent with HF configuration
+    kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/deployment.yaml"
+  fi
+
   wait_for_deployment "${NAMESPACE}" "adk-agent"
 }
 
