@@ -5,6 +5,11 @@ site_dir: site
 docs_dir: site-src
 extra_css:
   - stylesheets/extra.css
+hooks:
+  - hack/docs/generate-proposal-landing-pages.py
+  - hack/docs/mkdocs-copy-proposals.py
+watch:
+  - docs/proposals
 theme:
   name: material
   icon:

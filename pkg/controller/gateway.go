@@ -17,18 +17,28 @@ limitations under the License.
 package controller
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
+)
+
+var semanticIgnoreLastTransitionTime = conversion.EqualitiesOrDie(
+	func(a, b metav1.Condition) bool {
+		a.LastTransitionTime = metav1.Time{}
+		b.LastTransitionTime = metav1.Time{}
+		return a == b
+	},
 )
 
 func (c *Controller) setupGatewayEventHandlers(gatewayInformer gatewayinformers.GatewayInformer) error {
@@ -41,6 +51,10 @@ func (c *Controller) setupGatewayEventHandlers(gatewayInformer gatewayinformers.
 }
 
 func (c *Controller) onGatewayAdd(obj interface{}) {
+	gw := obj.(*gatewayv1.Gateway)
+	if !c.isGatewayOwnedByController(gw) {
+		return
+	}
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("couldn't get key for Gateway: %w", err))
@@ -59,6 +73,9 @@ func (c *Controller) onGatewayAdd(obj interface{}) {
 func (c *Controller) onGatewayUpdate(old, new interface{}) {
 	oldGW := old.(*gatewayv1.Gateway)
 	newGW := new.(*gatewayv1.Gateway)
+	if !c.isGatewayOwnedByController(newGW) {
+		return
+	}
 	if newGW.Generation != oldGW.Generation || newGW.DeletionTimestamp != oldGW.DeletionTimestamp || !reflect.DeepEqual(newGW.Annotations, oldGW.Annotations) {
 		key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(new)
 		if err == nil {
@@ -83,6 +100,9 @@ func (c *Controller) onGatewayDelete(obj interface{}) {
 		}
 	}
 
+	if !c.isGatewayOwnedByController(gw) {
+		return
+	}
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err == nil {
 		c.gatewayqueue.Add(key)
@@ -93,31 +113,48 @@ func (c *Controller) onGatewayDelete(obj interface{}) {
 	c.syncGatewayClass(string(gw.Spec.GatewayClassName))
 }
 
-func (c *Controller) updateGatewayStatus(ctx context.Context, gateway *gatewayv1.Gateway, ip string) error {
-	if ip == "" {
-		return nil
+// setGatewayConditions calculates and sets the final status conditions for the Gateway
+// based on the results of the reconciliation loop.
+func setGatewayConditions(newGw *gatewayv1.Gateway, listenerStatuses []gatewayv1.ListenerStatus, err error) {
+	programmedCondition := metav1.Condition{
+		Type:               string(gatewayv1.GatewayConditionProgrammed),
+		ObservedGeneration: newGw.Generation,
 	}
+	if err != nil {
+		// If the Envoy update fails, the Gateway is not programmed.
+		programmedCondition.Status = metav1.ConditionFalse
+		programmedCondition.Reason = "ReconciliationError"
+		programmedCondition.Message = fmt.Sprintf("Failed to program envoy config: %s", err.Error())
+	} else {
+		// If the Envoy update succeeds, check if all individual listeners were programmed.
+		listenersProgrammed := 0
+		for _, listenerStatus := range listenerStatuses {
+			if meta.IsStatusConditionTrue(listenerStatus.Conditions, string(gatewayv1.ListenerConditionProgrammed)) {
+				listenersProgrammed++
+			}
+		}
 
-	// Check if the IP is already present in the status to avoid redundant updates.
-	for _, addr := range gateway.Status.Addresses {
-		if addr.Type != nil && *addr.Type == gatewayv1.IPAddressType && addr.Value == ip {
-			return nil
+		if listenersProgrammed == len(listenerStatuses) {
+			// The Gateway is only fully programmed if all listeners are programmed.
+			programmedCondition.Status = metav1.ConditionTrue
+			programmedCondition.Reason = string(gatewayv1.GatewayReasonProgrammed)
+			programmedCondition.Message = "Envoy configuration updated successfully"
+		} else {
+			// If any listener failed, the Gateway as a whole is not fully programmed.
+			programmedCondition.Status = metav1.ConditionFalse
+			programmedCondition.Reason = "ListenersNotProgrammed"
+			programmedCondition.Message = fmt.Sprintf("%d out of %d listeners failed to be programmed", listenersProgrammed, len(listenerStatuses))
 		}
 	}
+	klog.V(2).InfoS("Setting gateway conditions", "gateway", klog.KObj(newGw), "conditions", programmedCondition)
+	changed := meta.SetStatusCondition(&newGw.Status.Conditions, programmedCondition)
+	klog.V(2).InfoS("Gateway conditions changed", "gateway", klog.KObj(newGw), "changed", changed)
 
-	gatewayCopy := gateway.DeepCopy()
-	gatewayCopy.Status.Addresses = []gatewayv1.GatewayStatusAddress{
-		{
-			Type:  ptr.To(gatewayv1.IPAddressType),
-			Value: ip,
-		},
-	}
-
-	_, err := c.gateway.client.GatewayV1().Gateways(gateway.Namespace).UpdateStatus(ctx, gatewayCopy, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update gateway status: %w", err)
-	}
-
-	klog.V(2).InfoS("Updated gateway status with proxy IP", "gateway", klog.KObj(gateway), "ip", ip)
-	return nil
+	meta.SetStatusCondition(&newGw.Status.Conditions, metav1.Condition{
+		Type:               string(gatewayv1.GatewayConditionAccepted),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(gatewayv1.GatewayReasonAccepted),
+		Message:            "Gateway is accepted",
+		ObservedGeneration: newGw.Generation,
+	})
 }

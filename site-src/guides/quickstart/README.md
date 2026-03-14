@@ -76,8 +76,7 @@ export HF_TOKEN=<your-huggingface-token>
 # 3. Run the quickstart setup
 make quickstart
 
-# 4. Open the agent UI at
-http://localhost:8081/dev-ui/?app=mcp_agent
+# 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
 ```
 
 ### What `make quickstart` Does
@@ -98,13 +97,16 @@ http://localhost:8081/dev-ui/?app=mcp_agent
 
 In the agent UI, ensure `mcp_agent` is selected from the dropdown menu in the top-left corner. Try the following prompts:
 
-| Prompt                                                                 | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
-| :--------------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
-| What can you do?                                                       | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
-| What is the sum of 2 and 3?                                            | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                 |
-| Echo back 'hello'.                                                     | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
-| Read the wiki structure of `modelcontextprotocol/servers` GitHub repo. | `read_wiki_structure` on remote MCP | ✅ **Success**   | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
-| Read the wiki content of that GitHub repo.                             | `read_wiki_content` on remote MCP   | ❌ **Failure**   | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
+| Prompt                                                                               | Tool Invoked                        | Expected Result | Why?                                                                                                                                            |
+| :----------------------------------------------------------------------------------- | :---------------------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
+| What can you do?                                                                     | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.<br/>(Note: Agent returns combined list of tools, filtering disallowed tools is WIP) |
+| What is the sum of 2 and 3?                                                          | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend explicitly allows the `get-sum` tool.                                                                 |
+| Echo back 'hello'.                                                                   | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend's `XAccessPolicy`.                                                                |
+| Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking   | `read_wiki_structure` on remote MCP | ✅ **Success**   | The `XAccessPolicy` for the remote backend explicitly allows this tool.                                                                         |
+| Read the wiki content of the GitHub repo kubernetes-sigs/kube-agentic-networking     | `read_wiki_content` on remote MCP   | ❌ **Failure**   | The `read_wiki_content` tool is not in the allowlist for the remote backend.                                                                    |
+| How to contribute to the GitHub repo kubernetes-sigs/kube-agentic-networking         | `ask_question` on remote MCP        | ❌ **Failure**   | The `ask_question` tool is not in the allowlist for the remote backend.                                                                         |
+
+*Note: The `XAccessPolicy` resources used in this quickstart are defined [here](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/policy/e2e.yaml).*
 
 <details markdown="1">
 <summary style="font-size: 1.5em; font-weight: bold;">🧪 Try Dynamic Policy Updates in Action</summary>
@@ -239,3 +241,30 @@ kind delete cluster --name kan-quickstart
 This deletes the entire kind cluster and all resources within it.
 
 > **Note**: If you used `HF_TOKEN` only for this quickstart, you may also want to revoke or delete the token from your [HuggingFace settings](https://huggingface.co/settings/tokens).
+
+
+## FAQs
+
+Q: I see errors like `litellm.BadRequestError: HuggingfaceException - {"object":"error","message":"Backend Error",...}`. How can I resolve this?
+
+A: Hugging Face model public inferencing endpoints can be unstable. As a quick mitigation, point the agent at a different model by overriding the HF_MODEL env var in the agent deployment and restart the pods.
+
+Examples of alternative model IDs to try:
+
+- huggingface/Qwen/Qwen2.5-72B-Instruct
+- huggingface/meta-llama/Llama-3.1-8B-Instruct
+- huggingface/google/gemma-2-2b-it
+
+Override via kubectl (replace <model-id> as needed):
+
+```shell
+export HF_MODEL="<model-id>"
+kubectl set env deployment/adk-agent -n quickstart-ns HF_MODEL=$HF_MODEL
+kubectl rollout restart deployment/adk-agent -n quickstart-ns
+```
+
+Tips:
+
+- Try smaller models first to avoid backend load/timeouts.
+- Check agent and sidecar logs for more details when errors occur.
+- Consider a paid Hugging Face Inference API or self-hosting if reliability is critical.

@@ -73,7 +73,7 @@ spec:
               # This is the address of the Envoy sidecar
               value: "127.0.0.1:10001"
             - name: HF_MODEL
-              value: "deepseek-ai/DeepSeek-R1-0528"
+              value: "huggingface/deepseek-ai/DeepSeek-R1-0528"
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
