@@ -35,11 +35,17 @@ main() {
   kind create cluster --name "${CLUSTER_NAME}" --config dev/ci/kind-config.yaml --wait 5m
 
   header "Building controller image"
-  IMAGE_TAG="us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main"
-  docker build . --tag "${IMAGE_TAG}" --label "runnumber=${BUILD_ID:-0}"
+  # These must match the image used in k8s/deploy/deployment.yaml
+  REGISTRY="us-central1-docker.pkg.dev/k8s-staging-images/agentic-net"
+  IMAGE_NAME="agentic-networking-controller"
+  TAG="main"
+
+  # Use the common make rule to build and load the image.
+  # We override TAG to ensure the local image matches the deployment manifest.
+  make quick REGISTRY="${REGISTRY}" IMAGE_NAME="${IMAGE_NAME}" TAG="${TAG}" EXTRA_BUILD_OPT="--label runnumber=${BUILD_ID:-0}"
 
   header "Loading controller image into cluster"
-  kind load docker-image "${IMAGE_TAG}" --name "${CLUSTER_NAME}"
+  kind load docker-image "${REGISTRY}/${IMAGE_NAME}:${TAG}" --name "${CLUSTER_NAME}"
 
   header "Installing Gateway API CRDs"
   kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml

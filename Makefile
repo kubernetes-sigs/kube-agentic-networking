@@ -27,6 +27,7 @@ default: all
 
 # This must be included after the default target (it defines targets
 # so we cannot have it be first in the Makefile).
+IMAGE_NAME ?= agentic-networking-controller
 include $(CURDIR)/hack/build/Makefile.common.in
 
 .PHONY: help ## Print this help menu.
@@ -35,7 +36,9 @@ help:
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-17s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: all
-all: validate-python vet fmt verify test build  ## Test, verify and build this project.
+# Note: the quick target is defined in hack/build/Makefile.common.in.
+# It builds for the local architecture and loads the image into the local docker daemon.
+all: validate-python vet fmt verify test quick  ## Test, verify and build this project locally.
 
 PYTHON_FILES := $(shell find . -type f -name "*.py")
 .PHONY: validate-python

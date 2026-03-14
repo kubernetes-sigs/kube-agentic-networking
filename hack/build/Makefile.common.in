@@ -17,11 +17,13 @@
 # shared makefile for all images
 
 # docker image registry, default to upstream
-# TODO: The registry is currently not ready.
-# 			Needs to wait https://github.com/kubernetes-sigs/kube-agentic-networking/issues/41 to be done.
 REGISTRY?=us-central1-docker.pkg.dev/k8s-staging-images/agentic-net
 
 REPO_ROOT?=$(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
+
+# Default tags for local builds
+TAG ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo latest)
+BASE_REF ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo latest)
 
 # Go version to use, respected by images that build go binaries
 GO_VERSION?=$(shell cat $(REPO_ROOT)/.go-version | head -n1)
@@ -31,17 +33,19 @@ PLATFORMS?=linux/amd64,linux/arm64
 OUTPUT?=
 PROGRESS=auto
 EXTRA_BUILD_OPT?=
+# build will perform a multi-platform build (linux/amd64, linux/arm64) by default.
+# The resulting images are stored in the buildx cache but cannot be loaded into
+# the local docker daemon at the moment.
+# See https://github.com/docker/buildx/issues/59
 build: ensure-buildx
 	docker buildx build $(if $(PLATFORMS),--platform=$(PLATFORMS),) $(OUTPUT) --progress=$(PROGRESS) -t $(REGISTRY)/$(IMAGE_NAME):$(TAG) -t $(REGISTRY)/$(IMAGE_NAME):$(BASE_REF) --pull --build-arg GO_VERSION=$(GO_VERSION) $(EXTRA_BUILD_OPT) .
 
-# push the cross built image
+# push performs a multi-platform build and pushes the resulting images to the registry.
 push: OUTPUT=--push
 push: build
 
-# quick can be used to do a build that will be imported into the local docker
-# for sanity checking before doing a cross build push
-# cross builds cannot be imported locally at the moment
-# https://github.com/docker/buildx/issues/59
+# quick performs a single-platform build for the local architecture and loads the resulting
+# image into the local docker daemon. This is the preferred target for local development.
 quick: PLATFORMS=
 quick: OUTPUT=--load
 quick: build
