@@ -36,7 +36,7 @@ AGENT_UI_URL="http://localhost:${AGENT_UI_PORT}/dev-ui/?app=mcp_agent"
 
 # Default to HuggingFace, can be overridden with --ollama flag
 USE_OLLAMA=false
-OLLAMA_BASE_URL="http://localhost:11434"
+OLLAMA_BASE_URL="http://host.docker.internal:11434"
 OLLAMA_MODEL="qwen2.5:7b"
 
 # --- Helper Functions ---
@@ -88,7 +88,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --ollama              Use Ollama instead of HuggingFace (default: false)"
-      echo "  --ollama-url URL      Ollama base URL (default: http://localhost:11434)"
+      echo "  --ollama-url URL      Ollama base URL (default: http://host.docker.internal:11434)"
       echo "  --ollama-model MODEL  Ollama model name (default: qwen2.5:7b)"
       echo "  --help, -h            Show this help message"
       echo ""
