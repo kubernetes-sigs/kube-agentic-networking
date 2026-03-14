@@ -185,6 +185,40 @@ func TestControllerE2E(t *testing.T) {
 		},
 	)
 
+	// 6.1 Case 2.1: Only backend policy with empty tools list
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 2.1: Only backend policy with empty tools list (denies all tools)")
+	// Modifying Backend Policy: Empty tools list serves as deny-by-default policy. All tool access is denied unless explicitly allowed.
+	patchBE := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": []}]`
+	runKubectl(t, "patch", "xaccesspolicy", "e2e-backend-level-policy", "-n", "e2e-test-ns", "--type=json", "-p", patchBE)
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
+				},
+			},
+		},
+	)
+
+	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
+				},
+			},
+		},
+	)
+
 	// 7. Case 3: Only gateway policy
 	t.Log("--------------------------------------------------------------------------------")
 	t.Log("Case 3: Only gateway policy (allows echo)")
@@ -222,6 +256,40 @@ func TestControllerE2E(t *testing.T) {
 			},
 		})
 
+	// 7.1 Case 3.1: Only gateway policy with empty tools list
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 3.1: Only gateway policy with empty tools list (denies all tools)")
+	// Modifying Gateway Policy: Empty tools list serves as deny-by-default policy. All tool access is denied unless explicitly allowed.
+	patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": []}]`
+	runKubectl(t, "patch", "xaccesspolicy", "e2e-gateway-level-policy", "-n", "e2e-test-ns", "--type=json", "-p", patchGW)
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
+				},
+			},
+		},
+	)
+
+	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
+				},
+			},
+		},
+	)
+
 	// 8. Case 4: Both policies applied
 	t.Log("--------------------------------------------------------------------------------")
 	t.Log("Case 4: Both policies (GW: echo, BE: get-sum)")
@@ -257,7 +325,7 @@ func TestControllerE2E(t *testing.T) {
 	t.Log("--------------------------------------------------------------------------------")
 	t.Log("Case 5: Patch Gateway policy to allow get-sum")
 	// Modifying Gateway Policy: Allowing 'get-sum' to align with Backend policy.
-	patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": ["get-sum"]}]`
+	patchGW = `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": ["get-sum"]}]`
 	runKubectl(t, "patch", "xaccesspolicy", "e2e-gateway-level-policy", "-n", "e2e-test-ns", "--type=json", "-p", patchGW)
 
 	// Wait for xDS propagation
