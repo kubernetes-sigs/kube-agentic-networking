@@ -90,8 +90,9 @@ type agenticNetResources struct {
 	backendLister agenticlisters.XBackendLister
 	backendSynced cache.InformerSynced
 
-	accessPolicyLister agenticlisters.XAccessPolicyLister
-	accessPolicySynced cache.InformerSynced
+	accessPolicyLister  agenticlisters.XAccessPolicyLister
+	accessPolicyIndexer cache.Indexer
+	accessPolicySynced  cache.InformerSynced
 }
 
 // Controller is the controller implementation for Gateway resources
@@ -127,6 +128,11 @@ func New(
 	backendInformer agenticinformers.XBackendInformer,
 	accessPolicyInformer agenticinformers.XAccessPolicyInformer,
 ) (*Controller, error) {
+	apInformer := accessPolicyInformer.Informer()
+	if err := apInformer.AddIndexers(cache.Indexers{AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc}); err != nil {
+		return nil, fmt.Errorf("add AccessPolicy targetRef index: %w", err)
+	}
+
 	c := &Controller{
 		core: coreResources{
 			client:       kubeClientSet,
@@ -150,11 +156,12 @@ func New(
 			referenceGrantSynced: referenceGrantInformer.Informer().HasSynced,
 		},
 		agentic: agenticNetResources{
-			client:             agenticClientSet,
-			backendLister:      backendInformer.Lister(),
-			backendSynced:      backendInformer.Informer().HasSynced,
-			accessPolicyLister: accessPolicyInformer.Lister(),
-			accessPolicySynced: accessPolicyInformer.Informer().HasSynced,
+			client:               agenticClientSet,
+			backendLister:        backendInformer.Lister(),
+			backendSynced:        backendInformer.Informer().HasSynced,
+			accessPolicyLister:   accessPolicyInformer.Lister(),
+			accessPolicyIndexer:  apInformer.GetIndexer(),
+			accessPolicySynced:   apInformer.HasSynced,
 		},
 		agenticIdentityTrustDomain: agenticIdentityTrustDomain,
 		envoyImage:                 envoyImage,
