@@ -52,7 +52,6 @@ for i in "${arr[@]}"; do
     ${GOBIN}/crd-ref-docs \
         --source-path=${tmpdir}/api \
         --config=crd-ref-docs.yaml \
-        --templates-dir=${PWD}/hack/crd-ref-templates/ \
         --renderer=markdown \
         --output-path=${PWD}/site-src/reference/${docpath}/spec.md
 done
