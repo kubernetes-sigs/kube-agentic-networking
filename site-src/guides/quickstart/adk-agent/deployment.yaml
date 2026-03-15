@@ -71,41 +71,41 @@ spec:
           command: ["/usr/local/bin/envoy"]
           args: ["-c", "/etc/envoy/bootstrap/envoy.yaml", "-l", "trace", "--log-path", "/dev/stderr"]
           ports:
-          - name: envoy
-            containerPort: 10001
+            - name: envoy
+              containerPort: 10001
           volumeMounts:
-          - name: envoy-sidecar-configs
-            mountPath: /etc/envoy
-            readOnly: true
-          - name: agent-identity-mtls
-            mountPath: /run/agent-identity-mtls
-            readOnly: true
+            - name: envoy-sidecar-configs
+              mountPath: /etc/envoy
+              readOnly: true
+            - name: agent-identity-mtls
+              mountPath: /run/agent-identity-mtls
+              readOnly: true
       volumes:
-      - name: envoy-sidecar-configs
-        configMap:
-          name: sidecar-envoy-configs
-          items:
-            - key: envoy.yaml
-              path: bootstrap/envoy.yaml
-            - key: spiffe_identity.yaml
-              path: sds/spiffe_identity.yaml
-            - key: spiffe_trust.yaml
-              path: sds/spiffe_trust.yaml
-      - name: agent-identity-mtls
-        projected:
-          sources:
-          - clusterTrustBundle:
-              signerName: kube-agentic-networking.sigs.k8s.io/identity
-              labelSelector:
-                matchLabels:
-                  "kube-agentic-networking.sigs.k8s.io/canarying":             "live"
-                  "kube-agentic-networking.sigs.k8s.io/workload-trust-domain": "cluster.local"
-                  "kube-agentic-networking.sigs.k8s.io/peer-trust-domain":     "cluster.local"
-              path: cluster.local.trust-bundle.pem
-          - podCertificate:
-              signerName: kube-agentic-networking.sigs.k8s.io/identity
-              keyType: ECDSAP256
-              credentialBundlePath: credential-bundle.pem
+        - name: envoy-sidecar-configs
+          configMap:
+            name: sidecar-envoy-configs
+            items:
+              - key: envoy.yaml
+                path: bootstrap/envoy.yaml
+              - key: spiffe_identity.yaml
+                path: sds/spiffe_identity.yaml
+              - key: spiffe_trust.yaml
+                path: sds/spiffe_trust.yaml
+        - name: agent-identity-mtls
+          projected:
+            sources:
+              - clusterTrustBundle:
+                  signerName: kube-agentic-networking.sigs.k8s.io/identity
+                  labelSelector:
+                    matchLabels:
+                      "kube-agentic-networking.sigs.k8s.io/canarying": "live"
+                      "kube-agentic-networking.sigs.k8s.io/workload-trust-domain": "cluster.local"
+                      "kube-agentic-networking.sigs.k8s.io/peer-trust-domain": "cluster.local"
+                  path: cluster.local.trust-bundle.pem
+              - podCertificate:
+                  signerName: kube-agentic-networking.sigs.k8s.io/identity
+                  keyType: ECDSAP256
+                  credentialBundlePath: credential-bundle.pem
 
 ---
 apiVersion: v1
