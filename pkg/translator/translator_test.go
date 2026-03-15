@@ -55,14 +55,13 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 		policy   *agenticv0alpha0.XAccessPolicy
 		mcpSvc   *corev1.Service
 		expected struct {
-			listenerNames []string
+			listenerNames       []string
 			listenerStatusNames []string
-			routeNames    []string
-			clusterNames  []string
-			spiffeID      string
-			listenerConditions []metav1.Condition
-			routeParentStatus  []gatewayv1.RouteParentStatus
-
+			routeNames          []string
+			clusterNames        []string
+			spiffeID            string
+			listenerConditions  []metav1.Condition
+			routeParentStatus   []gatewayv1.RouteParentStatus
 		}
 	}{
 		{
@@ -153,19 +152,19 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 3001}}},
 			},
 			expected: struct {
-				listenerNames []string
+				listenerNames       []string
 				listenerStatusNames []string
-				routeNames    []string
-				clusterNames  []string
-				spiffeID      string
-				listenerConditions []metav1.Condition
-				routeParentStatus  []gatewayv1.RouteParentStatus
+				routeNames          []string
+				clusterNames        []string
+				spiffeID            string
+				listenerConditions  []metav1.Condition
+				routeParentStatus   []gatewayv1.RouteParentStatus
 			}{
-				listenerNames: []string{"listener-10001"},
+				listenerNames:       []string{"listener-10001"},
 				listenerStatusNames: []string{"https-listener"},
-				routeNames:    []string{"route-10001"},
-				clusterNames:  []string{"quickstart-ns-local-mcp-backend"},
-				spiffeID:      "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa",
+				routeNames:          []string{"route-10001"},
+				clusterNames:        []string{"quickstart-ns-local-mcp-backend"},
+				spiffeID:            "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa",
 				listenerConditions: []metav1.Condition{
 					{
 						Type:   string(gatewayv1.ListenerConditionProgrammed),
@@ -297,7 +296,6 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					t.Errorf("expected cluster %s not found", expectedName)
 				}
 			}
-
 
 			// Verify Listener Status
 			if len(listenerStatuses) != 1 {
