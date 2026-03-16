@@ -107,15 +107,9 @@ make quickstart-ollama
 # 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
 ```
 
-!!! note "Network Connectivity"
-    The default Ollama URL (`http://host.docker.internal:11434`) works on some operating systems like MacOS, where `host.docker.internal` resolves to the host machine's IP address from within containers.
-
-    **For Linux users**: You may need to specify a different URL:
-
-    - Docker bridge gateway: `--ollama-url http://172.17.0.1:11434`
-    - Host machine IP: `--ollama-url http://<your-host-ip>:11434`
-
-    The kind cluster nodes must be able to reach the Ollama server over the network.
+> **Note**: The default Ollama URL (`http://host.docker.internal:11434`) works on some operating systems like MacOS, where `host.docker.internal` resolves to the host machine's IP address from within containers.
+>
+> **For Linux users**: See the [Ollama Linux Setup Guide](adk-agent/ollama_linux_setup.md) for detailed instructions on configuring Ollama to work with kind clusters.
 
 **Advanced Ollama Options:**
 
