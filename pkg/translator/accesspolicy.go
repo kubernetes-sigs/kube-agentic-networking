@@ -30,6 +30,11 @@ import (
 )
 
 const (
+	// noMatchShadowRuleName is the name of the catch-all shadow rule added after all named rules.
+	// When no named rule matches, shadow_effective_policy_id is set to this value, allowing
+	// the OTel collector to derive security_rule.match = false.
+	noMatchShadowRuleName = "__no_match__"
+
 	// allowMCPSessionClosePolicyName is the name of the RBAC policy that allows agents to close MCP sessions.
 	allowMCPSessionClosePolicyName = "allow-mcp-session-close"
 
@@ -184,6 +189,28 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 		// that custom tags can read for tracing, without affecting enforcement
 		addPolicyToRBACShadowRules(rbacConfig, policyName, policy)
 	}
+
+	// Catch-all shadow rule: must be added last so named rules take priority.
+	// When no named rule matches, shadow_effective_policy_id is set to noMatchShadowRuleName,
+	// allowing the OTel collector to derive security_rule.match = false.
+	// This is shadow-only — it has no effect on enforcement.
+	//
+	// Limitation: when security_rule.match = false, security_rule.name will be noMatchShadowRuleName
+	// rather than a real policy rule name. This is inherent to how Envoy's shadow RBAC engine works:
+	// shadow_effective_policy_id is only populated when a rule positively matches, so there is no
+	// rule name to report for unmatched requests. The catch-all sentinel value is the only signal
+	// available to distinguish "no rule matched" from "rule matched and allowed".
+	//
+	// Alternatives considered:
+	//   (A) Report the governing XAccessPolicy name as a static literal tag on the listener — allows
+	//       querying "policy X, no rule matched" but loses per-rule granularity and requires plumbing
+	//       the policy name through to buildTracingConfig().
+	//   (B) Report partial matches — not possible with shadow rules; Envoy does not expose
+	//       which rules were evaluated but did not match.
+	addPolicyToRBACShadowRules(rbacConfig, noMatchShadowRuleName, &rbacconfigv3.Policy{
+		Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
+		Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+	})
 
 	return rbacConfig
 }

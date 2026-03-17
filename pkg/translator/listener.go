@@ -403,6 +403,28 @@ func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 					},
 				},
 			},
+			{
+				// event.action: the action taken by the enforcement RBAC engine ("allowed" or "denied").
+				// Distinct from event.outcome (shadow) — this reflects actual enforcement.
+				// Normalized to "allow"/"deny" by the OTel collector transform processor.
+				Tag: "event.action",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Request_{
+								Request: &metadatav3.MetadataKind_Request{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.rbac",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "enforced_engine_result"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
 		},
 	}
 }

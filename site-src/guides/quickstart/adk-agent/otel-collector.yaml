@@ -51,15 +51,21 @@ data:
         trace_statements:
           - context: span
             statements:
-              # Map RBAC shadow_engine_result to event.action
-              # shadow_engine_result values: "allowed", "denied"
-              - set(attributes["event.action"], "allow") where attributes["rbac.shadow_engine_result"] == "allowed"
-              - set(attributes["event.action"], "deny") where attributes["rbac.shadow_engine_result"] == "denied"
+              # Normalize event.action from enforcement RBAC engine result ("allowed"/"denied" -> "allow"/"deny")
+              # event.action reflects the decision the policy rule would take, not whether the HTTP call succeeded.
+              - set(attributes["event.action"], "allow") where attributes["event.action"] == "allowed"
+              - set(attributes["event.action"], "deny") where attributes["event.action"] == "denied"
 
-              # Derive event.outcome from HTTP status code
+              # Derive event.outcome from HTTP status code (success/failure of the individual request)
               # 2xx = success, 4xx/5xx = failure
               - set(attributes["event.outcome"], "success") where attributes["http.status_code"] != nil and Int(attributes["http.status_code"]) >= 200 and Int(attributes["http.status_code"]) < 300
               - set(attributes["event.outcome"], "failure") where attributes["http.status_code"] != nil and Int(attributes["http.status_code"]) >= 400
+
+              # Derive security_rule.match boolean from shadow_effective_policy_id.
+              # A catch-all shadow rule "__no_match__" fires only when no named policy rule matches.
+              - set(attributes["security_rule.match"], true) where attributes["security_rule.name"] != nil and attributes["security_rule.name"] != "" and attributes["security_rule.name"] != "__no_match__"
+              - set(attributes["security_rule.match"], false) where attributes["security_rule.name"] == "__no_match__"
+              - set(attributes["security_rule.match"], false) where attributes["security_rule.name"] == nil or attributes["security_rule.name"] == ""
 
               # Add event kind for security events (when we have RBAC evaluation)
               - set(attributes["event.kind"], "event") where attributes["security_rule.name"] != nil
@@ -73,12 +79,6 @@ data:
     exporters:
       debug:
         verbosity: detailed
-
-      # Export to the Phoenix instance in kagenti-system
-      otlp/phoenix:
-        endpoint: phoenix.kagenti-system.svc.cluster.local:4317
-        tls:
-          insecure: true
 
       # Export to Tempo in quickstart-ns for Grafana visualization
       otlp/tempo:
@@ -95,7 +95,7 @@ data:
         traces:
           receivers: [otlp]
           processors: [memory_limiter, resource, transform, batch]
-          exporters: [debug, otlp/phoenix, otlp/tempo]
+          exporters: [debug, otlp/tempo]
 
 ---
 apiVersion: apps/v1
