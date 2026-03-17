@@ -48,6 +48,7 @@ try:
 except Exception as e:
     logger.error(f"Error initializing McpToolset remote_mcp: {e}")
 
+# Initialize the root agent
 root_agent = LlmAgent(
     model=LiteLlm(model=hf_model),
     name="multi_mcp_agent",
