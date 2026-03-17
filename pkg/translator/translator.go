@@ -227,6 +227,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				})
 			}
 
+			//nolint:exhaustive // Other protocols such as GRPCRoutes are currently not supported
 			switch listener.Protocol {
 			case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
 				// 6. For each accepted HTTPRoute for this listener -> translate to Envoy routes
@@ -282,9 +283,6 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				}
 
 				// TODO: Process GRPCRoutes
-
-			case gatewayv1.TLSProtocolType, gatewayv1.TCPProtocolType, gatewayv1.UDPProtocolType:
-				// Unsupported protocols
 			default:
 				klog.Warningf("Unsupported listener protocol for route processing: %s", listener.Protocol)
 			}

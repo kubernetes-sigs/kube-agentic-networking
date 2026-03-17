@@ -108,10 +108,10 @@ func main() {
 	// Register ServiceRef index on HTTPRoute informer before Start so Service updates
 	// only look up HTTPRoutes that reference that Service instead of listing all.
 	httpRouteInformer := sharedGwInformers.Gateway().V1().HTTPRoutes().Informer()
-	if errAdd := httpRouteInformer.AddIndexers(map[string]cache.IndexFunc{
+	if err = httpRouteInformer.AddIndexers(map[string]cache.IndexFunc{
 		controller.ServiceRefIndex: controller.HTTPRouteServiceRefIndexFunc,
-	}); errAdd != nil {
-		klog.ErrorS(errAdd, "Failed to add ServiceRef index to HTTPRoute informer")
+	}); err != nil {
+		klog.ErrorS(err, "Failed to add ServiceRef index to HTTPRoute informer")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
