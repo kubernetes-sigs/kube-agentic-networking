@@ -30,7 +30,7 @@ source "${SCRIPT_ROOT}/hack/kube-env.sh"
 CLUSTER_NAME="kan-quickstart"
 NAMESPACE="quickstart-ns"
 CONTROLLER_NAMESPACE="agentic-net-system"
-GATEWAY_API_VERSION="v1.4.0"
+GATEWAY_API_VERSION="v1.5.0"
 AGENT_UI_PORT="8081"
 AGENT_UI_URL="http://localhost:${AGENT_UI_PORT}/dev-ui/?app=mcp_agent"
 
