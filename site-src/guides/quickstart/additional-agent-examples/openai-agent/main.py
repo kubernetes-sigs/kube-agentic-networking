@@ -20,7 +20,6 @@ from openai import AsyncOpenAI
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-
 envoy_service = os.environ.get("ENVOY_SERVICE")
 if not envoy_service:
     raise ValueError("the ENVOY_SERVICE environment variable is missing.")
@@ -36,6 +35,7 @@ hf_model = os.getenv("HF_MODEL")
 if not hf_model:
     raise ValueError("the HF_MODEL environment variable is missing.")
 
+# Initialize OpenAI client with hugging face router
 client = AsyncOpenAI(
     base_url="https://router.huggingface.co/v1",
     api_key=HF_TOKEN
