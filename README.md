@@ -30,6 +30,10 @@ This subproject aims to deliver the following:
 
 ![Architecture Diagram](./docs/diagram.svg)
 
+## Quick Start
+
+You can find a quick start guide [here](https://kube-agentic-networking.sigs.k8s.io/guides/quickstart/).
+
 ## Community, discussion, contribution, and support
 
 Our community meetings are held weekly on Thursday at 4PM UTC ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=4PM&tz=UTC)).
