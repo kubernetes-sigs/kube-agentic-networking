@@ -25,6 +25,7 @@ import (
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
 	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
@@ -204,20 +205,52 @@ func buildLocalReplyConfig() *hcm.LocalReplyConfig {
 	return &hcm.LocalReplyConfig{
 		Mappers: []*hcm.ResponseMapper{
 			{
+				// Use an access-log style filter to identify the responses we want to remap.
+				// The AND filter ensures both conditions must hold:
+				// 1) Status code equals the runtime-configurable value (default 403).
+				// 2) The "WWW-Authenticate" header is NOT present so we don't catch
+				//    upstream authentication failures (which include that header).
 				Filter: &accesslogv3.AccessLogFilter{
-					FilterSpecifier: &accesslogv3.AccessLogFilter_StatusCodeFilter{
-						StatusCodeFilter: &accesslogv3.StatusCodeFilter{
-							Comparison: &accesslogv3.ComparisonFilter{
-								Op: accesslogv3.ComparisonFilter_EQ,
-								Value: &corev3.RuntimeUInt32{
-									DefaultValue: 403,
-									RuntimeKey:   "custom_403",
+					FilterSpecifier: &accesslogv3.AccessLogFilter_AndFilter{
+						AndFilter: &accesslogv3.AndFilter{
+							Filters: []*accesslogv3.AccessLogFilter{
+								{
+									FilterSpecifier: &accesslogv3.AccessLogFilter_StatusCodeFilter{
+										StatusCodeFilter: &accesslogv3.StatusCodeFilter{
+											Comparison: &accesslogv3.ComparisonFilter{
+												Op: accesslogv3.ComparisonFilter_EQ,
+												Value: &corev3.RuntimeUInt32{
+													DefaultValue: 403,
+												},
+											},
+										},
+									},
+								},
+								// MCP servers typically return 403 with a "WWW-Authenticate" header when
+								// the client fails to authenticate. We only want to remap our custom 403s,
+								// so require that header to be absent.
+								// https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#protected-resource-metadata-discovery-requirements
+								{
+									FilterSpecifier: &accesslogv3.AccessLogFilter_HeaderFilter{
+										HeaderFilter: &accesslogv3.HeaderFilter{
+											Header: &routev3.HeaderMatcher{
+												Name:                 "WWW-Authenticate",
+												HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: false},
+											},
+										},
+									},
 								},
 							},
 						},
 					},
 				},
-				// Change the status code to 200 so the MCP client processes the JSON-RPC error natively.
+				// TODO: https://github.com/kubernetes-sigs/kube-agentic-networking/issues/169
+				// NOTE: Temporary workaround: Agent SDKs incorrectly treat a 403 in a way that
+				// prevents proper client-side error handling. To remain compatible until all SDKs
+				// are fixed, set the HTTP status code to 200 and encode a JSON-RPC error body.
+				// See the linked SDK improvement below for context.
+				// https://github.com/modelcontextprotocol/python-sdk/commit/2fe56e56de2aff8fcb964ff7e26e7c6df4d14653
+				// Change the HTTP status code back to 403 when the commit above is released in all Agent SDKs.
 				StatusCode: wrapperspb.UInt32(200),
 				// Override the body format to JSON-RPC 2.0.
 				BodyFormatOverride: &corev3.SubstitutionFormatString{
@@ -226,19 +259,10 @@ func buildLocalReplyConfig() *hcm.LocalReplyConfig {
 							Fields: map[string]*structpb.Value{
 								"jsonrpc": structpb.NewStringValue("2.0"),
 								"id":      structpb.NewStringValue("%DYNAMIC_METADATA(mcp_proxy:id)%"),
-								"result": structpb.NewStructValue(&structpb.Struct{
+								"error": structpb.NewStructValue(&structpb.Struct{
 									Fields: map[string]*structpb.Value{
-										"isError": structpb.NewBoolValue(true),
-										"content": structpb.NewListValue(&structpb.ListValue{
-											Values: []*structpb.Value{
-												structpb.NewStructValue(&structpb.Struct{
-													Fields: map[string]*structpb.Value{
-														"type": structpb.NewStringValue("text"),
-														"text": structpb.NewStringValue("Access to this tool is forbidden (403)."),
-													},
-												}),
-											},
-										}),
+										"code":    structpb.NewNumberValue(403),
+										"message": structpb.NewStringValue("Access to this tool is forbidden."),
 									},
 								}),
 							},

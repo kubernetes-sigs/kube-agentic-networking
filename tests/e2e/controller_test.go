@@ -40,10 +40,16 @@ type mcpResponse struct {
 	Body       respBody `json:"body"`
 }
 
+type mcpError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 type respBody struct {
 	JSONRPC string     `json:"jsonrpc"`
 	ID      int        `json:"id"`
 	Result  *mcpResult `json:"result,omitempty"`
+	Error   *mcpError  `json:"error,omitempty"`
 }
 
 type mcpResult struct {
@@ -174,15 +180,9 @@ func TestControllerE2E(t *testing.T) {
 			StatusCode: 200,
 			Body: respBody{
 				JSONRPC: "2.0",
-				ID:      2,
-				Result: &mcpResult{
-					IsError: true,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "Access to this tool is forbidden (403).",
-						},
-					},
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
 				},
 			},
 		},
@@ -206,14 +206,9 @@ func TestControllerE2E(t *testing.T) {
 			Body: respBody{
 				JSONRPC: "2.0",
 				ID:      3,
-				Result: &mcpResult{
-					IsError: true,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "Access to this tool is forbidden (403).",
-						},
-					},
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
 				},
 			},
 		},
@@ -225,7 +220,6 @@ func TestControllerE2E(t *testing.T) {
 			StatusCode: 200,
 			Body: respBody{
 				JSONRPC: "2.0",
-				ID:      4,
 				Result: &mcpResult{
 					IsError: false,
 					Content: []mcpContent{
@@ -325,22 +319,34 @@ func assertToolCall(t *testing.T, requestID, sessionID, gatewayAddr, toolName, t
 		t.Fatalf("id mismatch: got %q, want %q\nbody: %s", strconv.Itoa(resp.ID), requestID, body)
 	}
 
-	if resp.Result == nil || len(resp.Result.Content) == 0 {
-		t.Fatalf("response contains no result\nbody: %s", body)
-	}
-	isError := resp.Result.IsError
-	message := resp.Result.Content[0].Text
-	tp := resp.Result.Content[0].Type
-	expectedIsError := expected.Body.Result.IsError
-	expectedMessage := expected.Body.Result.Content[0].Text
-	expectedType := expected.Body.Result.Content[0].Type
-	if expectedIsError != isError {
-		t.Fatalf("isError mismatch: got %v, want %v\nbody: %s", isError, expectedIsError, body)
-	}
-	if expectedMessage != "" && message != expectedMessage {
-		t.Fatalf("message mismatch: expected %q to be in %q\nbody: %s", expectedMessage, message, body)
-	}
-	if expectedType != "" && tp != expectedType {
-		t.Fatalf("type mismatch: got %q, want %q\nbody: %s", tp, expectedType, body)
+	if expected.Body.Error != nil {
+		if resp.Error == nil {
+			t.Fatalf("expected error but got nil\nbody: %s", body)
+		}
+		if resp.Error.Code != expected.Body.Error.Code {
+			t.Fatalf("error code mismatch: got %d, want %d\nbody: %s", resp.Error.Code, expected.Body.Error.Code, body)
+		}
+		if expected.Body.Error.Message != "" && resp.Error.Message != expected.Body.Error.Message {
+			t.Fatalf("error message mismatch: got %q, want %q\nbody: %s", resp.Error.Message, expected.Body.Error.Message, body)
+		}
+	} else {
+		if resp.Result == nil || len(resp.Result.Content) == 0 {
+			t.Fatalf("response contains no result\nbody: %s", body)
+		}
+		isError := resp.Result.IsError
+		message := resp.Result.Content[0].Text
+		tp := resp.Result.Content[0].Type
+		expectedIsError := expected.Body.Result.IsError
+		expectedMessage := expected.Body.Result.Content[0].Text
+		expectedType := expected.Body.Result.Content[0].Type
+		if expectedIsError != isError {
+			t.Fatalf("isError mismatch: got %v, want %v\nbody: %s", isError, expectedIsError, body)
+		}
+		if expectedMessage != "" && message != expectedMessage {
+			t.Fatalf("message mismatch: expected %q to be in %q\nbody: %s", expectedMessage, message, body)
+		}
+		if expectedType != "" && tp != expectedType {
+			t.Fatalf("type mismatch: got %q, want %q\nbody: %s", tp, expectedType, body)
+		}
 	}
 }

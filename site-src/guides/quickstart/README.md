@@ -44,7 +44,7 @@ graph TD
 
     Decision -- "Yes" --> LocalMCP
     Decision -- "Yes" --> RemoteMCP(Remote MCP Server)
-    Decision -- "No" --> Forbidden(Response: 403 Forbidden)
+    Decision -- "No" --> Forbidden["Response: Access to this tool is forbidden.<br/><br/><i>* Returns HTTP 200 with JSON-RPC error<br/>* Temporary workaround for ongoing MCP SDK improvements, <a href='https://github.com/kubernetes-sigs/kube-agentic-networking/issues/169'>see issue #169</a></i>"]
 
     style User fill:#f9f,stroke:#333,stroke-width:2px
     style RemoteMCP fill:#f9f,stroke:#333,stroke-width:2px
