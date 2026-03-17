@@ -607,6 +607,8 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 				cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
 					string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
 				}
+			case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
+				// HTTP/1.1 is the default protocol, no special configuration needed
 			}
 			clusters[clusterName] = cluster
 		}

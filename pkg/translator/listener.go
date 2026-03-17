@@ -451,15 +451,26 @@ func buildExtAuthzFilters(accessPolicyLister agenticlisters.XAccessPolicyLister)
 					if port := backendRef.Port; port != nil {
 						uri = fmt.Sprintf("%s:%d", uri, *port)
 					}
-					extAuthzProto.Services = &ext_authzv3.ExtAuthz_HttpService{
+					httpService := &ext_authzv3.ExtAuthz_HttpService{
 						HttpService: &ext_authzv3.HttpService{
 							ServerUri: &corev3.HttpUri{
-								Uri:     uri,
+								Uri: uri,
+								HttpUpstreamType: &corev3.HttpUri_Cluster{
+									Cluster: clusterName,
+								},
 								Timeout: durationpb.New(uriTimeout),
 							},
 							PathPrefix: config.Path,
 						},
 					}
+					if len(config.AllowedResponseHeaders) > 0 {
+						httpService.HttpService.AuthorizationResponse = &ext_authzv3.AuthorizationResponse{
+							AllowedUpstreamHeaders: &matcherv3.ListStringMatcher{
+								Patterns: toEnvoyExactStringMatchers(config.AllowedResponseHeaders),
+							},
+						}
+					}
+					extAuthzProto.Services = httpService
 					if len(config.AllowedRequestHeaders) > 0 {
 						extAuthzProto.AllowedHeaders = &matcherv3.ListStringMatcher{
 							Patterns: toEnvoyExactStringMatchers(config.AllowedRequestHeaders),
