@@ -3,4 +3,5 @@ nav:
   - Introduction: introduction.md
   - Guides: guides
   - Enhancements: proposals
+  - Reference: reference
   - Contributing: contributing

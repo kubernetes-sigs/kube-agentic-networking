@@ -44,3 +44,6 @@ site-src/proposals/*.md
 # Auto-generated landing pages
 site-src/proposals/landing/*.md
 !site-src/proposals/landing/.pages
+
+# Auto-generated API reference
+site-src/reference/spec.md
