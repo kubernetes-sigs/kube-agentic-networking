@@ -335,18 +335,27 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
-// buildTracingConfig creates tracing configuration with custom tags for policy enforcement visibility
+// buildTracingConfig creates tracing configuration with custom tags for policy enforcement visibility.
+//
+// Envoy emits two shadow RBAC metadata keys we use:
+//   - shadow_effective_policy_id → security_rule.name (name of the matching shadow rule, or "__no_match__")
+//   - principal                  → peer.spiffe.id (SPIFFE ID of the caller)
+//
+// event.action, event.outcome, and security_rule.match are NOT sourced from Envoy tags because
+// shadow_engine_result is unreliable when a catch-all rule is present: the catch-all always
+// matches (RBAC_ALLOW engine) and emits "allowed" even for requests that enforcement denies.
+// These three attributes are derived in the OTel collector transform processor from security_rule.name.
 func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 	return &hcm.HttpConnectionManager_Tracing{
-		// Enable tracing for all requests
 		// The provider is configured globally in bootstrap.yaml
-		RandomSampling:  &typev3.Percent{Value: 100.0},
-		ClientSampling:  &typev3.Percent{Value: 100.0},
-		OverallSampling: &typev3.Percent{Value: 100.0},
-		// Set the span name to "ingress" for gateway-level spans
+		RandomSampling:    &typev3.Percent{Value: 100.0},
+		ClientSampling:    &typev3.Percent{Value: 100.0},
+		OverallSampling:   &typev3.Percent{Value: 100.0},
 		SpawnUpstreamSpan: wrapperspb.Bool(true),
 		CustomTags: []*tracingv3.CustomTag{
 			{
+				// security_rule.name: name of the shadow rule that matched, or "__no_match__" if none did.
+				// "__no_match__" is a catch-all shadow rule added last so named rules take priority.
 				Tag: "security_rule.name",
 				Type: &tracingv3.CustomTag_Metadata_{
 					Metadata: &tracingv3.CustomTag_Metadata{
@@ -366,25 +375,7 @@ func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 				},
 			},
 			{
-				Tag: "event.outcome",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Request_{
-								Request: &metadatav3.MetadataKind_Request{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.rbac",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "shadow_engine_result"}},
-							},
-						},
-						DefaultValue: "",
-					},
-				},
-			},
-			{
+				// peer.spiffe.id: SPIFFE ID of the authenticated caller, set by the enforcement RBAC filter.
 				Tag: "peer.spiffe.id",
 				Type: &tracingv3.CustomTag_Metadata_{
 					Metadata: &tracingv3.CustomTag_Metadata{
@@ -397,28 +388,6 @@ func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 							Key: "envoy.filters.http.rbac",
 							Path: []*metadatav3.MetadataKey_PathSegment{
 								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "principal"}},
-							},
-						},
-						DefaultValue: "",
-					},
-				},
-			},
-			{
-				// event.action: the action taken by the enforcement RBAC engine ("allowed" or "denied").
-				// Distinct from event.outcome (shadow) — this reflects actual enforcement.
-				// Normalized to "allow"/"deny" by the OTel collector transform processor.
-				Tag: "event.action",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Request_{
-								Request: &metadatav3.MetadataKind_Request{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.rbac",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "enforced_engine_result"}},
 							},
 						},
 						DefaultValue: "",

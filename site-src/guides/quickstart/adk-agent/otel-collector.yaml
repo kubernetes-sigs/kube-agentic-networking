@@ -45,27 +45,38 @@ data:
             from_attribute: k8s.pod.name
             action: upsert
 
-      # Transform spans to add semantic attributes
+      # Transform spans to add semantic attributes derived from security_rule.name.
+      # security_rule.name is set by Envoy's shadow RBAC custom tag:
+      #   - a named rule name when a policy rule matched
+      #   - "" (empty/absent) when no named rule matched
+      #   - "" or absent for non-RBAC spans (e.g. initialize, tools/list)
+      #
+      # Proposal 33 definitions:
+      #   security_rule.match: whether a named rule matched (true/false)
+      #   event.action:        action the policy took (allow/deny) — enforcement decision
+      #   event.outcome:       outcome of the check itself (success/failure) — did RBAC run successfully
       transform:
         error_mode: ignore
         trace_statements:
           - context: span
             statements:
-              # Normalize event.action from enforcement RBAC engine result ("allowed"/"denied" -> "allow"/"deny")
-              # event.action reflects the decision the policy rule would take, not whether the HTTP call succeeded.
-              - set(attributes["event.action"], "allow") where attributes["event.action"] == "allowed"
-              - set(attributes["event.action"], "deny") where attributes["event.action"] == "denied"
-
-              # Derive event.outcome from HTTP status code (success/failure of the individual request)
-              # 2xx = success, 4xx/5xx = failure
-              - set(attributes["event.outcome"], "success") where attributes["http.status_code"] != nil and Int(attributes["http.status_code"]) >= 200 and Int(attributes["http.status_code"]) < 300
-              - set(attributes["event.outcome"], "failure") where attributes["http.status_code"] != nil and Int(attributes["http.status_code"]) >= 400
-
-              # Derive security_rule.match boolean from shadow_effective_policy_id.
-              # A catch-all shadow rule "__no_match__" fires only when no named policy rule matches.
-              - set(attributes["security_rule.match"], true) where attributes["security_rule.name"] != nil and attributes["security_rule.name"] != "" and attributes["security_rule.name"] != "__no_match__"
-              - set(attributes["security_rule.match"], false) where attributes["security_rule.name"] == "__no_match__"
+              # security_rule.match: true if a named shadow rule matched (shadow_effective_policy_id is set).
+              # false if no named rule matched — Envoy leaves shadow_effective_policy_id unset (empty).
+              # Note: there is no catch-all shadow rule. A catch-all in a protobuf map<string,Policy>
+              # has no ordering guarantee and would shadow named rules, defeating its purpose.
+              - set(attributes["security_rule.match"], true) where attributes["security_rule.name"] != nil and attributes["security_rule.name"] != ""
               - set(attributes["security_rule.match"], false) where attributes["security_rule.name"] == nil or attributes["security_rule.name"] == ""
+
+              # event.action: the enforcement decision.
+              # Named rule matched → enforcement allowed it (all policy rules are allow-type).
+              # No named rule matched (empty security_rule.name) → deny by default.
+              - set(attributes["event.action"], "allow") where attributes["security_rule.match"] == true
+              - set(attributes["event.action"], "deny") where attributes["security_rule.match"] == false
+
+              # event.outcome: outcome of the RBAC check itself (proposal 33: "outcome of the check itself").
+              # The check always succeeds when security_rule.name is set (RBAC evaluated and returned a decision).
+              # This is distinct from event.action (the decision) and from the HTTP response status.
+              - set(attributes["event.outcome"], "success") where attributes["security_rule.name"] != nil and attributes["security_rule.name"] != ""
 
               # Add event kind for security events (when we have RBAC evaluation)
               - set(attributes["event.kind"], "event") where attributes["security_rule.name"] != nil

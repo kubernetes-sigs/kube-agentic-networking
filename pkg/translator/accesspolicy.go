@@ -30,11 +30,6 @@ import (
 )
 
 const (
-	// noMatchShadowRuleName is the name of the catch-all shadow rule added after all named rules.
-	// When no named rule matches, shadow_effective_policy_id is set to this value, allowing
-	// the OTel collector to derive security_rule.match = false.
-	noMatchShadowRuleName = "__no_match__"
-
 	// allowMCPSessionClosePolicyName is the name of the RBAC policy that allows agents to close MCP sessions.
 	allowMCPSessionClosePolicyName = "allow-mcp-session-close"
 
@@ -190,27 +185,14 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 		addPolicyToRBACShadowRules(rbacConfig, policyName, policy)
 	}
 
-	// Catch-all shadow rule: must be added last so named rules take priority.
-	// When no named rule matches, shadow_effective_policy_id is set to noMatchShadowRuleName,
-	// allowing the OTel collector to derive security_rule.match = false.
-	// This is shadow-only — it has no effect on enforcement.
+	// Note: there is no catch-all shadow rule. When no named shadow rule matches,
+	// Envoy leaves shadow_effective_policy_id unset (empty string via the custom tag default).
+	// The OTel collector derives security_rule.match=false from an empty security_rule.name.
 	//
-	// Limitation: when security_rule.match = false, security_rule.name will be noMatchShadowRuleName
-	// rather than a real policy rule name. This is inherent to how Envoy's shadow RBAC engine works:
-	// shadow_effective_policy_id is only populated when a rule positively matches, so there is no
-	// rule name to report for unmatched requests. The catch-all sentinel value is the only signal
-	// available to distinguish "no rule matched" from "rule matched and allowed".
-	//
-	// Alternatives considered:
-	//   (A) Report the governing XAccessPolicy name as a static literal tag on the listener — allows
-	//       querying "policy X, no rule matched" but loses per-rule granularity and requires plumbing
-	//       the policy name through to buildTracingConfig().
-	//   (B) Report partial matches — not possible with shadow rules; Envoy does not expose
-	//       which rules were evaluated but did not match.
-	addPolicyToRBACShadowRules(rbacConfig, noMatchShadowRuleName, &rbacconfigv3.Policy{
-		Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
-		Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
-	})
+	// A catch-all was previously attempted but is not viable: Envoy evaluates shadow rules
+	// from a protobuf map<string,Policy> with no ordering guarantee, so a catch-all rule
+	// cannot reliably be placed last and would shadow named rules, causing all requests to
+	// show security_rule.name="__no_match__" regardless of which rule actually matched.
 
 	return rbacConfig
 }
@@ -230,7 +212,11 @@ func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rb
 func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
 	if rbacConfig.ShadowRules == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
-			Action:   rbacconfigv3.RBAC_DENY, // the action for the shadow rule doesn't really matter in this case since we only use it to trigger ext_authz from emitted stats
+		// Action must match the enforcement engine (RBAC_ALLOW) so that shadow_engine_result
+		// mirrors enforcement: a rule match → "allowed", no match → "denied" (deny by default).
+		// With RBAC_DENY the semantics invert: a match → "denied", no match → "allowed",
+		// which would make event.action the opposite of what the enforcement engine actually decided.
+		Action: rbacconfigv3.RBAC_ALLOW,
 			Policies: map[string]*rbacconfigv3.Policy{},
 		}
 	}

@@ -19,11 +19,11 @@ kind load docker-image agentic-networking-controller:shadow-rules --name kan-qui
 
 ## 3. Update controller deployment and wait for rollout
 
-```bash
-kubectl set image deployment/agentic-net-controller \
-  manager=agentic-networking-controller:shadow-rules \
-  -n agentic-net-system
+Use `rollout restart` rather than `set image` — kind caches images by digest, so `set image`
+with the same tag does not trigger a pod restart or pull the new image.
 
+```bash
+kubectl rollout restart deployment/agentic-net-controller -n agentic-net-system
 kubectl rollout status deployment/agentic-net-controller -n agentic-net-system
 ```
 
@@ -111,6 +111,21 @@ kubectl apply -f otel-collector.yaml
 kubectl rollout restart deployment/otel-collector -n quickstart-ns
 kubectl rollout status deployment/otel-collector -n quickstart-ns
 ```
+
+## Span attributes
+
+These attributes appear on gateway `ingress` spans for `tools/call` requests. All four are derived
+in the OTel collector from `security_rule.name`, which is the only value Envoy emits directly
+(via `shadow_effective_policy_id`). `shadow_engine_result` is not used because the catch-all
+`__no_match__` shadow rule always emits `"allowed"` in RBAC_ALLOW mode, making it unreliable
+for denied requests.
+
+| Attribute | Values | Source | Rationale |
+|---|---|---|---|
+| `security_rule.name` | named rule or `__no_match__` | Envoy shadow RBAC (`shadow_effective_policy_id`) | The matching shadow rule name. `__no_match__` is a catch-all added last so named rules take priority; fires when no named rule matches. |
+| `security_rule.match` | `true` / `false` | Derived in collector | `true` if a named rule matched; `false` if `__no_match__` fired (no rule matched → default deny). |
+| `event.action` | `allow` / `deny` | Derived in collector | The enforcement decision. Named rule matched → `allow` (all policy rules are allow-type). `__no_match__` → `deny` (deny by default). |
+| `event.outcome` | `success` | Derived in collector | Outcome of the RBAC check itself (not the HTTP response). Always `success` when `security_rule.name` is set, meaning RBAC evaluated and returned a decision. |
 
 ## Verify
 
