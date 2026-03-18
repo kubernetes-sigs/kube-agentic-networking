@@ -50,20 +50,23 @@ validate-python:
 .PHONY: fmt
 fmt:  ## Run go fmt against code.
 	$(info ...Begin to run go fmt against code.)
-	gofmt -w ./pkg
+	go fmt ./...
+	cd tests && go fmt ./...
 
 .PHONY: vet
 vet: ## Run go vet against code.
 	$(info ...Begin to run go vet against code.)
-	go vet ./pkg/...
+	go vet ./...
+	cd tests && go vet ./...
 
 .PHONY: test
-test: test-pkg test-cel test-crd ## Run all tests.
+test: test-unit test-cel test-crd ## Run all tests.
 
-.PHONY: test-pkg
-test-pkg: ## Run pkg tests.
-	$(info ...Running pkg tests.)
-	go test -race -cover ./pkg/...
+.PHONY: test-unit
+test-unit: ## Run unit tests.
+	$(info ...Running unit tests.)
+	# Only run tests for packages that actually contain test files to avoid warnings and wasted cycles.
+	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./... | xargs go test -race -cover
 
 .PHONY: test-cel
 test-cel: ## Run CEL tests.
@@ -98,7 +101,7 @@ SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/
 # The root directory where client code will be placed.
 CLIENT_OUTPUT_DIR := $(REPO_ROOT)/k8s/client
 # The root Go package for your generated client code.
-CLIENT_OUTPUT_PKG := $(shell go list -m)/k8s/client
+CLIENT_OUTPUT_PKG := $(shell go list -m | head -n 1)/k8s/client
 BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 
 

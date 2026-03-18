@@ -24,18 +24,13 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
-	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
-	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
-	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -298,7 +293,7 @@ func (t *Translator) buildHTTPRouteAction(
 		}
 
 		if rb.XBackend() != nil {
-			clusterWeight.TypedPerFilterConfig, err = t.buildPerClusterRBACFilterConfig(t.accessPolicyLister, rb.XBackend())
+			clusterWeight.TypedPerFilterConfig, err = t.buildBackendLevelRBACOverrides(rb.XBackend())
 			if err != nil {
 				klog.Errorf("Failed to build per-cluster RBAC config for backend %s: %v", rb.ClusterName(), err)
 			}
@@ -314,31 +309,6 @@ func (t *Translator) buildHTTPRouteAction(
 	action := &routev3.RouteAction{ClusterSpecifier: &routev3.RouteAction_WeightedClusters{WeightedClusters: weightedClusters}}
 
 	return action, validBackends, nil
-}
-
-// buildPerClusterRBACFilterConfig creates the TypedPerFilterConfig for a cluster, specifically for the RBAC filter.
-func (t *Translator) buildPerClusterRBACFilterConfig(accessPolicyLister agenticlisters.XAccessPolicyLister, backend *agenticv0alpha0.XBackend) (map[string]*anypb.Any, error) {
-	perFilterConfig := make(map[string]*anypb.Any)
-
-	// Envoy's per-cluster configuration requires an RBACPerRoute message containing
-	// RBAC rules derived from AuthPolicy resources targeting this backend.
-	rbacConfig, err := t.rbacConfigFromAccessPolicy(accessPolicyLister, backend)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate RBAC policies: %w", err)
-	}
-	rbacPerRouteProto := &rbacv3.RBACPerRoute{
-		Rbac: rbacConfig,
-	}
-
-	// Marshal the RBAC config into an Any proto.
-	rbacAny, err := anypb.New(rbacPerRouteProto)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal RBACPerRoute proto: %w", err)
-	}
-
-	perFilterConfig[wellknown.HTTPRoleBasedAccessControl] = rbacAny
-
-	return perFilterConfig, nil
 }
 
 // translateHTTPRouteMatch translates a Gateway API HTTPRouteMatch into an Envoy RouteMatch.

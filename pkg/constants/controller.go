@@ -37,4 +37,7 @@ const (
 	GatewayFinalizer = ProjectName + "/gateway-finalizer"
 	// XBackendFinalizer is set on XBackend; removed when no XAccessPolicy targets it.
 	XBackendFinalizer = ProjectName + "/xbackend-finalizer"
+
+	// MaxAccessPoliciesPerTarget is the maximum number of AccessPolicies allowed to target a single resource.
+	MaxAccessPoliciesPerTarget = 5
 )

@@ -76,14 +76,14 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Group = "wrong.group"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"},
+			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "invalid target kind",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Kind = "WrongKind"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"},
+			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "duplicate rule names",
@@ -230,6 +230,19 @@ func TestValidateXAccessPolicy(t *testing.T) {
 				})
 			},
 			wantErrors: []string{"a maximum of one rule per policy can specify 'ExternalAuth' authorization type"},
+		},
+		{
+			desc: "heterogeneous target kinds",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.TargetRefs = append(p.Spec.TargetRefs, gwapiv1.LocalPolicyTargetReferenceWithSectionName{
+					LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+						Group: "gateway.networking.k8s.io",
+						Kind:  "Gateway",
+						Name:  "my-gateway",
+					},
+				})
+			},
+			wantErrors: []string{"All targetRefs must have the same Kind"},
 		},
 	}
 	for _, tc := range testCases {
