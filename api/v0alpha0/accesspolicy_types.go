@@ -40,6 +40,7 @@ type AccessPolicySpec struct {
 	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
 	// +kubebuilder:validation:XValidation:rule="self.all(r, self.filter(x, x.name == r.name).size() == 1)",message="AccessRule names must be unique"
+	// +kubebuilder:validation:XValidation:rule="self.filter(r, has(r.authorization) && r.authorization.type == 'ExternalAuth').size() <= 1",message="a maximum of one rule per policy can specify 'ExternalAuth' authorization type"
 	Rules []AccessRule `json:"rules"`
 }
 
