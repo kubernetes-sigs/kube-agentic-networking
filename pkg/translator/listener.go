@@ -338,13 +338,13 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 // buildTracingConfig creates tracing configuration with custom tags for policy enforcement visibility.
 //
 // Envoy emits two shadow RBAC metadata keys we use:
-//   - shadow_effective_policy_id → security_rule.name (name of the matching shadow rule, or "__no_match__")
+//   - shadow_effective_policy_id → security_rule.name (name of the matching shadow rule, or "" if none matched)
 //   - principal                  → peer.spiffe.id (SPIFFE ID of the caller)
 //
-// event.action, event.outcome, and security_rule.match are NOT sourced from Envoy tags because
-// shadow_engine_result is unreliable when a catch-all rule is present: the catch-all always
-// matches (RBAC_ALLOW engine) and emits "allowed" even for requests that enforcement denies.
-// These three attributes are derived in the OTel collector transform processor from security_rule.name.
+// event.action, event.outcome, and security_rule.match are derived in the OTel collector
+// transform processor from security_rule.name, not from shadow_engine_result.
+// shadow_engine_result is not used as it is unreliable: it only reflects whether the shadow
+// engine itself allowed/denied, which does not map cleanly to the enforcement decision.
 func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 	return &hcm.HttpConnectionManager_Tracing{
 		// The provider is configured globally in bootstrap.yaml
@@ -354,8 +354,8 @@ func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 		SpawnUpstreamSpan: wrapperspb.Bool(true),
 		CustomTags: []*tracingv3.CustomTag{
 			{
-				// security_rule.name: name of the shadow rule that matched, or "__no_match__" if none did.
-				// "__no_match__" is a catch-all shadow rule added last so named rules take priority.
+				// security_rule.name: name of the shadow rule that matched, or "" (empty) if none did.
+				// Empty means no named rule matched; the OTel collector derives security_rule.match=false from this.
 				Tag: "security_rule.name",
 				Type: &tracingv3.CustomTag_Metadata_{
 					Metadata: &tracingv3.CustomTag_Metadata{

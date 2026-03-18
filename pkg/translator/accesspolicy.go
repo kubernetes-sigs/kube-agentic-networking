@@ -192,7 +192,7 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 	// A catch-all was previously attempted but is not viable: Envoy evaluates shadow rules
 	// from a protobuf map<string,Policy> with no ordering guarantee, so a catch-all rule
 	// cannot reliably be placed last and would shadow named rules, causing all requests to
-	// show security_rule.name="__no_match__" regardless of which rule actually matched.
+	// show an empty security_rule.name regardless of which rule actually matched.
 
 	return rbacConfig
 }
