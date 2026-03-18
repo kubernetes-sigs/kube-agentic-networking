@@ -48,7 +48,7 @@ main() {
   kind load docker-image "${REGISTRY}/${IMAGE_NAME}:${TAG}" --name "${CLUSTER_NAME}"
 
   header "Installing Gateway API CRDs"
-  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
   header "Installing Project CRDs"
   kubectl apply -f k8s/crds/
