@@ -61,46 +61,54 @@ const (
 )
 
 // buildGatewayLevelRBACFilters finds all AccessPolicies targeting the Gateway and translates them into HTTP filters.
-func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) (rbacFilters []*hcm.HttpFilter, filtersWithExtAuthz map[string][]string, err error) {
+func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
 	gwPolicies, err := t.findAccessPoliciesForTarget(gatewayv1.GroupName, "Gateway", gateway.Namespace, gateway.Name)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
+		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
 	}
-
-	filtersWithExtAuthz = make(map[string][]string) // ExternalAuthz unique ID → list of RBAC filters that reference it
-
+	var filters []*hcm.HttpFilter
 	for i, policy := range gwPolicies {
-		filterName := fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, i+1)
-
-		// Check if the policy contains any ExternalAuthz rules, and if so, track which filters reference it for potential optimization later.
-		extAuthUniqueIDsFromPolicy, err := externalAuthUniqueIDsFromPolicy(policy)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to extract external auth unique IDs from AccessPolicy %s/%s: %w", policy.Namespace, policy.Name, err)
-		}
-		for _, id := range extAuthUniqueIDsFromPolicy {
-			filtersWithExtAuthz[id] = append(filtersWithExtAuthz[id], filterName)
-		}
-
 		// Build the RBAC config for this policy
 		rbacProto := t.buildRBACConfigWithCommonPolicies(policy)
 		rbacAny, err := anypb.New(rbacProto)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		rbacFilters = append(rbacFilters, &hcm.HttpFilter{
-			Name: filterName,
+		filters = append(filters, &hcm.HttpFilter{
+			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, i+1),
 			ConfigType: &hcm.HttpFilter_TypedConfig{
 				TypedConfig: rbacAny,
 			},
 		})
 	}
 
-	return rbacFilters, filtersWithExtAuthz, nil
+	return filters, nil
 }
 
 // buildBackendLevelRBACFilters creates placeholder RBAC filters for backends.
 // These will be overridden at the cluster level by actual policies.
-func (t *Translator) buildBackendLevelRBACFilters(gateway *gatewayv1.Gateway) (rbacFilters []*hcm.HttpFilter, filtersWithExtAuthz map[string][]string, err error) {
+func (t *Translator) buildBackendLevelRBACFilters(count int) ([]*hcm.HttpFilter, error) {
+	var filters []*hcm.HttpFilter
+	rbacProto := &rbacv3.RBAC{}
+	rbacAny, err := anypb.New(rbacProto)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := 0; i < count; i++ {
+		filters = append(filters, &hcm.HttpFilter{
+			Name: fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1),
+			ConfigType: &hcm.HttpFilter_TypedConfig{
+				TypedConfig: rbacAny,
+			},
+		})
+	}
+	return filters, nil
+}
+
+// calculateMaxBackendRBACFilters determines the maximum number of backend-level RBAC filters
+// needed for a Gateway by inspecting all reachable XBackends.
+func (t *Translator) calculateMaxBackendRBACFilters(gateway *gatewayv1.Gateway) int {
 	// 1. Identify all HTTPRoutes targeting this Gateway.
 	routes := t.getHTTPRoutesForGateway(gateway)
 
@@ -121,7 +129,6 @@ func (t *Translator) buildBackendLevelRBACFilters(gateway *gatewayv1.Gateway) (r
 		}
 	}
 
-	filtersWithExtAuthz = make(map[string][]string) // ExternalAuthz unique ID → list of RBAC filters that reference it
 	maxCount := 0
 
 	// 3. For each backend, count its accepted policies.
@@ -131,40 +138,13 @@ func (t *Translator) buildBackendLevelRBACFilters(gateway *gatewayv1.Gateway) (r
 			klog.Errorf("Failed to count policies for backend %s: %v", beKey, err)
 			continue
 		}
-
-		for i, policy := range policies {
-			filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
-
-			// Check if the policy contains any ExternalAuthz rules, and if so, track which filters reference it for potential optimization later.
-			extAuthUniqueIDsFromPolicy, err := externalAuthUniqueIDsFromPolicy(policy)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to extract external auth unique IDs from AccessPolicy %s/%s: %w", policy.Namespace, policy.Name, err)
-			}
-			for _, id := range extAuthUniqueIDsFromPolicy {
-				filtersWithExtAuthz[id] = append(filtersWithExtAuthz[id], filterName)
-			}
-
-			if i < maxCount {
-				continue // We only need to create filters up to the maximum count of policies for any backend.
-			}
-			maxCount = i + 1
-
-			// Build the RBAC config for this policy
-			rbacProto := &rbacv3.RBAC{}
-			rbacAny, err := anypb.New(rbacProto)
-			if err != nil {
-				return nil, nil, err
-			}
-			rbacFilters = append(rbacFilters, &hcm.HttpFilter{
-				Name: filterName,
-				ConfigType: &hcm.HttpFilter_TypedConfig{
-					TypedConfig: rbacAny,
-				},
-			})
+		count := len(policies)
+		if count > maxCount {
+			maxCount = count
 		}
 	}
 
-	return rbacFilters, filtersWithExtAuthz, nil
+	return maxCount
 }
 
 // buildBackendLevelRBACOverrides creates the TypedPerFilterConfig for a cluster, specifically for the RBAC filter overrides.

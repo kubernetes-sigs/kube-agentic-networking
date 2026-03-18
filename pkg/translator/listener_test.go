@@ -274,7 +274,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 					p.Spec.Rules[0].Name = "ext-rule-1"
 					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
 						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{ // same ExternalAuth values as ext-auth-policy-2
 							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
 							BackendRef: gatewayv1.BackendObjectReference{
 								Name: "ext-auth-svc-1",
@@ -288,14 +288,13 @@ func TestBuildHTTPFilters(t *testing.T) {
 				"envoy.filters.http.mcp",
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2),
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 3), // ext_authz-policy-1
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 4), // ext_authz-policy-2
+				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 3), // ext-auth-policy-1
+				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 4), // ext-auth-policy-2
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2),
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 3), // ext_authz-policy-3
-				"envoy.filters.http.ext_authz",                                // ext-auth-policy-1 | envoy.filters.http.rbac.gateway_level_3
-				"envoy.filters.http.ext_authz",                                // ext-auth-policy-2 | envoy.filters.http.rbac.gateway_level_4
-				"envoy.filters.http.ext_authz",                                // ext-auth-policy-3 | envoy.filters.http.rbac.backend_level_3
+				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 3), // ext-auth-policy-3
+				"envoy.filters.http.ext_authz",                                // ext-auth-policy-1, ext-auth-policy-3
+				"envoy.filters.http.ext_authz",                                // ext-auth-policy-2
 				"envoy.filters.http.router",
 			},
 		},

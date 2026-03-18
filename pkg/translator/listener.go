@@ -47,6 +47,7 @@ import (
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -362,7 +363,7 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 2. Add Gateway-level RBAC filters.
-	gatewayRBACFilters, gatewayRBACFiltersWithExtAuthz, err := t.buildGatewayLevelRBACFilters(gateway)
+	gatewayRBACFilters, err := t.buildGatewayLevelRBACFilters(gateway)
 	if err != nil {
 		return nil, err
 	}
@@ -370,22 +371,18 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	// 3. Add Backend-level RBAC filters.
 	// We build only placeholder filters for backends that have policies at this stage.
 	// These will be overridden at the cluster/route level.
-	backendRBACFilters, backendRBACFiltersWithExtAuthz, err := t.buildBackendLevelRBACFilters(gateway)
+	backendRBACFiltersCount := t.calculateMaxBackendRBACFilters(gateway)
+	backendRBACFilters, err := t.buildBackendLevelRBACFilters(backendRBACFiltersCount)
 	if err != nil {
 		return nil, err
-	}
-
-	// merges the two maps of ext_authz unique ID to RBAC filter names, since both Gateway-level and Backend-level RBAC filters can reference the same ext_authz config, and we need to build the ext_authz filter with metadata matchers for all referencing RBAC filters.
-	rbacFiltersWithExtAuthz := gatewayRBACFiltersWithExtAuthz // ExternalAuthz unique ID → list of RBAC filters that reference it
-	for extAuthUniqueID, filterNames := range backendRBACFiltersWithExtAuthz {
-		rbacFiltersWithExtAuthz[extAuthUniqueID] = append(rbacFiltersWithExtAuthz[extAuthUniqueID], filterNames...)
 	}
 
 	// 4. Add ext_authz filters.
-	extAuthzFilters, err := t.buildExtAuthzFilters(rbacFiltersWithExtAuthz)
+	extAuthzFilters, err := t.buildExtAuthzFilters(gateway)
 	if err != nil {
 		return nil, err
 	}
+
 	// 5. Add router filter.
 	routerFilter, err := buildRouterFilter()
 	if err != nil {
@@ -425,7 +422,7 @@ func buildMCPFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-func (t *Translator) buildExtAuthzFilters(rbacFiltersWithExtAuthz map[string][]string) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
 	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
@@ -434,6 +431,10 @@ func (t *Translator) buildExtAuthzFilters(rbacFiltersWithExtAuthz map[string][]s
 	var filters []*hcm.HttpFilter
 	uniqueExtAuthzConfigs := make(map[string]struct{}) // To track unique externalAuth configs and avoid duplicate filters
 	for _, ap := range accessPolicies {
+		// We only care about AccessPolicies that are directly or indirectly attached to this Gateway.
+		if !t.isAccessPolicyAttachedToGateway(ap, gateway) {
+			continue
+		}
 		for _, rule := range ap.Spec.Rules {
 			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
 				continue
@@ -444,33 +445,29 @@ func (t *Translator) buildExtAuthzFilters(rbacFiltersWithExtAuthz map[string][]s
 				klog.Error(err)
 				continue
 			}
-			// Build one ext_authz filter for each RBAC filter that references it, since the ext_authz filter will trigger conditionally based on metadata set by the RBAC filters.
-			rbacFilterNames := rbacFiltersWithExtAuthz[uniqueID] // Get the list of RBAC filters that reference this ext_authz config
-			for _, rbacFilterName := range rbacFilterNames {
-				if _, exists := uniqueExtAuthzConfigs[uniqueID+rbacFilterName]; exists {
-					continue // Skip if we've already built an ext_authz filter for this config and RBAC filter combination
-				}
-				uniqueExtAuthzConfigs[uniqueID+rbacFilterName] = struct{}{}
-
-				// Build the ext_authz filter for this RBAC filter and ext_authz config combination
-				extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, rbacFilterName, ap.GetNamespace())
-				if err != nil {
-					klog.Error(err)
-					continue
-				}
-				filters = append(filters, extAuthzFilter)
+			if _, exists := uniqueExtAuthzConfigs[uniqueID]; exists {
+				continue // Skip if we've already built an ext_authz filter for this config
 			}
+			uniqueExtAuthzConfigs[uniqueID] = struct{}{}
+
+			// Build the ext_authz filter for this RBAC filter and ext_authz config combination
+			extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, ap.GetNamespace())
+			if err != nil {
+				klog.Error(err)
+				continue
+			}
+			filters = append(filters, extAuthzFilter)
 		}
 	}
 
 	return filters, nil
 }
 
-func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter, extAuthzUniqueID, rbacFilterName, namespace string) (*hcm.HttpFilter, error) {
+func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter, extAuthzUniqueID, namespace string) (*hcm.HttpFilter, error) {
 	extAuthzProto := &ext_authzv3.ExtAuthz{
 		FailureModeAllow: false,
 		FilterEnabledMetadata: &matcherv3.MetadataMatcher{
-			Filter: rbacFilterName,
+			Filter: wellknown.HTTPRoleBasedAccessControl,
 			Path: []*matcherv3.MetadataMatcher_PathSegment{
 				{
 					Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
@@ -562,6 +559,35 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 			TypedConfig: extAuthzAny,
 		},
 	}, nil
+}
+
+func (t *Translator) isAccessPolicyAttachedToGateway(ap *v0alpha0.XAccessPolicy, gateway *gatewayv1.Gateway) bool {
+	for _, targetRef := range ap.Spec.TargetRefs {
+		if (targetRef.Group == "" || targetRef.Group == gatewayv1.GroupName) && targetRef.Kind == "Gateway" && string(targetRef.Name) == gateway.Name {
+			return true
+		}
+	}
+	routes := t.getHTTPRoutesForGateway(gateway)
+	for _, targetRef := range ap.Spec.TargetRefs {
+		if targetRef.Group == v0alpha0.GroupName && targetRef.Kind == "XBackend" {
+			for _, route := range routes {
+				for _, rule := range route.Spec.Rules {
+					for _, beRef := range rule.BackendRefs {
+						if beRef.Group != nil && *beRef.Group == v0alpha0.GroupName && beRef.Kind != nil && *beRef.Kind == "XBackend" {
+							ns := route.Namespace
+							if beRef.Namespace != nil {
+								ns = string(*beRef.Namespace)
+							}
+							if ns == ap.Namespace && string(beRef.Name) == string(targetRef.Name) {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func buildRouterFilter() (*hcm.HttpFilter, error) {
