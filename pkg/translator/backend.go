@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	corev1 "k8s.io/api/core/v1"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -148,14 +149,14 @@ func (t *Translator) fetchServiceBackend(routeNamespace string, backendRef gatew
 func resolveServicePort(svc *corev1.Service, backendPort *gatewayv1.PortNumber) int32 {
 	if backendPort != nil {
 		for _, p := range svc.Spec.Ports {
-			if int32(p.Port) == int32(*backendPort) {
-				return int32(p.Port)
+			if p.Port == *backendPort {
+				return p.Port
 			}
 		}
-		return int32(*backendPort)
+		return *backendPort
 	}
 	if len(svc.Spec.Ports) > 0 {
-		return int32(svc.Spec.Ports[0].Port)
+		return svc.Spec.Ports[0].Port
 	}
 	return defaultServicePort
 }
@@ -173,6 +174,7 @@ func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Clus
 		// For in-cluster services, use the FQDN.
 		serviceFQDN := fmt.Sprintf("%s.%s.svc.cluster.local", *backend.Spec.MCP.ServiceName, backend.Namespace)
 		cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS}
+		//nolint:gosec // G115: port values are within valid uint32 bounds
 		cluster.LoadAssignment = createClusterLoadAssignment(clusterName, serviceFQDN, uint32(backend.Spec.MCP.Port))
 		return cluster, nil
 	}
@@ -180,6 +182,7 @@ func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Clus
 	// External MCP backend specified via backend.Spec.MCP.Hostname
 	cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_LOGICAL_DNS}
 	cluster.DnsLookupFamily = clusterv3.Cluster_ALL
+	//nolint:gosec // G115: port values are within valid uint32 bounds
 	cluster.LoadAssignment = createClusterLoadAssignment(clusterName, *backend.Spec.MCP.Hostname, uint32(backend.Spec.MCP.Port))
 	// TODO: A new field will probably be added to Backend to allow configuring TLS for external MCP backends.
 	// For now, we always enable TLS for external MCP backends.
@@ -187,14 +190,14 @@ func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Clus
 		tlsContext := &tlsv3.UpstreamTlsContext{
 			Sni: *backend.Spec.MCP.Hostname,
 		}
-		any, err := anypb.New(tlsContext)
+		tlsAny, err := anypb.New(tlsContext)
 		if err != nil {
 			return nil, err
 		}
 		cluster.TransportSocket = &corev3.TransportSocket{
 			Name: "envoy.transport_sockets.tls",
 			ConfigType: &corev3.TransportSocket_TypedConfig{
-				TypedConfig: any,
+				TypedConfig: tlsAny,
 			},
 		}
 	}
@@ -211,7 +214,7 @@ func buildClustersFromRouteBackends(backends []*routeBackend) ([]*clusterv3.Clus
 		if rb.xbackend != nil {
 			cluster, err = convertBackendToCluster(rb.xbackend)
 		} else {
-			cluster, err = convertServiceRefToCluster(rb.svcNS, rb.svcName, rb.svcPort)
+			cluster = convertServiceRefToCluster(rb.svcNS, rb.svcName, rb.svcPort)
 		}
 		if err != nil {
 			return nil, err
@@ -221,14 +224,15 @@ func buildClustersFromRouteBackends(backends []*routeBackend) ([]*clusterv3.Clus
 	return clusters, nil
 }
 
-func convertServiceRefToCluster(ns, name string, port int32) (*clusterv3.Cluster, error) {
+func convertServiceRefToCluster(ns, name string, port int32) *clusterv3.Cluster {
 	clusterName := fmt.Sprintf(constants.ClusterNameFormat, ns, name)
 	serviceFQDN := fmt.Sprintf("%s.%s.svc.cluster.local", name, ns)
 	cluster := &clusterv3.Cluster{
 		Name:                 clusterName,
 		ConnectTimeout:       durationpb.New(defaultConnectTimeout),
 		ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
-		LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, uint32(port)),
+		//nolint:gosec // G115: port values are within valid uint32 bounds
+		LoadAssignment: createClusterLoadAssignment(clusterName, serviceFQDN, uint32(port)),
 	}
-	return cluster, nil
+	return cluster
 }

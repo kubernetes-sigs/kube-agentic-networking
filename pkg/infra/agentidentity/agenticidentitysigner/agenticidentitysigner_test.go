@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	testclock "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
+
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/localca"
 )
 
@@ -184,7 +185,6 @@ func TestCertificateIssuance(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func mustRFC3339(t *testing.T, ts string) time.Time {

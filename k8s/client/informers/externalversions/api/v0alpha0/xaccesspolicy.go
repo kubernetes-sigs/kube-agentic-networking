@@ -26,6 +26,7 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
+
 	kubeagenticnetworkingapiv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	versioned "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	internalinterfaces "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/internalinterfaces"

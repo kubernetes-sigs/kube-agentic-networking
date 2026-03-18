@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -95,7 +96,6 @@ func TestControllerE2E(t *testing.T) {
 		proxyPodName = names[0]
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("Failed to find envoy proxy pod: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestControllerE2E(t *testing.T) {
 }
 
 func runKubectl(t *testing.T, args ...string) {
-	cmd := exec.Command("kubectl", args...)
+	cmd := exec.CommandContext(context.Background(), "kubectl", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -246,7 +246,7 @@ func runKubectl(t *testing.T, args ...string) {
 }
 
 func runKubectlOutput(t *testing.T, args ...string) string {
-	cmd := exec.Command("kubectl", args...)
+	cmd := exec.CommandContext(context.Background(), "kubectl", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -269,6 +269,7 @@ func retry(attempts int, sleep time.Duration, f func() error) error {
 	}
 	return fmt.Errorf("after %d attempts", attempts)
 }
+
 func assertToolCall(t *testing.T, requestID, sessionID, gatewayAddr, toolName, toolArgs string, expected mcpResponse) {
 	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, requestID, toolName, toolArgs)
 

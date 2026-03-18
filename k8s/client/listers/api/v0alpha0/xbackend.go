@@ -22,6 +22,7 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	listers "k8s.io/client-go/listers"
 	cache "k8s.io/client-go/tools/cache"
+
 	apiv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 

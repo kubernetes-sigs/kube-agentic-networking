@@ -23,6 +23,7 @@ const (
 	// This is the Projected Volume that interacts with the Kubernetes Pod Certificate Signer
 	SpiffeMountPath = "/run/gateway-identity-mtls"
 	// SpiffeCredentialBundleFileName is the name of the file containing both the SPIFFE certificate chain and the private key.
+	//nolint:gosec // G101: this is a file name, not a credential
 	SpiffeCredentialBundleFileName = "credential-bundle.pem"
 	// spiffeTrustBundleFileSuffix is the suffix of the file containing the SPIFFE trust bundle.
 	// The full filename is <trust_domain>.<spiffeTrustBundleFileSuffix>

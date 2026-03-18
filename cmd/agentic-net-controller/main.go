@@ -33,8 +33,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
+
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions"
+
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
 	"sigs.k8s.io/kube-agentic-networking/pkg/controller"
@@ -106,7 +108,7 @@ func main() {
 	// Register ServiceRef index on HTTPRoute informer before Start so Service updates
 	// only look up HTTPRoutes that reference that Service instead of listing all.
 	httpRouteInformer := sharedGwInformers.Gateway().V1().HTTPRoutes().Informer()
-	if err := httpRouteInformer.AddIndexers(map[string]cache.IndexFunc{
+	if err = httpRouteInformer.AddIndexers(map[string]cache.IndexFunc{
 		controller.ServiceRefIndex: controller.HTTPRouteServiceRefIndexFunc,
 	}); err != nil {
 		klog.ErrorS(err, "Failed to add ServiceRef index to HTTPRoute informer")
@@ -193,7 +195,7 @@ func main() {
 
 	// Give all controllers a chance for orderly shutdown.  If they take too
 	// long, the process will get SIGKILLed, so this will not block forever.
-	klog.InfoS("Cancelling root context and shutting down all subsystems")
+	klog.InfoS("Canceling root context and shutting down all subsystems")
 	cancel()
 	finishGroup.Wait()
 

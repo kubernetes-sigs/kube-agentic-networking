@@ -25,6 +25,7 @@ import (
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
+
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 )
@@ -184,7 +185,7 @@ func (t *Translator) translatesAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.
 
 // addPolicyToRBACRules mutates the RBAC config by adding the given policy to the Rules section with the specified name.
 func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
-	if rbacConfig.Rules == nil {
+	if rbacConfig.GetRules() == nil {
 		rbacConfig.Rules = &rbacconfigv3.RBAC{
 			Action:   rbacconfigv3.RBAC_ALLOW,
 			Policies: map[string]*rbacconfigv3.Policy{},
@@ -195,7 +196,7 @@ func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rb
 
 // addPolicyToRBACRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
 func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
-	if rbacConfig.ShadowRules == nil {
+	if rbacConfig.GetShadowRules() == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
 			Action:   rbacconfigv3.RBAC_DENY, // the action for the shadow rule doesn't really matter in this case since we only use it to trigger ext_authz from emitted stats
 			Policies: map[string]*rbacconfigv3.Policy{},

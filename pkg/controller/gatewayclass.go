@@ -27,36 +27,38 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
+
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
-func (c *Controller) setupGatewayClassEventHandlers(gatewayClassInformer gatewayinformers.GatewayClassInformer) error {
+func (c *Controller) setupGatewayClassEventHandlers(ctx context.Context, gatewayClassInformer gatewayinformers.GatewayClassInformer) error {
 	_, err := gatewayClassInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
-				c.syncGatewayClass(key)
+				c.syncGatewayClass(ctx, key)
 			}
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(_, newObj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(newObj)
 			if err == nil {
-				c.syncGatewayClass(key)
+				c.syncGatewayClass(ctx, key)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
-				c.syncGatewayClass(key)
+				c.syncGatewayClass(ctx, key)
 			}
 		},
 	})
 	return err
 }
 
-func (c *Controller) syncGatewayClass(key string) {
+func (c *Controller) syncGatewayClass(ctx context.Context, key string) {
 	startTime := time.Now()
 	klog.V(2).Infof("Started syncing gatewayclass %q (%v)", key, time.Since(startTime))
 	defer func() {
@@ -79,12 +81,12 @@ func (c *Controller) syncGatewayClass(key string) {
 	newGwc := gwc.DeepCopy()
 
 	if newGwc.DeletionTimestamp != nil {
-		if hasGatewaysReferencingClass(c, string(newGwc.Name)) {
+		if hasGatewaysReferencingClass(c, newGwc.Name) {
 			klog.V(4).InfoS("GatewayClass has Gateways still referencing it, blocking deletion", "gatewayclass", key)
 			return
 		}
 		if removeFinalizer(&newGwc.ObjectMeta, constants.GatewayClassFinalizer) {
-			if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
+			if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(ctx, newGwc, metav1.UpdateOptions{}); err != nil {
 				klog.Errorf("failed to remove finalizer from GatewayClass: %v", err)
 			}
 		}
@@ -92,7 +94,7 @@ func (c *Controller) syncGatewayClass(key string) {
 	}
 
 	if ensureFinalizer(&newGwc.ObjectMeta, constants.GatewayClassFinalizer) {
-		if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
+		if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(ctx, newGwc, metav1.UpdateOptions{}); err != nil {
 			klog.Errorf("failed to add finalizer to GatewayClass: %v", err)
 			return
 		}
@@ -109,7 +111,7 @@ func (c *Controller) syncGatewayClass(key string) {
 	})
 
 	// Update the GatewayClass status
-	if _, err := c.gateway.client.GatewayV1().GatewayClasses().UpdateStatus(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
+	if _, err := c.gateway.client.GatewayV1().GatewayClasses().UpdateStatus(ctx, newGwc, metav1.UpdateOptions{}); err != nil {
 		klog.Errorf("failed to update gatewayclass status: %v", err)
 	} else {
 		klog.InfoS("GatewayClass status updated", "gatewayclass", key)
