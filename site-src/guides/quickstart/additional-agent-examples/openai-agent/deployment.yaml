@@ -53,7 +53,7 @@ spec:
                 ! --uid-owner 1337 -j REDIRECT --to-ports 10001
       containers:
         - name: openai-agent
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-openai-agent:main
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-openai-agent:v20260317-8f2d0b3
           imagePullPolicy: Always
           resources:
             limits:

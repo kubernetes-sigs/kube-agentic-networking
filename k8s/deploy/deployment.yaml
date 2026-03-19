@@ -110,7 +110,7 @@ spec:
       serviceAccountName: agentic-net-controller-sa
       containers:
         - name: manager
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:v20260318-b5c2b63
           imagePullPolicy: IfNotPresent # Important for `kind load docker-image` to work
           command:
             - "/agentic-net-controller"
