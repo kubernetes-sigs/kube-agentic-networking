@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: authorino-sa
+  namespace: e2e-test-ns
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authorino
+  namespace: e2e-test-ns
+  labels:
+    app: authorino
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authorino
+  template:
+    metadata:
+      labels:
+        app: authorino
+    spec:
+      serviceAccountName: authorino-sa
+      containers:
+      - name: authorino
+        image: quay.io/kuadrant/authorino:v0.24.0
+        args:
+        - server
+        - --ext-auth-grpc-port=50051
+        - --ext-auth-http-port=5001
+        - --oidc-http-port=8083
+        - --timeout=0
+        - --watch-namespace=e2e-test-ns
+        ports:
+        - containerPort: 50051
+          name: grpc
+          protocol: TCP
+        - containerPort: 5001
+          name: http
+          protocol: TCP
+        - containerPort: 8083
+          name: oidc
+          protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authorino
+  namespace: e2e-test-ns
+spec:
+  type: ClusterIP
+  selector:
+    app: authorino
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+    protocol: TCP
+  - name: http
+    port: 5001
+    targetPort: 5001
+    protocol: TCP
+  - name: oidc
+    port: 8083
+    targetPort: 8083
+    protocol: TCP
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ext-auth-role
+  namespace: e2e-test-ns
+rules:
+- apiGroups:
+  - authorino.kuadrant.io
+  resources:
+  - authconfigs
+  verbs:
+  - "*"
+- apiGroups:
+  - authorino.kuadrant.io
+  resources:
+  - authconfigs/status
+  verbs:
+  - "*"
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - "*"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ext-auth
+  namespace: e2e-test-ns
+subjects:
+- kind: ServiceAccount
+  name: authorino-sa
+  namespace: e2e-test-ns
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ext-auth-role
+---
+apiVersion: authorino.kuadrant.io/v1beta3
+kind: AuthConfig
+metadata:
+  name: external-auth-config
+  namespace: e2e-test-ns
+  labels:
+    authorino.kuadrant.io/managed-by: authorino
+spec:
+  hosts:
+  - '*'
+  authorization:
+    "authorized-tools":
+      patternMatching:
+        patterns:
+        - predicate: |
+            metadata.filter_metadata.mcp_proxy.params.name in ["get-sum", "get-env"]
