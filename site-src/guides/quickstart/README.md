@@ -114,7 +114,7 @@ In the agent UI, ensure `mcp_agent` is selected from the dropdown menu in the to
 
 Want to see policy changes in action? Let's flip the script for the `local-mcp-backend`!
 
-1. **Edit the `XAccessPolicy`**: Open `quickstart/policy/e2e.yaml` and modify the `auth-policy-local-mcp` resource to:
+1. **Edit the `XAccessPolicy`**: Open `site-src/guides/quickstart/policy/e2e.yaml` and modify the `auth-policy-local-mcp` resource to:
    - **Remove** the `"get-sum"` tool.
    - **Add** the `"echo"` tool.
 
@@ -146,7 +146,7 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
 2. **Apply the updated policy**:
 
    ```shell
-   kubectl apply -n quickstart-ns -f quickstart/policy/e2e.yaml
+   kubectl apply -n quickstart-ns -f site-src/guides/quickstart/policy/e2e.yaml
    ```
 
 3. **Wait for the controller to update Envoy**: The Agentic Networking controller will detect the change to the `XAccessPolicy` and dynamically update the running Envoy proxy with the new rules via xDS. No restart is needed!
@@ -186,7 +186,7 @@ kubectl set serviceaccount deployment/<agent-deployment> <agent-sa> -n <agent-na
 
 **Step 2: Define or update access policies**
 
-Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your agent's ServiceAccount and tool endpoints (see the `quickstart/policy/e2e.yaml` file for examples):
+Update `XBackend`, `XAccessPolicy`, and `HTTPRoute` resources to reference your agent's ServiceAccount and tool endpoints (see the `site-src/guides/quickstart/policy/e2e.yaml` file for examples):
 
 ```shell
 kubectl apply -f <policy-file>.yaml
@@ -194,12 +194,12 @@ kubectl apply -f <policy-file>.yaml
 
 **Step 3: Create the Envoy sidecar ConfigMap**
 
-The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Use the template at [`quickstart/adk-agent/sidecar/sidecar-configs.yaml`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
+The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations for mTLS. Use the template at [`site-src/guides/quickstart/adk-agent/sidecar/sidecar-configs.yaml`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/adk-agent/sidecar/sidecar-configs.yaml):
 
 1.  **Copy the template** and update `metadata.namespace` to your agent's namespace:
 
     ```shell
-    cp quickstart/adk-agent/sidecar/sidecar-configs.yaml <your-sidecar-configs>.yaml
+    cp site-src/guides/quickstart/adk-agent/sidecar/sidecar-configs.yaml <your-sidecar-configs>.yaml
     ```
 
 1.  **Discover the Gateway address and identity**, then **render and apply**:
@@ -213,7 +213,7 @@ The Envoy sidecar needs a ConfigMap with its bootstrap and SDS configurations fo
 
 **Step 4: Add the Envoy sidecar to your agent deployment**
 
-Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
+Add an **`envoy` sidecar container** to your Deployment spec with the `envoy-sidecar-configs` and `agent-identity-mtls` volumes. The `envoy-sidecar-configs` tells Envoy how to connect, and `agent-identity-mtls` gives it the credentials to authenticate (see the [ADK agent deployment](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/adk-agent/deployment.yaml) for reference). Add `--disable-hot-restart` to the Envoy args if the hot restart socket conflicts in your environment.
 
 > **Note**: The ADK agent deployment also includes a `proxy-init` init container with iptables rules. This is **not required** — the Envoy sidecar already listens on port 10001 within the pod, so `127.0.0.1:10001` reaches it directly. Omitting it avoids the `NET_ADMIN` capability requirement and speeds up pod startup.
 
