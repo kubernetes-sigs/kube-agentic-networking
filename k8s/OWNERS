@@ -1,0 +1,9 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+# See the OWNERS_ALIASES file at https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/OWNERS_ALIASES for a list of members for each alias.
+
+
+approvers:
+  - kan-reference-implementation-approvers
+
+reviewers:
+  - kan-reference-implementation-approvers
