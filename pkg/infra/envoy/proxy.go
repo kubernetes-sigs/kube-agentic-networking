@@ -21,14 +21,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -192,43 +190,27 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 }
 
 func waitForServiceReady(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
-	logger := klog.FromContext(ctx)
-	logger.Info("Waiting for envoy service to be ready...")
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		svc, err := client.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		if svc.Spec.ClusterIP != "" {
-			return true, nil
-		}
-		return false, nil
-	})
+	svc, err := client.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("waiting for envoy service %s to be ready: %w", name, err)
+		return err
 	}
-	return nil
+	if svc.Spec.ClusterIP != "" {
+		return nil
+	}
+	return fmt.Errorf("envoy service %s is not ready yet", name)
 }
 
 func waitForDeploymentAvailable(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
-	logger := klog.FromContext(ctx)
-	logger.Info("Waiting for envoy deployment to be available...")
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		for _, cond := range dep.Status.Conditions {
-			if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
+	dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("waiting for envoy deployment %s to be available: %w", name, err)
+		return err
 	}
-	return nil
+	for _, cond := range dep.Status.Conditions {
+		if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
+			return nil
+		}
+	}
+	return fmt.Errorf("envoy deployment %s is not available yet", name)
 }
 
 func DeleteProxy(ctx context.Context, client kubernetes.Interface, namespace, name string) error {

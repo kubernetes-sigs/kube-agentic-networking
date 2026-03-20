@@ -396,11 +396,28 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 
 	newGW := gateway.DeepCopy()
 
+	updateStatusFunc := func(listenerStatuses []gatewayv1.ListenerStatus, syncErr error) error {
+		setGatewayConditions(newGW, listenerStatuses, syncErr)
+		if !reflect.DeepEqual(gateway.Status, newGW.Status) {
+			if _, statusErr := c.gateway.client.GatewayV1().Gateways(newGW.Namespace).UpdateStatus(ctx, newGW, metav1.UpdateOptions{}); statusErr != nil {
+				klog.Errorf("Failed to update gateway status: %v", statusErr)
+				if syncErr == nil {
+					return statusErr
+				}
+			} else {
+				logger.Info("Updated gateway status")
+			}
+		}
+		return syncErr
+	}
+
 	// Ensure Envoy proxy deployment and service exist.
 	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
 	proxyIP, err := rm.EnsureProxyExist(ctx)
 	if err != nil {
-		return err
+		_ = updateStatusFunc(nil, err)
+		c.gatewayqueue.AddAfter(key, 2*time.Second)
+		return nil
 	}
 
 	// TODO: Add support for IPv6?
@@ -418,23 +435,19 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
 	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
-		// TODO: Update Gateway status with the error.
-		return fmt.Errorf("failed to translate gateway to xDS resources: %w", err)
+		return updateStatusFunc(nil, fmt.Errorf("failed to translate gateway to xDS resources: %w", err))
 	}
 
 	logger.Info("Translated gateway to xDS resources")
 
 	newGW.Status.Listeners = listenerStatuses
 	// Update the xDS server with the new resources.
-	err = c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
+	xdsErr := c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
 
-	setGatewayConditions(newGW, listenerStatuses, err)
-
-	if !reflect.DeepEqual(gateway.Status, newGW.Status) {
-		if err := c.updateGatewayStatus(ctx, newGW.Namespace, newGW.Name, &newGW.Status); err != nil {
-			return fmt.Errorf("failed to update gateway status: %w", err)
-		}
-		logger.Info("Updated gateway status")
+	if err := updateStatusFunc(listenerStatuses, xdsErr); err != nil {
+		// Attempt to update route statuses anyway, as translation was done, but return the xds/status err
+		_ = c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
+		return err
 	}
 	return c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
 }
