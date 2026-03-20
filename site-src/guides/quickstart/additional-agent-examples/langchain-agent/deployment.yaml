@@ -53,7 +53,7 @@ spec:
                 ! --uid-owner 1337 -j REDIRECT --to-ports 10001
       containers:
         - name: langchain-agent
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-langchain-agent:v20260317-144affa
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-langchain-agent:main
           imagePullPolicy: Always
           resources:
             limits:
