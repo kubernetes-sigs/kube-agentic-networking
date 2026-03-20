@@ -116,6 +116,8 @@ func (c *Controller) syncGatewayClass(ctx context.Context, key string) {
 	} else {
 		klog.InfoS("GatewayClass status updated", "gatewayclass", key)
 	}
+
+	c.enqueueGatewaysForClass(newGwc.Name)
 }
 
 // hasGatewaysReferencingClass returns true if any Gateway exists with spec.gatewayClassName equal to className.
@@ -131,6 +133,23 @@ func hasGatewaysReferencingClass(c *Controller, className string) bool {
 		}
 	}
 	return false
+}
+
+// enqueueGatewaysForClass adds all Gateways referencing the given class to the workqueue.
+func (c *Controller) enqueueGatewaysForClass(className string) {
+	gateways, err := c.gateway.gatewayLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list gateways: %v", err)
+		return
+	}
+	for _, gw := range gateways {
+		if string(gw.Spec.GatewayClassName) == className {
+			key, err := cache.MetaNamespaceKeyFunc(gw)
+			if err == nil {
+				c.gatewayqueue.Add(key)
+			}
+		}
+	}
 }
 
 // gateway class validation
