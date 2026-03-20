@@ -35,7 +35,7 @@ const (
 	GatewayClassFinalizer = ProjectName + "/gatewayclass-finalizer"
 	// GatewayFinalizer is set on Gateway; removed when no HTTPRoutes reference it and proxy is cleaned up.
 	GatewayFinalizer = ProjectName + "/gateway-finalizer"
-	// XBackendFinalizer is set on XBackend; removed when no XAccessPolicy targets it.
+	// XBackendFinalizer is set on XBackend; removed when no XAccessPolicy targets it and no HTTPRoute references it.
 	XBackendFinalizer = ProjectName + "/xbackend-finalizer"
 
 	// MaxAccessPoliciesPerTarget is the maximum number of AccessPolicies allowed to target a single resource.
