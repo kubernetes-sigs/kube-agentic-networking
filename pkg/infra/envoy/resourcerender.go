@@ -108,6 +108,31 @@ func generateSdsConfig(tmpl, sdsConfigName, trustDomain string) (string, error) 
 	return buff.String(), nil
 }
 
+func (r *ResourceManager) getLabels() map[string]string {
+	labels := map[string]string{
+		constants.GatewayNameLabel: r.gw.Name,
+	}
+	if r.gw.Spec.Infrastructure != nil {
+		for k, v := range r.gw.Spec.Infrastructure.Labels {
+			labels[string(k)] = string(v)
+		}
+	}
+	return labels
+}
+
+func (r *ResourceManager) getAnnotations() map[string]string {
+	annotations := map[string]string{}
+	if r.gw.Spec.Infrastructure != nil {
+		for k, v := range r.gw.Spec.Infrastructure.Annotations {
+			annotations[string(k)] = string(v)
+		}
+	}
+	if len(annotations) == 0 {
+		return nil
+	}
+	return annotations
+}
+
 // renderConfigMap creates a ConfigMap for envoy bootstrap config and SDS configs.
 func (r *ResourceManager) renderConfigMap() (*corev1.ConfigMap, error) {
 	bootstrap, err := generateEnvoyBootstrapConfig(types.NamespacedName{
@@ -148,9 +173,8 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.nodeID,
 			Namespace: r.namespace,
-			Labels: map[string]string{
-				constants.GatewayNameLabel: r.gw.Name,
-			},
+			Labels:    r.getLabels(),
+			Annotations: r.getAnnotations(),
 			OwnerReferences: ownerRef(r.gw),
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -162,10 +186,12 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":                      r.nodeID,
-						constants.GatewayNameLabel: r.gw.Name,
-					},
+					Labels: func() map[string]string {
+						l := r.getLabels()
+						l["app"] = r.nodeID
+						return l
+					}(),
+					Annotations: r.getAnnotations(),
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: r.nodeID,
@@ -298,9 +324,8 @@ func (r *ResourceManager) renderService() *corev1.Service {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.nodeID,
 			Namespace: r.namespace,
-			Labels: map[string]string{
-				constants.GatewayNameLabel: r.gw.Name,
-			},
+			Labels:    r.getLabels(),
+			Annotations: r.getAnnotations(),
 			OwnerReferences: ownerRef(r.gw),
 		},
 		Spec: corev1.ServiceSpec{
@@ -318,9 +343,8 @@ func (r *ResourceManager) renderServiceAccount() *corev1.ServiceAccount {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.nodeID,
 			Namespace: r.namespace,
-			Labels: map[string]string{
-				constants.GatewayNameLabel: r.gw.Name,
-			},
+			Labels:    r.getLabels(),
+			Annotations: r.getAnnotations(),
 			OwnerReferences: ownerRef(r.gw),
 		},
 	}
