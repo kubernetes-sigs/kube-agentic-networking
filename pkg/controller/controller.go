@@ -346,10 +346,14 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 		return nil
 	}
 
-	// If Gateway is being deleted, block until no HTTPRoutes reference it, then clean up and remove finalizer.
+	// If Gateway is being deleted, block until no HTTPRoutes or AccessPolicies reference it, then clean up and remove finalizer.
 	if gateway.DeletionTimestamp != nil {
 		if hasHTTPRoutesReferencingGateway(c, gateway) {
 			logger.V(4).Info("Gateway has HTTPRoutes still referencing it, blocking deletion")
+			return nil
+		}
+		if hasAccessPoliciesTargetingGateway(c, gateway) {
+			logger.V(4).Info("Gateway has AccessPolicies still targeting it, blocking deletion")
 			return nil
 		}
 		if errDel := envoy.DeleteProxy(ctx, c.core.client, namespace, name); errDel != nil {
@@ -438,6 +442,27 @@ func hasHTTPRoutesReferencingGateway(c *Controller, gw *gatewayv1.Gateway) bool 
 				refNamespace = string(*parentRef.Namespace)
 			}
 			if string(parentRef.Name) == gw.Name && refNamespace == gw.Namespace {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasAccessPoliciesTargetingGateway returns true if any XAccessPolicy has a targetRef to the given Gateway.
+// Used to block Gateway finalizer removal until all targeting AccessPolicies are removed (avoids dangling refs).
+func hasAccessPoliciesTargetingGateway(c *Controller, gw *gatewayv1.Gateway) bool {
+	policies, err := c.agentic.accessPolicyLister.XAccessPolicies(gw.Namespace).List(labels.Everything())
+	if err != nil {
+		klog.V(4).ErrorS(err, "failed to list AccessPolicies for Gateway finalizer")
+		return true // conservatively block
+	}
+	for _, policy := range policies {
+		for _, targetRef := range policy.Spec.TargetRefs {
+			if !isGatewayTargetRef(targetRef) {
+				continue
+			}
+			if string(targetRef.Name) == gw.Name {
 				return true
 			}
 		}

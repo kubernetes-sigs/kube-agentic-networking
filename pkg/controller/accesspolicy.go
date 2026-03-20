@@ -121,6 +121,7 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 
 // enqueueGatewaysForAccessPolicy enqueues all Gateways that are affected by the given AccessPolicy.
 // It also enqueues the targeted XBackend for finalizer reconciliation.
+// When an AccessPolicy targets a Gateway, that Gateway is enqueued so its finalizer can be re-evaluated on AccessPolicy delete (avoids deadlock).
 func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAccessPolicy) {
 	isAccepted := policy.IsAccepted()
 	isDeleting := policy.DeletionTimestamp != nil
@@ -128,24 +129,14 @@ func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAcc
 
 	for _, targetRef := range policy.Spec.TargetRefs {
 		if isGatewayTargetRef(targetRef) {
-			// We only reconcile Gateways/Envoy for accepted policies.
-			if !shouldEnqueueGW {
-				continue
-			}
-			gw, err := c.gateway.gatewayLister.Gateways(policy.Namespace).Get(string(targetRef.Name))
-			if err != nil {
-				if apierrors.IsNotFound(err) {
-					// TODO: Set status condition on AccessPolicy to indicate missing Gateway
-					klog.InfoS("AccessPolicy targets a non-existent Gateway", "accesspolicy", klog.KObj(policy), "gateway", types.NamespacedName{Namespace: policy.Namespace, Name: string(targetRef.Name)})
-				} else {
-					runtime.HandleError(fmt.Errorf("failed to get gateway %s/%s targeted by access policy %s: %w", policy.Namespace, targetRef.Name, policy.Name, err))
-				}
-				continue
-			}
-			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(gw)
-			if err == nil {
-				c.gatewayqueue.Add(key)
-			}
+			// Always enqueue targeted Gateways so syncGateway can add/maintain the Gateway finalizer
+			// and re-evaluate hasAccessPoliciesTargetingGateway when this policy changes or is removed.
+			// This matches the "wake parent on dependent delete" pattern from
+			// https://github.com/kubernetes-sigs/kube-agentic-networking/pull/148 (see also #150).
+			// Unlike XBackend→Gateway fan-out, we do not gate on policy acceptance: rejected policies
+			// still block Gateway deletion via hasAccessPoliciesTargetingGateway until removed.
+			gatewayKey := policy.Namespace + "/" + string(targetRef.Name)
+			c.gatewayqueue.Add(gatewayKey)
 			continue
 		}
 
