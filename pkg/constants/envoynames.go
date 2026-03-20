@@ -38,7 +38,8 @@ const (
 	EnvoyBootstrapMountPath = "/etc/envoy/bootstrap"
 
 	// GatewayNameLabel is the label key used to identify resources associated with a specific Gateway.
-	GatewayNameLabel = ProjectName + "/gateway-name"
+	// This label was formally introduced in https://gateway-api.sigs.k8s.io/geps/gep-1762/#automated-deployments.
+	GatewayNameLabel = "gateway.networking.k8s.io/gateway-name"
 
 	// GatewayRBACFilterNamePrefix is the prefix for Envoy RBAC filters at the gateway level.
 	GatewayRBACFilterNamePrefix = "envoy.filters.http.rbac.gateway_level_"

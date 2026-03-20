@@ -400,7 +400,8 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
 	proxyIP, err := rm.EnsureProxyExist(ctx)
 	if err != nil {
-		return err
+		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, err)
+		return errors.Join(err, updateErr)
 	}
 
 	// TODO: Add support for IPv6?
@@ -418,25 +419,18 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
 	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
-		// TODO: Update Gateway status with the error.
-		return fmt.Errorf("failed to translate gateway to xDS resources: %w", err)
+		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, fmt.Errorf("failed to translate gateway to xDS resources: %w", err))
+		return errors.Join(err, updateErr)
 	}
 
 	logger.Info("Translated gateway to xDS resources")
 
 	newGW.Status.Listeners = listenerStatuses
 	// Update the xDS server with the new resources.
-	err = c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
-
-	setGatewayConditions(newGW, listenerStatuses, err)
-
-	if !reflect.DeepEqual(gateway.Status, newGW.Status) {
-		if err := c.updateGatewayStatus(ctx, newGW.Namespace, newGW.Name, &newGW.Status); err != nil {
-			return fmt.Errorf("failed to update gateway status: %w", err)
-		}
-		logger.Info("Updated gateway status")
-	}
-	return c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
+	xdsErr := c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
+	updateGatewayStatusErr := updateGatewayStatus(ctx, c, gateway, newGW, listenerStatuses, xdsErr)
+	updateHTTPRouteStatusErr := c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
+	return errors.Join(xdsErr, updateGatewayStatusErr, updateHTTPRouteStatusErr)
 }
 
 func (c *Controller) updateGatewayRemoveFinalizer(ctx context.Context, namespace, name string) error {
@@ -455,6 +449,23 @@ func (c *Controller) updateGatewayRemoveFinalizer(ctx context.Context, namespace
 		_, err = c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, u, metav1.UpdateOptions{})
 		return err
 	})
+}
+
+// updateGatewayStatus updates the Gateway status in the API server if it has changed.
+// Note: this function modifies newGW.
+func updateGatewayStatus(ctx context.Context, c *Controller, gateway *gatewayv1.Gateway, newGW *gatewayv1.Gateway, listenerStatuses []gatewayv1.ListenerStatus, syncErr error) error {
+	setGatewayConditions(newGW, listenerStatuses, syncErr)
+
+	if reflect.DeepEqual(gateway.Status, newGW.Status) {
+		return nil
+	}
+
+	if _, statusErr := c.gateway.client.GatewayV1().Gateways(newGW.Namespace).UpdateStatus(ctx, newGW, metav1.UpdateOptions{}); statusErr != nil {
+		klog.FromContext(ctx).Error(statusErr, "failed to update gateway status")
+		return fmt.Errorf("failed to update gateway status: %w", statusErr)
+	}
+	klog.FromContext(ctx).Info("Updated gateway status")
+	return nil
 }
 
 // ensureGatewayFinalizer adds the controller finalizer via the API when missing.
@@ -490,22 +501,6 @@ func (c *Controller) ensureGatewayFinalizer(ctx context.Context, namespace, name
 	}
 	nowHas := sets.New(fresh.Finalizers...).Has(constants.GatewayFinalizer)
 	return !hadFinalizer && nowHas, nil
-}
-
-func (c *Controller) updateGatewayStatus(ctx context.Context, namespace, name string, desired *gatewayv1.GatewayStatus) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
-		if err != nil {
-			return err
-		}
-		if reflect.DeepEqual(latest.Status, *desired) {
-			return nil
-		}
-		u := latest.DeepCopy()
-		u.Status = *desired.DeepCopy()
-		_, err = c.gateway.client.GatewayV1().Gateways(namespace).UpdateStatus(ctx, u, metav1.UpdateOptions{})
-		return err
-	})
 }
 
 // hasHTTPRoutesReferencingGateway returns true if any HTTPRoute has a ParentRef to the given Gateway.
