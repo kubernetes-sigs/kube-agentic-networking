@@ -69,6 +69,7 @@ Before you begin, ensure you have the following:
 # 1. Clone the repository
 git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
 cd kube-agentic-networking
+git checkout kubecon-eu-26-demo
 
 # 2. Set your HuggingFace token
 export HF_TOKEN=<your-huggingface-token>
