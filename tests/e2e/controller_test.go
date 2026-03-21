@@ -50,6 +50,8 @@ const (
 // - Multi-level authorization enforcement at both Gateway and Backend scopes.
 // - Correctness of the generated Envoy configuration for policy enforcement.
 func TestControllerE2E(t *testing.T) {
+	t.Parallel()
+
 	namespace, gatewayIP, cleanup := deployCommonTestResources(t)
 	defer cleanup()
 
@@ -238,6 +240,8 @@ func TestControllerE2E(t *testing.T) {
 // - ExternalAuth policy at the gateway level
 // - Multi-client authorization with different ServiceAccounts
 func TestExternalAuthE2E(t *testing.T) {
+	t.Parallel()
+
 	namespace, gatewayIP, cleanup := deployCommonTestResources(t)
 	defer cleanup()
 
