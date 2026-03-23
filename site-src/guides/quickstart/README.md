@@ -251,9 +251,9 @@ A: Hugging Face model public inferencing endpoints can be unstable. As a quick m
 
 Examples of alternative model IDs to try:
 
-- huggingface/Qwen/Qwen2.5-72B-Instruct
-- huggingface/meta-llama/Llama-3.1-8B-Instruct
-- huggingface/google/gemma-2-2b-it
+- huggingface/deepseek-ai/DeepSeek-V3.2
+- huggingface/Qwen/Qwen3.5-27B
+- huggingface/Qwen/Qwen3.5-9B
 
 Override via kubectl (replace <model-id> as needed):
 
