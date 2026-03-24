@@ -69,7 +69,7 @@ main() {
 
   header "Running E2E tests"
   # Requirements: K8s v1.35+, PodCertificateRequest/ClusterTrustBundle enabled, and KAN Controller running with --enable-agentic-identity-signer=true.
-  cd tests && go clean -testcache && go test -v ./e2e/...
+  cd tests && go clean -testcache && go test -v -parallel=2 ./e2e/...
 }
 
 # Function to print a prominent header
