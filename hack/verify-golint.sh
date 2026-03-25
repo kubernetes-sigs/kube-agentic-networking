@@ -23,22 +23,28 @@ readonly KUBE_ROOT=$(dirname "${BASH_SOURCE}")/..
 
 cd "${KUBE_ROOT}"
 
-# See configuration file in ${KUBE_ROOT}/.golangci.yml.
-mkdir -p cache
+LINT_CACHE="cache/golint"
+mkdir -p "${LINT_CACHE}"
+MOD_CACHE=$(go env GOMODCACHE)
+BUILD_CACHE=$(go env GOCACHE)
 
 failed=false
 for module in $(find . -name "go.mod" | xargs -n1 dirname); do
   echo "Linting ${module}"
 
   docker run --rm \
-    -v $(pwd)/cache:/cache \
+    -v "$(pwd)/${LINT_CACHE}":/cache \
+    -v "${MOD_CACHE}":/gomodcache \
+    -v "${BUILD_CACHE}":/gocache \
     -v $(pwd):/app \
     -w "/app/${module}" \
     --security-opt="label=disable" \
     -e GOLANGCI_LINT_CACHE=/cache \
     -e GOFLAGS="-buildvcs=false" \
+    -e GOMODCACHE="/gomodcache" \
+    -e GOCACHE="/gocache" \
     "golangci/golangci-lint:$VERSION" \
-    golangci-lint run --timeout=5m || failed=true
+    golangci-lint run -v --timeout=5m || failed=true
 done
 
 if ${failed}; then
