@@ -37,6 +37,7 @@ for module in $(find . -name "go.mod" | xargs -n1 dirname); do
     -v "${MOD_CACHE}":/gomodcache \
     -v "${BUILD_CACHE}":/gocache \
     -v $(pwd):/app \
+    -u $(id -u):$(id -g) \
     -w "/app/${module}" \
     --security-opt="label=disable" \
     -e GOLANGCI_LINT_CACHE=/cache \
