@@ -30,6 +30,7 @@ func main() {
 	subcommands.Register(subcommands.CommandsCommand(), "")
 
 	subcommands.Register(&MakeCAPoolSecretCommand{}, "")
+	subcommands.Register(&MakeCertSecretCommand{}, "")
 
 	flag.Parse()
 	ctx := context.Background()
