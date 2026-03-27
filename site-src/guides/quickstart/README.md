@@ -59,7 +59,6 @@ Before you begin, ensure you have the following:
 - **[kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)**
 - **[Go](https://go.dev/doc/install)** (1.23+)
 - **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
-- **[Helm](https://helm.sh/docs/intro/install/)** (for optional external authorizer deployment)
 - **A HuggingFace token** with ***"Make calls to Inference Providers"*** permission enabled. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one.
 
 > **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
@@ -160,95 +159,7 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
 
    Observe how the agent's behavior changes instantly based on your policy modifications!
 
-<br/>
-
-Got a more complex use case in mind? Let's see what we can do for the `remote-mcp-backend`!
-
-5. **Delegate access control to an external authorizer**: For a more advanced use cases, you can use the `XAccessPolicy` to integrate an external authorizer and control agentic network access based on custom logic.
-
-    First, deploy an external authorizer. In this example, we'll use [Authorino](https://github.com/kuadrant/authorino)[^1]. You can choose any authorizer that implements Envoy's [External Authorization](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/security/ext_authz_filter#arch-overview-ext-authz) protocol (gRPC or HTTP).
-
-    To deploy Authorino with Helm and configure it to **allow requests from agents only between 9am and 5pm**, run the following commands:
-
-    ```sh
-    helm repo add kuadrant https://kuadrant.io/helm-charts/ --force-update
-    helm install authorino-operator kuadrant/authorino-operator --namespace authorino-operator --create-namespace --wait
-
-    kubectl apply -f -<<EOF
-    apiVersion: operator.authorino.kuadrant.io/v1beta1
-    kind: Authorino
-    metadata:
-      name: authorino
-      namespace: authorino-operator
-    spec:
-      listener:
-        tls:
-          enabled: false
-      oidcServer:
-        tls:
-          enabled: false
-    ---
-    apiVersion: authorino.kuadrant.io/v1beta3
-    kind: AuthConfig
-    metadata:
-      name: external-auth-config
-      namespace: authorino-operator
-    spec:
-      hosts:
-      - '*'
-      authorization:
-        "from-9am-to-5pm":
-          opa:
-            rego: |
-              allow { [h, _, _] := time.clock(input.request.time.seconds*1000000000+input.request.time.nanos); h >= 9; h <= 17 }
-    EOF
-    ```
-
-    [^1]: Authorino is a Kubernetes-native authorization service that is part of the [Kuadrant](https://kuadrant.io/) CNCF project.
-
-    Then, edit your `auth-policy-remote-mcp` XAccessPolicy resource so requests to the `remote-mcp-backend` are authorized by the Authorino service:
-
-    ```sh
-    kubectl apply -n quickstart-ns -f -<<EOF
-    apiVersion: agentic.prototype.x-k8s.io/v0alpha0
-    kind: XAccessPolicy
-    metadata:
-      name: auth-policy-remote-mcp
-      namespace: quickstart-ns
-    spec:
-      targetRefs:
-        - group: agentic.prototype.x-k8s.io
-          kind: XBackend
-          name: remote-mcp-backend
-      rules:
-        - name: ext-authorizer-for-adk-agent-sa
-          source:
-            type: ServiceAccount
-            serviceAccount:
-              name: adk-agent-sa
-              namespace: quickstart-ns
-          authorization:
-            type: ExternalAuth
-            externalAuth:
-              backendRef:
-                kind: Service
-                name: authorino-authorino-authorization
-                namespace: authorino-operator
-                port: 50051
-              protocol: GRPC
-              grpc: {}
-    EOF
-    ```
-
-    Go back to `http://localhost:8081` and interact with the Agent again. Try these prompts:
-
-    | Prompt                                                                             | When                    | Tool Invoked                        | Expected Result | Why?                                                                                 |
-    | :--------------------------------------------------------------------------------- | :---------------------- | :---------------------------------- | :-------------- | :----------------------------------------------------------------------------------- |
-    | Echo back 'hello'.                                                                 | Any time                | `echo` on local MCP                 | ✅ **Success**  | The `echo` tool is _allowed_ by the `XAccessPolicy` updated in the previous example. |
-    | Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking | Between 9am and 5pm     | `read_wiki_structure` on remote MCP | ✅ **Success**  | The external auth config _allows_ requests during business hours.                    |
-    | Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking | Before 9am or after 5pm | `read_wiki_structure` on remote MCP | ❌ **Failure**  | The external auth config _denies_ requests outside business hours.                   |
-
-    Observe how the agent's behavior changes instantly based on your policy modifications!
+> **Got a more complex use case in mind?** Check out the [External Authorization Quickstart](../external-auth-quickstart/README.md) to learn how to use the `XAccessPolicy` to delegate decision to an external authorizer and control agentic network access based on custom logic.
 
 </details>
 
