@@ -41,6 +41,12 @@ parser.add_argument(
     action="store_true",
 )
 
+parser.add_argument(
+    "--ignore-re",
+    default=r"^\.",
+    help="A regular expression filter to ignore files and directories. By default, this ignores dotfiles.",
+)
+
 args = parser.parse_args()
 
 verbose_out = sys.stderr if args.verbose else open("/dev/null", "w")
@@ -143,10 +149,12 @@ skipped_names = [
 ]
 
 
-def normalize_files(files):
+def normalize_files(files, ignore_re):
     newfiles = []
     for pathname in files:
         if any(x in pathname for x in skipped_names):
+            continue
+        if any(ignore_re.search(part) for part in pathname.split(os.path.sep)):
             continue
         newfiles.append(pathname)
     for i, pathname in enumerate(newfiles):
@@ -155,7 +163,7 @@ def normalize_files(files):
     return newfiles
 
 
-def get_files(extensions):
+def get_files(extensions, ignore_re):
     files = []
     if len(args.filenames) > 0:
         files = args.filenames
@@ -168,16 +176,21 @@ def get_files(extensions):
             for dname in skipped_names:
                 if dname in dirs:
                     dirs.remove(dname)
-            for dname in dirs:
+            # must copy dirs for iteration because we are removing items
+            for dname in list(dirs):
                 # dirs that start with __ are ignored
                 if dname.startswith("__"):
                     dirs.remove(dname)
+                elif ignore_re.search(dname):
+                    dirs.remove(dname)
 
             for name in walkfiles:
+                if ignore_re.search(name):
+                    continue
                 pathname = os.path.join(root, name)
                 files.append(pathname)
 
-    files = normalize_files(files)
+    files = normalize_files(files, ignore_re)
     outfiles = []
     for pathname in files:
         basename = os.path.basename(pathname)
@@ -216,7 +229,8 @@ def get_regexs():
 def main():
     regexs = get_regexs()
     refs = get_refs()
-    filenames = get_files(refs)
+    ignore_re = re.compile(args.ignore_re)
+    filenames = get_files(refs, ignore_re)
 
     for filename in filenames:
         if not file_passes(filename, refs, regexs):

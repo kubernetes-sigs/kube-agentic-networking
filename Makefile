@@ -40,11 +40,12 @@ help:
 # It builds for the local architecture and loads the image into the local docker daemon.
 all: validate-python vet fmt verify test build  ## Test, verify and build this project locally.
 
-PYTHON_FILES := $(shell find . -type f -name "*.py")
+PYTHON_FILES := $(shell find ./hack -type f -name "*.py")
+PYTHON_FILES += $(shell find ./site-src -type f -name "*.py")
+
 .PHONY: validate-python
 validate-python:
-	@echo "Checking Python syntax for the following files:"
-	@echo "$(PYTHON_FILES)"
+	@echo "Validating Python files"
 	@if [ -n "$(PYTHON_FILES)" ]; then python -m py_compile $(PYTHON_FILES); else echo "No Python files found."; fi
 
 .PHONY: fmt

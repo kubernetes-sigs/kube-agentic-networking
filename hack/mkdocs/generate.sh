@@ -34,10 +34,13 @@ declare -a arr=(
     "main"
 )
 
-mkdir -p ${PWD}/tmp
+# Create a temporary directory for the script.
+# This directory will be cleaned up automatically on script exit.
+SCRIPT_TMP_DIR=$(mktemp -d)
+trap 'rm -rf "${SCRIPT_TMP_DIR}"' EXIT
 
 for i in "${arr[@]}"; do
-    tmpdir=$(mktemp -d --tmpdir=${PWD}/tmp)
+    tmpdir=$(mktemp -d --tmpdir="${SCRIPT_TMP_DIR}")
 
     # Use the current api directory instead of fetching from remote,
     # which is required for CI (Prow) to verify PR changes correctly.
