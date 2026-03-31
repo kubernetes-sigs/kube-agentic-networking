@@ -60,11 +60,22 @@ Before you begin, ensure you have the following:
 - **[Go](https://go.dev/doc/install)** (1.23+)
 - **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
 - **[Helm](https://helm.sh/docs/intro/install/)** (for optional external authorizer deployment)
+
+**Choose one of the following LLM options:**
+
+### Option 1: HuggingFace (Default)
 - **A HuggingFace token** with ***"Make calls to Inference Providers"*** permission enabled. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one.
 
 > **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
 
+### Option 2: Ollama (Local)
+- **[Ollama](https://ollama.com/)** installed and running locally
+- **Note**: Local models may have slower response times compared to cloud-hosted inference APIs, depending on your hardware (CPU/GPU) and the model size.
+- A model pulled (e.g., `ollama pull qwen2.5:7b`)
+
 ## Quickstart
+
+### Option 1: Using HuggingFace (Default)
 
 ```shell
 # 1. Clone the repository
@@ -78,6 +89,40 @@ export HF_TOKEN=<your-huggingface-token>
 make quickstart
 
 # 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
+```
+
+### Option 2: Using Ollama (No HF_TOKEN Required)
+
+```shell
+# 1. Clone the repository
+git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
+cd kube-agentic-networking
+
+# 2. Ensure Ollama is running locally
+ollama serve  # If not already running
+ollama pull qwen2.5:7b  # Or your preferred model
+
+# 3. Run the quickstart setup with Ollama
+make quickstart-ollama
+
+# 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
+```
+
+> **Note**: The default Ollama URL (`http://host.docker.internal:11434`) works on some operating systems like MacOS, where `host.docker.internal` resolves to the host machine's IP address from within containers.
+>
+> **For Linux users**: See the [Ollama Linux Setup Guide](adk-agent/ollama_linux_setup.md) for detailed instructions on configuring Ollama to work with kind clusters.
+
+**Advanced Ollama Options:**
+
+```shell
+# Use a different Ollama server or model
+./site-src/guides/quickstart/run-quickstart.sh \
+  --ollama \
+  --ollama-url http://host.docker.internal:11434 \
+  --ollama-model llama3.2
+
+# See all options
+./site-src/guides/quickstart/run-quickstart.sh --help
 ```
 
 ### What `make quickstart` Does
