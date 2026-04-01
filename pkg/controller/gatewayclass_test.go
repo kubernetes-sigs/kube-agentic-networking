@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -109,4 +110,47 @@ func TestHasGatewaysReferencingClass(t *testing.T) {
 			t.Error("expected true when one Gateway references this class")
 		}
 	})
+}
+
+func TestEnqueueGatewaysForClass(t *testing.T) {
+	className := "my-gateway-class"
+
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	for i, gwcName := range []string{"other-class", className, "another-class"} {
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Name: "gw-" + string(rune('a'+i)), Namespace: "default"},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: gatewayv1.ObjectName(gwcName),
+				Listeners:        []gatewayv1.Listener{{Name: "l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+			},
+		}
+		if err := indexer.Add(gw); err != nil {
+			t.Fatalf("indexer.Add: %v", err)
+		}
+	}
+
+	queue := workqueue.NewTypedRateLimitingQueueWithConfig(
+		workqueue.DefaultTypedControllerRateLimiter[string](),
+		workqueue.TypedRateLimitingQueueConfig[string]{Name: "gateway"},
+	)
+
+	c := &Controller{
+		gateway: gatewayResources{
+			gatewayLister: gatewaylisters.NewGatewayLister(indexer),
+		},
+		gatewayqueue: queue,
+	}
+
+	c.enqueueGatewaysForClass(className)
+
+	if c.gatewayqueue.Len() != 1 {
+		t.Fatalf("expected queue length 1, got %d", c.gatewayqueue.Len())
+	}
+
+	key, _ := c.gatewayqueue.Get()
+	expectedKey := "default/gw-b"
+	if key != expectedKey {
+		t.Errorf("expected key %q, got %q", expectedKey, key)
+	}
+	c.gatewayqueue.Done(key)
 }
