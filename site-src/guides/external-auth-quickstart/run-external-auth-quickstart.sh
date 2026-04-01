@@ -102,8 +102,8 @@ spec:
       enabled: false
 EOF
 
-  # Deploy AuthConfig with time-based policy
-  info "Deploying time-based AuthConfig (9am-5pm)..."
+  # Deploy AuthConfig with repository-based policy
+  info "Deploying repository-based AuthConfig (allow only specific repos)..."
   kubectl apply -f - <<EOF
 apiVersion: authorino.kuadrant.io/v1beta3
 kind: AuthConfig
@@ -114,11 +114,15 @@ spec:
   hosts:
   - '*'
   authorization:
-    "from-9am-to-5pm":
+    "allowed-repos-only":
       opa:
         rego: |
-          hour := time.clock(input.request.time.seconds*1000000000+input.request.time.nanos)[0]
-          allow { hour >= 9; hour < 17 }
+          allowed_repos := [
+            "kubernetes-sigs/kube-agentic-networking",
+            "kubernetes-sigs/gateway-api"
+          ]
+          repo := input.metadata.filter_metadata.mcp_proxy.params.arguments.repoName
+          allow { repo == allowed_repos[_] }
 EOF
 
   # Wait for AuthConfig to be ready
@@ -154,6 +158,6 @@ info " Open the agent UI in your browser:"
 info "   ${AGENT_UI_URL}"
 info ""
 info " Try the example prompts from the guide:"
-info "   - Requests between 9am ⊢ 5pm (UTC) will succeed"
-info "   - Requests outside business hours will fail"
+info "   - Allowed repos: kubernetes-sigs/kube-agentic-networking, kubernetes-sigs/gateway-api"
+info "   - Other repos will be denied"
 info ""

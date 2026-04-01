@@ -16,7 +16,7 @@ The agent will attempt to access tools from two MCP servers:
 1. **Local MCP backend**: Controlled by an inline tool allowlist (`InlineTools` authorization type)
 2. **Remote MCP backend**: Controlled by an external authorizer (`ExternalAuth` authorization type)
 
-In this example, the external authorizer enforces a **time-based access policy** — the agent can only access remote MCP tools starting at 9am and before 5pm.
+In this example, the external authorizer enforces a **repository-based access policy** — the agent can only access specific approved GitHub repositories when using remote MCP tools.
 
 Below is a high-level diagram illustrating this quickstart:
 
@@ -54,7 +54,7 @@ graph TD
 
     Decision -- "Inline: Yes" --> LocalMCP
     Decision -- "External Auth?" --> ExtAuth
-    ExtAuth -- "Time check (9am ⊢ 5pm)" --> Decision
+    ExtAuth -- "Repo in allowlist?" --> Decision
     Decision -- "External: Yes" --> RemoteMCP(Remote MCP Server)
     Decision -- "No" --> Forbidden["Response: Access to this tool is forbidden.<br/><br/><i>* Returns HTTP 200 with JSON-RPC error<br/>* Temporary workaround for ongoing MCP SDK improvements, <a href='https://github.com/kubernetes-sigs/kube-agentic-networking/issues/169'>see issue #169</a></i>"]
 
@@ -109,7 +109,7 @@ The `run-external-auth-quickstart.sh` script performs the following steps:
 2. **Deploys the external authorization service**:
    - Installs Authorino Operator (using Helm)
    - Creates an instance of the authorization service
-   - Configures time-based access rules (9am ⊢ 5pm) for all hosts delegating authorization to the service
+   - Configures repository-based access rules (only specific approved repos) for all hosts delegating authorization to the service
 3. **Applies external auth policies** by updating the `XAccessPolicy` for the remote MCP backend to use `ExternalAuth` type
 
 ## Understanding External Authorization Policies
@@ -155,7 +155,7 @@ spec:
 When the agent attempts to call a tool on the remote MCP backend, the gateway will:
 1. Intercept the request
 2. Call the external authorization service via gRPC
-3. Include request metadata (time, identity, etc.)
+3. Include request metadata (tool name, arguments, identity, etc.)
 4. Allow or deny based on the authorizer's response
 
 In this example, the `AuthConfig` resource contains the actual authorization logic:
@@ -170,38 +170,44 @@ spec:
   hosts:
   - '*'
   authorization:
-    "from-9am-to-5pm":
+    "allowed-repos-only":
       opa:
         rego: |
-          hour := time.clock(input.request.time.seconds*1000000000+input.request.time.nanos)[0]
-          allow { hour >= 9; hour < 17 }
+          allowed_repos := [
+            "kubernetes-sigs/kube-agentic-networking",
+            "kubernetes-sigs/gateway-api"
+          ]
+          repo := input.metadata.filter_metadata.mcp_proxy.params.arguments.repoName
+          allow { repo == allowed_repos[_] }
 ```
 
-This Rego policy extracts the hour from the request timestamp and allows access only if the hour is greater than or equal to 9 (9am) and less than 17 (5pm).
+This Rego policy extracts the `repoName` argument from the tool call parameters and allows access only if the repository is in the allowed list.
 
-Notice the time is always given at UTC 😉.
+**Key insight**: While inline `InlineTools` authorization can only allow/deny tools by name, external authorization can inspect **tool arguments** and make context-aware decisions. This enables fine-grained, argument-level policy enforcement.
 
 ## Chat with the Agent
 
 In the agent UI, ensure `mcp_agent` is selected from the dropdown menu. Try the following prompts:
 
-| Prompt                                                                             | When                    | Tool Invoked                        | Expected Result | Why?                                                                              |
-| :--------------------------------------------------------------------------------- | :---------------------- | :---------------------------------- | :-------------- | :-------------------------------------------------------------------------------- |
-| What can you do?                                                                   | Any time                | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.                       |
-| What is the sum of 2 and 3?                                                        | Any time                | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend allows the `get-sum` tool.              |
-| Echo back 'hello'.                                                                 | Any time                | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend.                    |
-| Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking | Between 9am and 5pm     | `read_wiki_structure` on remote MCP | ✅ **Success**   | External authorizer allows requests during business hours.                        |
-| Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking | Before 9am or after 5pm | `read_wiki_structure` on remote MCP | ❌ **Failure**   | External authorizer denies requests outside business hours.                       |
-| What's the GitHub repo kubernetes-sigs/kube-agentic-networking?                    | Between 9am and 5pm     | `ask_question` on remote MCP        | ✅ **Success**   | External authorizer allows requests during business hours.                        |
+| Prompt                                                                             | Tool Invoked                        | Expected Result | Why?                                                                              |
+| :--------------------------------------------------------------------------------- | :---------------------------------- | :-------------- | :-------------------------------------------------------------------------------- |
+| What can you do?                                                                   | `tools/list` on both MCPs           | ✅ **Success**   | The default policy allows any user to list available tools.                       |
+| What is the sum of 2 and 3?                                                        | `get-sum` on local MCP              | ✅ **Success**   | The `XAccessPolicy` for the local backend allows the `get-sum` tool.              |
+| Echo back 'hello'.                                                                 | `echo` on local MCP                 | ❌ **Failure**   | The `echo` tool is not in the allowlist for the local backend.                    |
+| Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking | `read_wiki_structure` on remote MCP | ✅ **Success**   | External authorizer allows this repository (in the allowlist).                    |
+| What's the GitHub repo kubernetes-sigs/kube-agentic-networking?                    | `ask_question` on remote MCP        | ✅ **Success**   | External authorizer allows this repository (in the allowlist).                    |
+| Read the wiki structure of the GitHub repo kubernetes-sigs/gateway-api             | `read_wiki_structure` on remote MCP | ✅ **Success**   | External authorizer allows this repository (in the allowlist).                    |
+| What's the GitHub repo kubernetes/kubernetes?                                      | `ask_question` on remote MCP        | ❌ **Failure**   | External authorizer denies this repository (not in the allowlist).                |
+| Read the wiki structure of the GitHub repo cncf/toc                                | `read_wiki_structure` on remote MCP | ❌ **Failure**   | External authorizer denies this repository (not in the allowlist).                |
 
-*Note: The external auth policy applies to **all tools** on the remote MCP backend. Unlike the inline policy (which specifies individual tools), the time-based rule affects access to any remote tool.*
+*Note: The external auth policy applies to **all tools** on the remote MCP backend. Unlike the inline policy (which specifies individual tools), the repository-based rule inspects **tool arguments** to make authorization decisions.*
 
 <details markdown="1">
 <summary style="font-size: 1.5em; font-weight: bold;">🧪 Try Dynamic Policy Updates in Action</summary>
 
-Want to see how changes to the external authorization service take effect? Let's modify the time-based access window!
+Want to see how changes to the external authorization service take effect? Let's modify the allowed repositories!
 
-1. **Update the `AuthConfig`** to allow access only between **10am and 4pm**:
+1. **Update the `AuthConfig`** to allow only **one specific repository**:
 
     ```shell
     kubectl apply -f - <<EOF
@@ -214,11 +220,14 @@ Want to see how changes to the external authorization service take effect? Let's
       hosts:
       - '*'
       authorization:
-        "from-10am-to-4pm":
+        "allowed-repos-only":
           opa:
             rego: |
-              hour := time.clock(input.request.time.seconds*1000000000+input.request.time.nanos)[0]
-              allow { hour >= 10; hour < 16 }
+              allowed_repos := [
+                "kubernetes-sigs/kube-agentic-networking"
+              ]
+              repo := input.metadata.filter_metadata.mcp_proxy.params.arguments.repoName
+              allow { repo == allowed_repos[_] }
     EOF
     ```
 
@@ -226,11 +235,11 @@ Want to see how changes to the external authorization service take effect? Let's
 
 3. **Interact with the Agent again**: Go back to `http://localhost:8081` and try these prompts:
 
-    | Prompt                                                                             | When                       | Tool Invoked                        | Expected Result | Why?                                                         |
-    | :--------------------------------------------------------------------------------- | :------------------------- | :---------------------------------- | :-------------- | :----------------------------------------------------------- |
-    | What is the sum of 2 and 3?                                                        | Any time                   | `get-sum` on local MCP              | ✅ **Success**   | Local backend policy is unchanged (inline allowlist).        |
-    | Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking | Between 10am and 3pm       | `read_wiki_structure` on remote MCP | ✅ **Success**   | External authorizer allows requests during the new window.   |
-    | Read the wiki structure of the GitHub repo kubernetes-sigs/kube-agentic-networking | Before 9-10am or after 4pm | `read_wiki_structure` on remote MCP | ❌ **Failure**   | External authorizer denies requests outside the new window.  |
+    | Prompt                                                                             | Tool Invoked                        | Expected Result | Why?                                                         |
+    | :--------------------------------------------------------------------------------- | :---------------------------------- | :-------------- | :----------------------------------------------------------- |
+    | What is the sum of 2 and 3?                                                        | `get-sum` on local MCP              | ✅ **Success**   | Local backend policy is unchanged (inline allowlist).        |
+    | What's the GitHub repo kubernetes-sigs/kube-agentic-networking?                    | `ask_question` on remote MCP        | ✅ **Success**   | This repository is still in the updated allowlist.           |
+    | Read the wiki structure of the GitHub repo kubernetes-sigs/gateway-api             | `read_wiki_structure` on remote MCP | ❌ **Failure**   | This repository was removed from the allowlist.              |
 
    Observe how the agent's behavior changes based on the updated external authorization rules!
 
@@ -282,10 +291,11 @@ A: The request context sent to the external authorizer depends on your Agentic N
 - Request headers, method, and path
 - Client identity (SPIFFE ID from mTLS)
 - Timestamp
+- **MCP tool call metadata** (tool name, arguments, request ID)
 - Additional attributes
 
-In this quickstart, the external authorization service uses the request timestamp (`input.request.time` in the Rego policy) to make time-based access decisions.
+In this quickstart, the external authorization service uses the **MCP tool call arguments** (`input.metadata.filter_metadata.mcp_proxy.params.arguments` in the Rego policy) to inspect which repository the agent is trying to access and make repository-based access decisions. This demonstrates how external authorization can enforce policies based on tool arguments.
 
 For details on the Envoy external authorization payload, see the [`CheckRequest`](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/auth/v3/external_auth.proto#envoy-v3-api-msg-service-auth-v3-checkrequest) proto message specification.
 
-Authorino bindings to Envoy's external authorization request include `request.headers`, `request.url_path`, `source.principal`, `destination.address`, and several others. See the [`WellKnownAttributes`](https://pkg.go.dev/github.com/kuadrant/authorino/pkg/service#WellKnownAttributes) specification for the full list.
+Authorino bindings to Envoy's external authorization request include `request.headers`, `request.url_path`, `source.principal`, `destination.address`, `metadata.filter_metadata` (for custom metadata like MCP tool calls), and several others. See the [`WellKnownAttributes`](https://pkg.go.dev/github.com/kuadrant/authorino/pkg/service#WellKnownAttributes) specification for the full list.
