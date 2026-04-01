@@ -73,38 +73,48 @@ Before you begin, ensure you have the following:
 - **[Go](https://go.dev/doc/install)** (1.23+)
 - **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
 - **[Helm](https://helm.sh/docs/intro/install/)** (for deploying Authorino)
-- **A HuggingFace token** with ***"Make calls to Inference Providers"*** permission enabled. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one.
-
-> **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
+- **AI Model Provider** (choose one):
+  - **HuggingFace**: A token with ***"Make calls to Inference Providers"*** permission. Follow [this guide](https://huggingface.co/docs/hub/en/security-tokens) to create one. ⚠️ Free-tier accounts have strict monthly rate limits.
+  - **Ollama** (recommended): A local Ollama instance running on your machine. See [Ollama installation guide](https://ollama.ai/download).
 
 ## Quickstart
 
-```shell
-# 1. Clone the repository
-git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
-cd kube-agentic-networking
+1. Clone the repository
 
-# 2. Set your HuggingFace token
-export HF_TOKEN=<your-huggingface-token>
+    ```shell
+    git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
+    cd kube-agentic-networking
+    ```
 
-# 3. Run the external auth quickstart setup
-bash site-src/guides/external-auth-quickstart/run-external-auth-quickstart.sh
+2. Run the external auth quickstart setup (choose one option below)
 
-# 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
-```
+    **Option 1: Using HuggingFace**
+    ```shell
+    export HF_TOKEN=<your-huggingface-token>
+    bash site-src/guides/external-auth-quickstart/run-external-auth-quickstart.sh
+    ```
+
+    **Option 2: Using Ollama** (no API token required)
+    ```shell
+    # Ensure Ollama is running locally with a model pulled (e.g., qwen2.5:7b)
+    # See: https://ollama.ai/download
+    bash site-src/guides/external-auth-quickstart/run-external-auth-quickstart.sh --ollama
+    ```
+
+3. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
 
 ### What the Script Does
 
 The `run-external-auth-quickstart.sh` script performs the following steps:
 
-1. **Runs the base quickstart** by calling [`run-quickstart.sh`](../quickstart/run-quickstart.sh), which sets up:
+1. **Runs the base quickstart** by calling [`run-quickstart.sh`](../quickstart/run-quickstart.sh) (passing along any `--ollama*` flags), which sets up:
    - A local Kubernetes (using Kind)
    - Gateway API and Agentic Networking CRDs
    - The Agentic Networking controller
    - In-cluster MCP server (the `everything` reference server)
    - Network wiring: `Gateway`, `HTTPRoutes`, `XBackends`
    - Sample `XAccessPolicies` for both backends
-   - The AI agent with an Envoy sidecar (configured with the discovered gateway address and SPIFFE identity)
+   - The AI agent with an Envoy sidecar (configured with the discovered gateway address and SPIFFE identity), using either HuggingFace or Ollama as the model provider
    - Port-forwarding to the agent UI on `localhost:8081`
 2. **Deploys the external authorization service**:
    - Installs Authorino Operator (using Helm)
@@ -259,7 +269,7 @@ kind delete cluster --name kan-quickstart
 
 This deletes the entire kind cluster and all resources within it, including the external authorization service and all policies.
 
-> **Note**: If you used `HF_TOKEN` only for this quickstart, you may also want to revoke or delete the token from your [HuggingFace settings](https://huggingface.co/settings/tokens).
+> **Note**: If you used HuggingFace (not Ollama) and created a `HF_TOKEN` only for this quickstart, you may also want to revoke or delete the token from your [HuggingFace settings](https://huggingface.co/settings/tokens).
 
 ## FAQs
 

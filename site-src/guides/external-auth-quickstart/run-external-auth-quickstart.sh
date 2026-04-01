@@ -30,6 +30,9 @@ NAMESPACE="quickstart-ns"
 AUTHORIZER_NAMESPACE="authorino-operator"
 AGENT_UI_URL="http://localhost:8081/dev-ui/?app=mcp_agent"
 
+# Store arguments to pass to base quickstart
+QUICKSTART_ARGS=()
+
 # --- Helper Functions ---
 
 info() {
@@ -51,6 +54,53 @@ check_command() {
   fi
 }
 
+# --- Parse Command Line Arguments ---
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --ollama)
+      QUICKSTART_ARGS+=("--ollama")
+      shift
+      ;;
+    --ollama-url)
+      QUICKSTART_ARGS+=("--ollama-url" "$2")
+      shift 2
+      ;;
+    --ollama-model)
+      QUICKSTART_ARGS+=("--ollama-model" "$2")
+      shift 2
+      ;;
+    --help|-h)
+      echo "Usage: $0 [OPTIONS]"
+      echo ""
+      echo "This script runs the base quickstart and adds external authorization."
+      echo ""
+      echo "Options:"
+      echo "  --ollama              Use Ollama instead of HuggingFace (default: false)"
+      echo "  --ollama-url URL      Ollama base URL (default: http://host.docker.internal:11434)"
+      echo "  --ollama-model MODEL  Ollama model name (default: qwen2.5:7b)"
+      echo "  --help, -h            Show this help message"
+      echo ""
+      echo "Examples:"
+      echo "  # Use HuggingFace (requires HF_TOKEN):"
+      echo "  export HF_TOKEN=<your-token>"
+      echo "  $0"
+      echo ""
+      echo "  # Use Ollama with defaults:"
+      echo "  $0 --ollama"
+      echo ""
+      echo "  # Use Ollama with custom settings:"
+      echo "  $0 --ollama --ollama-url http://192.168.1.100:11434 --ollama-model llama3.2"
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1"
+      echo "Run '$0 --help' for usage information."
+      exit 1
+      ;;
+  esac
+done
+
 # --- Prerequisite Checks ---
 
 info "Checking prerequisites..."
@@ -62,7 +112,7 @@ info "All prerequisites satisfied."
 
 run_base_quickstart() {
   info "Part 1: Running base quickstart setup..."
-  bash "${SCRIPT_ROOT}/site-src/guides/quickstart/run-quickstart.sh"
+  bash "${SCRIPT_ROOT}/site-src/guides/quickstart/run-quickstart.sh" "${QUICKSTART_ARGS[@]}"
 }
 
 # --- Phase 2: Deploy External Authorization Service ---
