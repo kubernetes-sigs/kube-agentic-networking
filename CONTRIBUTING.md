@@ -23,4 +23,4 @@ If your repo has certain guidelines for contribution, put them here ahead of the
 ## Contact Information
 
 - [Slack channel](https://kubernetes.slack.com/archives/C09P6KS6EQZ) (`#sig-network-agentic-networking`)
-- [Mailing List](https://groups.google.com/a/kubernetes.io/g/sig-network)
+- [Mailing List](https://groups.google.com/a/kubernetes.io/g/sig-network) (shared with SIG Network)
