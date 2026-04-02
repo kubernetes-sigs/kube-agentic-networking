@@ -149,7 +149,7 @@ type TelemetryPolicy struct {
 
 type TelemetryPolicySpec struct {
     // Identifies the target resources (Gateway or Namespace) to which this policy attaches (GEP-713).
-    TargetRefs []TargetReference `json:"targetRefs"`
+    TargetRefs []NamespacedPolicyTargetReference `json:"targetRefs"`
 
     // Configuration for distributed tracing options.
     Tracing *TracingConfig `json:"tracing,omitempty"`
