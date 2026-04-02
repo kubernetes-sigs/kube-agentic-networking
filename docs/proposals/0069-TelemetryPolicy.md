@@ -70,6 +70,7 @@ spec:
   
   # 1. Tracing Configuration
   tracing:
+    enabled: true
     provider:
       endpoint: "otel-collector.monitoring.svc:4317"
     samplingRate: 
@@ -85,8 +86,6 @@ spec:
   # 2. Metrics Configuration
   metrics:
     enabled: true
-    provider:
-      type: Prometheus
     overrides:
       - name: "gateway.networking.k8s.io/http/request_count"
         type: Counter
@@ -97,9 +96,7 @@ spec:
   # 3. Access Logging
   accessLogs:
     enabled: true
-    format: JSON
     matches: # Conditional logging
-      - path: "/api/v1/sensitive"
       - cel: "response.code >= 500" # CEL-based filtering for errors
     fields: # Configure specific fields to include
       - "start_time"
@@ -163,6 +160,10 @@ type TelemetryPolicySpec struct {
 // --- Tracing Types ---
 
 type TracingConfig struct {
+
+    // Global switch to enable or disable tracing.
+    Enabled bool `json:"enabled"`
+
     // Specifies the tracing backend. Includes type (e.g., "OTLP") and endpoint.
     Provider *TracingProvider `json:"provider,omitempty"`
 
@@ -231,9 +232,6 @@ type AccessLogsConfig struct {
 }
 
 type MatchCondition struct {
-    // Path allows filtering to specific paths.
-    Path string `json:"path,omitempty"`
-
     // CEL provides an expression for advanced filtering (e.g., matching response codes, headers).
     CEL string `json:"cel,omitempty"`
 }
