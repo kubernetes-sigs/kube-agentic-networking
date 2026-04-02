@@ -112,7 +112,7 @@ info "All prerequisites satisfied."
 
 run_base_quickstart() {
   info "Part 1: Running base quickstart setup..."
-  bash "${SCRIPT_ROOT}/site-src/guides/quickstart/run-quickstart.sh" "${QUICKSTART_ARGS[@]}"
+  bash "${SCRIPT_ROOT}/site-src/guides/quickstart/run-quickstart.sh" "${QUICKSTART_ARGS[@]+"${QUICKSTART_ARGS[@]}"}"
 }
 
 # --- Phase 2: Deploy External Authorization Service ---
