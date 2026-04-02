@@ -71,7 +71,6 @@ spec:
   # 1. Tracing Configuration
   tracing:
     provider:
-      type: OTLP # or implementation-specific
       endpoint: "otel-collector.monitoring.svc:4317"
     samplingRate: 
       percent: 5
@@ -79,9 +78,6 @@ spec:
       enabled: true
       samplingRate:
         percent: 50
-    context:
-      - W3C
-      - B3
     customAttributes:
       - attributeName: "env"
         literalValue: "production"
@@ -176,15 +172,11 @@ type TracingConfig struct {
     // Configures whether to respect the sampling decision of the parent span.
     ParentBasedSampling *ParentBasedSampling `json:"parentBasedSampling,omitempty"`
 
-    // Specifies the context propagation formats to use (e.g., W3C, B3, Jaeger).
-    Context []string `json:"context,omitempty"`
-
     // Allows appending custom tags/attributes to spans.
     CustomAttributes []CustomAttribute `json:"customAttributes,omitempty"`
 }
 
 type TracingProvider struct {
-    Type     string `json:"type"`
     Endpoint string `json:"endpoint,omitempty"`
 }
 
@@ -208,15 +200,8 @@ type MetricsConfig struct {
     // Global switch to enable or disable metric generation.
     Enabled bool `json:"enabled"`
 
-    // Specifies the metrics backend (e.g., Prometheus).
-    Provider *MetricsProvider `json:"provider,omitempty"`
-
     // List of configurations to customize specific metric families.
     Overrides []MetricOverride `json:"overrides,omitempty"`
-}
-
-type MetricsProvider struct {
-    Type string `json:"type"`
 }
 
 type MetricOverride struct {
@@ -237,9 +222,6 @@ type Dimension struct {
 type AccessLogsConfig struct {
     // Global switch to enable or disable access logging.
     Enabled bool `json:"enabled"`
-
-    // The format of the logs (e.g., JSON, Text).
-    Format string `json:"format,omitempty"`
 
     // Conditions for logging, allowing filtering to specific paths or events.
     Matches []MatchCondition `json:"matches,omitempty"`
@@ -268,8 +250,8 @@ type MatchCondition struct {
 #### Tracing
 
 * **Sampling**: Supports probabilistic and parent-based sampling.
-* **Propagation**: Explicitly configures propagation formats (W3C TraceContext defaults, option B3, Jaeger, etc.)
 * **Customization**: Allows appending custom tags/attributes to spans.
+* **Propagation**: We assume the W3C TraceContext is used, this cannot be overridden.
 
 #### Metrics
 
@@ -278,10 +260,8 @@ type MatchCondition struct {
 
 #### Logging
 
-* **Flexible Formatting**: Supports both JSON and text formats for compatibility with standard log aggregation stacks.
 * **Smart Filtering**: Reduces noise and cost via CEL-based filtering, allowing logs to be generated only for specific events (e.g., 5xx errors, high latency, or critical paths).
 * **Custom Attributes**: Enables the extraction of specific headers and proxy metadata into log entries.
-* **Sinks**: Defaults to standard container logging (stdout) with extensibility for OTLP or external ports.
 
 ## Comparison with Prior Art
 
