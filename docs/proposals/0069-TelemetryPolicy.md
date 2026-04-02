@@ -292,7 +292,7 @@ type TelemetryPolicyStatus struct {
 
 #### Tracing
 
-* **Sampling**: Supports probabilistic and parent-based sampling.
+* **Sampling**: Trace sampling uses a probabilistic `samplingRate` for incoming requests. An optional `parentBasedSampling` configuration allows for a distinct sampling rate specifically for requests that are already part of a trace.
 * **Customization**: Allows appending custom tags/attributes to spans.
 * **Propagation**: We assume the W3C TraceContext is used, this cannot be overridden.
 
