@@ -23,7 +23,6 @@ import (
 
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
-
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 

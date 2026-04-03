@@ -79,8 +79,9 @@ type Source struct {
 	//   spiffe://<trust_domain>/<workload-identifier>
 	//
 	// The exact workload identifier structure is implementation-specific.
+	// This will likely change in the future.
 	//
-	// spiffe identities for authorization can be derived in various ways by the underlying
+	// SPIFFE identities for authorization can be derived in various ways by the underlying
 	// implementation. Common methods include:
 	// - From peer mTLS certificates: The identity is extracted from the client's
 	//   mTLS certificate presented during connection establishment.
@@ -89,19 +90,14 @@ type Source struct {
 	//   identities (e.g., Service Account, SPIFFE IDs).
 	// - From JWTs or other request-level authentication tokens.
 	//
-	// Note for reviewers: While this GEP primarily focuses on identity-based
-	// authorization where identity is often established at the transport layer,
-	// some implementations might derive identity from authenticated tokens or sources
-	// within the request itself.
-	//
 	// +optional
 	SPIFFE *AuthorizationSourceSPIFFE `json:"spiffe,omitempty"`
 
-	// ServiceAccount specifies a Kubernetes Service Account that is
+	// serviceAccount specifies a Kubernetes Service Account that is
 	// matched by this rule. A request originating from a pod associated with
-	// this serviceaccount will match the rule.
+	// this Service Account will match the rule.
 	//
-	// The ServiceAccount listed here is expected to exist within the same
+	// The Service Account listed here is expected to exist within the same
 	// trust domain as the targeted workload. Cross-trust-domain access should
 	// instead be expressed using the `SPIFFE` field.
 	// +optional

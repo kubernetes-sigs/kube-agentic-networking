@@ -25,7 +25,6 @@ import (
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
-
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v0alpha0"
 )
 
