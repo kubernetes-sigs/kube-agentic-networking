@@ -21,7 +21,6 @@ package fake
 import (
 	rest "k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
-
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v0alpha0"
 )
 

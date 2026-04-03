@@ -20,7 +20,6 @@ package fake
 
 import (
 	gentype "k8s.io/client-go/gentype"
-
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	apiv0alpha0 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v0alpha0"
 )
