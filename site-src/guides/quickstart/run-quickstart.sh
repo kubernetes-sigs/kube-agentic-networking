@@ -34,10 +34,12 @@ GATEWAY_API_VERSION="v1.5.0"
 AGENT_UI_PORT="8081"
 AGENT_UI_URL="http://localhost:${AGENT_UI_PORT}/dev-ui/?app=mcp_agent"
 
-# Default to HuggingFace, can be overridden with --ollama flag
+# Default to HuggingFace, can be overridden with --ollama or --gemini flags
 USE_OLLAMA=false
 OLLAMA_BASE_URL="http://host.docker.internal:11434"
 OLLAMA_MODEL="qwen2.5:7b"
+USE_GEMINI=false
+GEMINI_MODEL="gemini-2.5-flash"
 
 # --- Helper Functions ---
 
@@ -83,6 +85,14 @@ while [[ $# -gt 0 ]]; do
       OLLAMA_MODEL="$2"
       shift 2
       ;;
+    --gemini)
+      USE_GEMINI=true
+      shift
+      ;;
+    --gemini-model)
+      GEMINI_MODEL="$2"
+      shift 2
+      ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
       echo ""
@@ -90,12 +100,18 @@ while [[ $# -gt 0 ]]; do
       echo "  --ollama              Use Ollama instead of HuggingFace (default: false)"
       echo "  --ollama-url URL      Ollama base URL (default: http://host.docker.internal:11434)"
       echo "  --ollama-model MODEL  Ollama model name (default: qwen2.5:7b)"
+      echo "  --gemini              Use Gemini instead of HuggingFace (default: false)"
+      echo "  --gemini-model MODEL  Gemini model name (default: gemini/gemini-2.5-flash)"
       echo "  --help, -h            Show this help message"
       echo ""
       echo "Examples:"
       echo "  # Use HuggingFace (requires HF_TOKEN):"
       echo "  export HF_TOKEN=<your-token>"
       echo "  $0"
+      echo ""
+      echo "  # Use Gemini (requires GOOGLE_API_KEY):"
+      echo "  export GOOGLE_API_KEY=<your-api-key>"
+      echo "  $0 --gemini"
       echo ""
       echo "  # Use Ollama with defaults:"
       echo "  $0 --ollama"
@@ -120,7 +136,18 @@ check_command kubectl
 check_command go
 check_command envsubst
 
-if [[ "${USE_OLLAMA}" == "false" ]]; then
+if [[ "${USE_GEMINI}" == "true" ]]; then
+  if [[ -z "${GOOGLE_API_KEY:-}" ]]; then
+    error "GOOGLE_API_KEY environment variable is not set."
+    echo "  Please export your Gemini API key before running this script:"
+    echo "    export GOOGLE_API_KEY=<your-api-key>"
+    exit 1
+  fi
+  info "Using Gemini model: ${GEMINI_MODEL} (GOOGLE_API_KEY is set)."
+elif [[ "${USE_OLLAMA}" == "true" ]]; then
+  info "Using Ollama model: ${OLLAMA_MODEL} at ${OLLAMA_BASE_URL}"
+  warn "Make sure Ollama is running and accessible at ${OLLAMA_BASE_URL}"
+else
   if [[ -z "${HF_TOKEN:-}" ]]; then
     error "HF_TOKEN environment variable is not set."
     echo "  Please export your HuggingFace token before running this script:"
@@ -129,14 +156,10 @@ if [[ "${USE_OLLAMA}" == "false" ]]; then
     echo "  You need a token with 'Make calls to Inference Providers' permission."
     echo "  See: https://huggingface.co/docs/hub/en/security-tokens"
     echo ""
-    echo "  Alternatively, use --ollama flag to use Ollama instead:"
-    echo "    $0 --ollama"
+    echo "  Alternatively, use --ollama flag or --gemini flag."
     exit 1
   fi
   info "Using HuggingFace model (HF_TOKEN is set)."
-else
-  info "Using Ollama model: ${OLLAMA_MODEL} at ${OLLAMA_BASE_URL}"
-  warn "Make sure Ollama is running and accessible at ${OLLAMA_BASE_URL}"
 fi
 
 info "All prerequisites satisfied."
@@ -273,13 +296,32 @@ deploy_agent() {
     envsubst < "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/sidecar/sidecar-configs.yaml" | kubectl apply -f -
 
   # Configure agent deployment based on model choice
-  if [[ "${USE_OLLAMA}" == "true" ]]; then
+  if [[ "${USE_GEMINI}" == "true" ]]; then
+    info "Configuring agent for Gemini..."
+    # Create Google API key secret (idempotent via dry-run).
+    kubectl create secret generic google-secret -n "${NAMESPACE}" \
+      --from-literal=GOOGLE_API_KEY="${GOOGLE_API_KEY}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+
+    # Patch deployment to use Gemini
+    kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/deployment.yaml"
+    kubectl set env deployment/adk-agent -n "${NAMESPACE}" \
+      HF_MODEL- \
+      HF_TOKEN- \
+      OLLAMA_BASE_URL- \
+      OLLAMA_MODEL- \
+      GEMINI_MODEL="${GEMINI_MODEL}"
+    kubectl set env deployment/adk-agent -n "${NAMESPACE}" \
+      --from=secret/google-secret --keys=GOOGLE_API_KEY
+  elif [[ "${USE_OLLAMA}" == "true" ]]; then
     info "Configuring agent for Ollama..."
     # Patch deployment to use Ollama
     kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/deployment.yaml"
     kubectl set env deployment/adk-agent -n "${NAMESPACE}" \
       HF_MODEL- \
       HF_TOKEN- \
+      GEMINI_MODEL- \
+      GOOGLE_API_KEY- \
       OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
       OLLAMA_MODEL="${OLLAMA_MODEL}"
   else
@@ -291,6 +333,11 @@ deploy_agent() {
 
     # Deploy agent with HF configuration
     kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/adk-agent/deployment.yaml"
+    kubectl set env deployment/adk-agent -n "${NAMESPACE}" \
+      GEMINI_MODEL- \
+      GOOGLE_API_KEY- \
+      OLLAMA_BASE_URL- \
+      OLLAMA_MODEL-
   fi
 
   wait_for_deployment "${NAMESPACE}" "adk-agent"

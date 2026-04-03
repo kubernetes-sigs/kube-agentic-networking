@@ -67,7 +67,11 @@ Before you begin, ensure you have the following:
 
 > **Warning**: Free-tier HuggingFace accounts have strict monthly rate limits, which are easily exceeded.
 
-### Option 2: Ollama (Local)
+### Option 2: Gemini
+- **A Gemini API key** (requires `GOOGLE_API_KEY` environment variable).
+- You can get an API key from [Google AI Studio](https://aistudio.google.com/).
+
+### Option 3: Ollama (Local)
 - **[Ollama](https://ollama.com/)** installed and running locally
 - **Note**: Local models may have slower response times compared to cloud-hosted inference APIs, depending on your hardware (CPU/GPU) and the model size.
 - A model pulled (e.g., `ollama pull qwen2.5:7b`)
@@ -90,7 +94,23 @@ make quickstart
 # 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
 ```
 
-### Option 2: Using Ollama (No HF_TOKEN Required)
+### Option 2: Using Gemini
+
+```shell
+# 1. Clone the repository
+git clone https://github.com/kubernetes-sigs/kube-agentic-networking.git
+cd kube-agentic-networking
+
+# 2. Set your Gemini API key
+export GOOGLE_API_KEY=<your-api-key>
+
+# 3. Run the quickstart setup with Gemini
+make quickstart-gemini
+
+# 4. Open the agent UI at http://localhost:8081/dev-ui/?app=mcp_agent
+```
+
+### Option 3: Using Ollama (No API Token Required)
 
 ```shell
 # 1. Clone the repository
