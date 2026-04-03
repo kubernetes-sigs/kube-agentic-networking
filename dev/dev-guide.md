@@ -22,6 +22,7 @@ These images are provided solely for the [Quickstart Guide](../site-src/guides/q
 - **ADK Agent** (`quickstart-adk-agent`)
   - **Location**: [site-src/guides/quickstart/adk-agent/](../site-src/guides/quickstart/adk-agent/)
   - **How to Build**: `cd site-src/guides/quickstart/adk-agent/ && make build`
+  - **How to Reload in Kind (Local Development only)**: `make dev-reload-agent` from the repository root. This builds the ADK agent image, loads it into the local Kind cluster, and restarts the deployment.
 - **Other Agent Examples**: Located under [site-src/guides/quickstart/additional-agent-examples/](../site-src/guides/quickstart/additional-agent-examples/). Each has its own `Makefile` following the same `make build` pattern.
 
 ## 2. Code Generation
