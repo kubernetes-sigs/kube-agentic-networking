@@ -1,6 +1,7 @@
 ---
 
 ignore: |
+  vendor/
   .github/
   .golangci-kal.yml
   .golangci.yaml

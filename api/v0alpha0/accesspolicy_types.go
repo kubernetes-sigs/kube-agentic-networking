@@ -19,7 +19,6 @@ limitations under the License.
 package v0alpha0
 
 import (
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -208,21 +207,6 @@ type XAccessPolicy struct {
 	// status defines the observed state of AccessPolicy.
 	// +optional
 	Status AccessPolicyStatus `json:"status,omitempty"`
-}
-
-// IsAccepted returns true if the policy has been explicitly accepted for all its targets.
-// A policy is considered accepted only if it has at least one ancestor status populated
-// and ALL ancestors have the 'Accepted' condition set to 'True'.
-func (p *XAccessPolicy) IsAccepted() bool {
-	if len(p.Status.Ancestors) == 0 {
-		return false
-	}
-	for _, ancestor := range p.Status.Ancestors {
-		if !meta.IsStatusConditionTrue(ancestor.Conditions, string(PolicyConditionAccepted)) {
-			return false
-		}
-	}
-	return true
 }
 
 // +kubebuilder:object:root=true

@@ -34,6 +34,7 @@ import (
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0/helpers"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
@@ -123,7 +124,7 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 // It also enqueues the targeted XBackend for finalizer reconciliation.
 // When an AccessPolicy targets a Gateway, that Gateway is enqueued so its finalizer can be re-evaluated on AccessPolicy delete (avoids deadlock).
 func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAccessPolicy) {
-	isAccepted := policy.IsAccepted()
+	isAccepted := helpers.IsAccepted(policy)
 	isDeleting := policy.DeletionTimestamp != nil
 	shouldEnqueueGW := isAccepted || isDeleting
 
@@ -179,7 +180,7 @@ func isGatewayTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionN
 func hasAccessPolicyChanged(oldPolicy, newPolicy *agenticv0alpha0.XAccessPolicy) bool {
 	specChanged := newPolicy.Generation != oldPolicy.Generation || !reflect.DeepEqual(newPolicy.Annotations, oldPolicy.Annotations)
 	deletionTimestampChanged := newPolicy.DeletionTimestamp != oldPolicy.DeletionTimestamp
-	acceptanceChanged := newPolicy.IsAccepted() != oldPolicy.IsAccepted()
+	acceptanceChanged := helpers.IsAccepted(newPolicy) != helpers.IsAccepted(oldPolicy)
 
 	return specChanged || deletionTimestampChanged || acceptanceChanged
 }
