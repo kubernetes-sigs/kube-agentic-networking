@@ -202,6 +202,30 @@ Currently, the `InlineTools` type of [AuthorizationRule](https://github.com/kube
 
 * If an implementation supports allowing `AccessPolicy` to target both `Gateway` and `Backend` objects, it MUST support the evaluation flow described above.
 
+## Future Considerations: Support for DENY Policies
+
+In the future, if `AccessPolicy` is extended to support explicit `DENY` policies (in addition to the current `ExternalAuth` and `InlineTools` mechanisms), the evaluation order should follow the following pattern to ensure safe defaults:
+
+1. **ExternalAuth Policies**: Evaluated first. If any `ExternalAuth` policy matching the request exists and denies it, the request is denied immediately.
+2. **DENY Policies**: Evaluated second. If any `DENY` policy matching the request exists, the request is denied immediately.
+3. **InlineTools Policies**: Evaluated last. If any `InlineTools` policy matching the request exists and allows it, the request is allowed. Otherwise, the request is denied by default.
+
+This ensures that explicit denials take precedence over allows, and external authorization has the first say.
+
+### Summary Table
+
+The following table summarizes the evaluation results for different combinations of policy checks including future DENY policies. Note that evaluation short-circuits as soon as a definitive Deny or Allow is reached.
+
+| Gateway ExternalAuth | Gateway DENY | Gateway InlineTools | Backend ExternalAuth | Backend DENY | Backend InlineTools | Final Result |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Deny** (Any denies) | - | - | - | - | - | **Deny** |
+| **Allow** (All allow) | **Deny** (Any matches) | - | - | - | - | **Deny** |
+| **Allow** (All allow) | **Allow** (No matches) | **Deny** (All deny) | - | - | - | **Deny** |
+| **Allow** (All allow) | **Allow** (No matches) | **Allow** (At least one allows) | **Deny** (Any denies) | - | - | **Deny** |
+| **Allow** (All allow) | **Allow** (No matches) | **Allow** (At least one allows) | **Allow** (All allow) | **Deny** (Any matches) | - | **Deny** |
+| **Allow** (All allow) | **Allow** (No matches) | **Allow** (At least one allows) | **Allow** (All allow) | **Allow** (No matches) | **Deny** (All deny) | **Deny** |
+| **Allow** (All allow) | **Allow** (No matches) | **Allow** (At least one allows) | **Allow** (All allow) | **Allow** (No matches) | **Allow** (At least one allows) | **Allow** |
+
 ## Prior Art
 
 ### Istio Authorization Policy
