@@ -8,16 +8,41 @@ Currently, the [AccessPolicy](https://github.com/kubernetes-sigs/kube-agentic-ne
 
 This has scalability issues when a given Tool Authorization policy needs to be enforced for all the traffic managed by a [Gateway](https://gateway-api.sigs.k8s.io/api-types/gateway/) object.
 
-This proposal allows `AccessPolicy` to target `Gateway` objects, in addition to `Backend` objects with following restrictions:
+This proposal allows `AccessPolicy` to target `Gateway` objects, in addition to `Backend` objects with the following rules and restrictions:
 
-1. A single `AccessPolicy` object targeting a Gateway and a Backend at the same time is NOT allowed.
+## Restrictions and Evaluation Order
 
-1. It is allowed to have `AccessPolicy` objects targeting a `Gateway` object and `AccessPolicy` objects targeting a `Backend` object behind the `Gateway` object. In this case, the `AccessPolicy` objects targeting the `Gateway` object will be evaluated first. Among the `AccessPolicy` objects targeting the `Gateway` object, the [ExternalAuth-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L169) authorization rules matching the request, if exist, will be evaluated first, the request will be denied if the evaluation result of any of the ExternalAuth-type authorization rules is `deny`. If there are no [InlineTools-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L165) authorization rules matching the request, allow the request. If any InlineTools-type authorization rule matching the request exists, allow the request. Otherwise, deny the request.
+### Restrictions
+- **Mutually Exclusive Targets**: A single `AccessPolicy` object targeting a Gateway and a Backend at the same time is **NOT** allowed.
 
+### Coexistence and Evaluation Flow
+It is allowed to have `AccessPolicy` objects targeting a `Gateway` object and `AccessPolicy` objects targeting a `Backend` object behind the `Gateway` object. The evaluation follows a strict hierarchy:
 
-    * If the HTTP request is denied at the gateway-level evaluation, the `AccessPolicy` objects targeting the `Backend` object will NOT be evaluated.
+#### 1. Gateway-Level Evaluation (First)
+The `AccessPolicy` objects targeting the `Gateway` object are evaluated first.
 
-    * If the HTTP request is allowed at the gateway-level evaluation, the `AccessPolicy` objects targeting the `Backend` object will be evaluated. Among the `AccessPolicy` objects targeting the `Backend` object, the [ExternalAuth-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L169) authorization rules matching the request, if exist, will be evaluated first, the request will be denied if the evaluation result of any of the ExternalAuth-type authorization rules is `deny`. If there are no [InlineTools-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L165) authorization rules matching the request, allow the request. If any InlineTools-type authorization rule matching the request exists, allow the request. Otherwise, deny the request.
+- **[ExternalAuth-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L169) Rules**:
+    - Evaluated first.
+    - If **any** ExternalAuth rule matching the request returns `deny`, the request is denied immediately.
+- **[InlineTools-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L165) Rules**:
+    - Evaluated only if all ExternalAuth rules (if any) allowed the request.
+    - If there are **no** InlineTools rules matching the request, the request is allowed.
+    - If **any** InlineTools rule matching the request exists and allows it, the request is allowed.
+    - Otherwise, the request is denied.
+
+If the request is denied at the gateway level, evaluation stops, and Backend-level policies are **NOT** evaluated.
+
+#### 2. Backend-Level Evaluation (Second)
+If the request is allowed at the gateway level, the `AccessPolicy` objects targeting the `Backend` object are evaluated using the same logic:
+
+- **[ExternalAuth-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L169) Rules**:
+    - Evaluated first.
+    - If **any** ExternalAuth rule matching the request returns `deny`, the request is denied immediately.
+- **[InlineTools-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L165) Rules**:
+    - Evaluated only if all ExternalAuth rules (if any) allowed the request.
+    - If there are **no** InlineTools rules matching the request, the request is allowed.
+    - If **any** InlineTools rule matching the request exists and allows it, the request is allowed.
+    - Otherwise, the request is denied.
 
 ## Summary Table
 
@@ -122,18 +147,25 @@ graph TD
 
 When a request comes to `payment-service` through `prod-gateway`:
 
-1.  **Gateway Level Checks:**
-    *   First, ExternalAuth policies are evaluated: `gateway-policy-external-auth-1` and `gateway-policy-external-auth-2`. If any of them denies the request, the request is rejected immediately, and subsequent policies are skipped. If all of them allow the request, proceed to the next evaluation phase.
-        * The evaluation order of these ExternalAuth policies does not matter. An implementation may choose to evaluate them in any order.
-    *   Second, InlineTools policies are evaluated: `gateway-policy-inline-tools-1` and `gateway-policy-inline-tools-2`. If any of them allows the request, proceed to the next evaluation phase. If all of them deny the request, the request is rejected immediately, and the Backend-level policies are skipped.
-        * The evaluation order of these InlineTools policies does not matter. An implementation may choose to evaluate them in any order.
+#### 1. Gateway Level Checks
+- **ExternalAuth Policies**: `gateway-policy-external-auth-1` and `gateway-policy-external-auth-2` are evaluated.
+    - If **any** denies, the request is rejected immediately.
+    - If **all** allow, proceed.
+    - *Note: Evaluation order among these policies does not matter.*
+- **InlineTools Policies**: `gateway-policy-inline-tools-1` and `gateway-policy-inline-tools-2` are evaluated.
+    - If **any** allows, proceed to Backend level.
+    - If **all** deny, the request is rejected immediately.
+    - *Note: Evaluation order among these policies does not matter.*
 
-2.  **Backend Level Checks:**
-    *   First, ExternalAuth policies are evaluated: `backend-policy-external-auth-1` and `backend-policy-external-auth-2`. If any of them denies the request, the request is rejected immediately, and subsequent policies are skipped. If all of them allow the request, proceed to the next evaluation phase.
-        * The evaluation order of these ExternalAuth policies does not matter. An implementation may choose to evaluate them in any order.
-    *   Second, InlineTools policies are evaluated: `backend-policy-inline-tools-1` and `backend-policy-inline-tools-2`. If any of them allows the request, allow the request. If all of them deny the request, deny the request.
-        * The evaluation order of these InlineTools policies does not matter. An implementation may choose to evaluate them in any order.
-
+#### 2. Backend Level Checks
+- **ExternalAuth Policies**: `backend-policy-external-auth-1` and `backend-policy-external-auth-2` are evaluated.
+    - If **any** denies, the request is rejected immediately.
+    - If **all** allow, proceed.
+    - *Note: Evaluation order among these policies does not matter.*
+- **InlineTools Policies**: `backend-policy-inline-tools-1` and `backend-policy-inline-tools-2` are evaluated.
+    - If **any** allows, the request is allowed.
+    - If **all** deny, the request is denied.
+    - *Note: Evaluation order among these policies does not matter.*
 
 
 ## API Changes
