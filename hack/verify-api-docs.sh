@@ -22,6 +22,11 @@ SCRIPT_ROOT=$(dirname "${BASH_SOURCE}")/..
 
 make -C "$SCRIPT_ROOT" api-ref-docs
 
+if ! grep -q "Resource Types" "${SCRIPT_ROOT}/site-src/reference/spec.md"; then
+	echo "Error: Generated API reference appears to be empty or broken (missing 'Resource Types')."
+	exit 1
+fi
+
 if git status -s "${SCRIPT_ROOT}/site-src/reference" 2>&1 | grep -E -q '^\s?[MADRCU\?]'
 then
 	echo "Uncommitted changes or new files in generated API reference documentation (site-src/reference):"
