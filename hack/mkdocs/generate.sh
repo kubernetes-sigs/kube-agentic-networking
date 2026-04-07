@@ -34,18 +34,7 @@ declare -a arr=(
     "main"
 )
 
-# Create a temporary directory for the script.
-# This directory will be cleaned up automatically on script exit.
-SCRIPT_TMP_DIR=$(mktemp -d)
-trap 'rm -rf "${SCRIPT_TMP_DIR}"' EXIT
-
 for i in "${arr[@]}"; do
-    tmpdir=$(mktemp -d --tmpdir="${SCRIPT_TMP_DIR}")
-
-    # Use the current api directory instead of fetching from remote,
-    # which is required for CI (Prow) to verify PR changes correctly.
-    cp -r api ${tmpdir}/api
-
     # Start removing any "release-" prefix from docpath
     docpath=${i#"release-"}
     # If the release is "main" simply remove it
@@ -53,7 +42,7 @@ for i in "${arr[@]}"; do
 	mkdir -p "${PWD}/site-src/reference/${docpath}"
 
     ${GOBIN}/crd-ref-docs \
-        --source-path=${tmpdir}/api \
+        --source-path=api \
         --config=crd-ref-docs.yaml \
         --renderer=markdown \
         --output-path=${PWD}/site-src/reference/${docpath}/spec.md
