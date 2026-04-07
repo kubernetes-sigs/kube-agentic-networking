@@ -51,9 +51,9 @@ The following table summarizes the evaluation results for different combinations
 | Gateway ExternalAuth | Gateway InlineTools | Backend ExternalAuth | Backend InlineTools | Final Result |
 | :--- | :--- | :--- | :--- | :--- |
 | **Deny** (Any denies) | - | - | - | **Deny** |
-| **Allow** (All allow) | **Deny** (All deny) | - | - | **Deny** |
+| **Allow** (All allow) | **Deny** (none allows) | - | - | **Deny** |
 | **Allow** (All allow) | **Allow** (At least one allows) | **Deny** (Any denies) | - | **Deny** |
-| **Allow** (All allow) | **Allow** (At least one allows) | **Allow** (All allow) | **Deny** (All deny) | **Deny** |
+| **Allow** (All allow) | **Allow** (At least one allows) | **Allow** (All allow) | **Deny** (none allows) | **Deny** |
 | **Allow** (All allow) | **Allow** (At least one allows) | **Allow** (All allow) | **Allow** (At least one allows) | **Allow** |
 
 ## Example
@@ -154,7 +154,7 @@ When a request comes to `payment-service` through `prod-gateway`:
     - *Note: Evaluation order among these policies does not matter.*
 - **InlineTools Policies**: `gateway-policy-inline-tools-1` and `gateway-policy-inline-tools-2` are evaluated.
     - If **any** allows, proceed to Backend level.
-    - If **all** deny, the request is rejected immediately.
+    - If **none** allows, the request is rejected immediately.
     - *Note: Evaluation order among these policies does not matter.*
 
 #### 2. Backend Level Checks
@@ -164,7 +164,7 @@ When a request comes to `payment-service` through `prod-gateway`:
     - *Note: Evaluation order among these policies does not matter.*
 - **InlineTools Policies**: `backend-policy-inline-tools-1` and `backend-policy-inline-tools-2` are evaluated.
     - If **any** allows, the request is allowed.
-    - If **all** deny, the request is denied.
+    - If **none** allows, the request is denied.
     - *Note: Evaluation order among these policies does not matter.*
 
 
