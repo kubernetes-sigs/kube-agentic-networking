@@ -124,9 +124,9 @@ func TestValidateXAccessPolicy(t *testing.T) {
 		{
 			desc: "rule name too long",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
-				p.Spec.Rules[0].Name = strings.Repeat("a", 254)
+				p.Spec.Rules[0].Name = strings.Repeat("a", 64)
 			},
-			wantErrors: []string{"may not be more than 253 bytes"},
+			wantErrors: []string{"may not be more than 63 bytes"},
 		},
 		{
 			desc: "too many targets",

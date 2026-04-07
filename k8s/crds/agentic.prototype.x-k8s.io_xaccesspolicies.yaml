@@ -318,7 +318,7 @@ spec:
                         rule: '!(has(self.tools) && has(self.externalAuth))'
                     name:
                       description: Name specifies the name of the rule.
-                      maxLength: 253
+                      maxLength: 63
                       minLength: 1
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                       type: string
