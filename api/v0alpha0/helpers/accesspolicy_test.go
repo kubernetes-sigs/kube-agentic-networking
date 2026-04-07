@@ -14,34 +14,36 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v0alpha0
+package helpers
 
 import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
-func TestXAccessPolicyIsAccepted(t *testing.T) {
+func TestIsXAccessPolicyAccepted(t *testing.T) {
 	tests := []struct {
 		name     string
-		status   AccessPolicyStatus
+		status   v0alpha0.AccessPolicyStatus
 		expected bool
 	}{
 		{
 			name:     "no ancestors (empty status)",
-			status:   AccessPolicyStatus{},
+			status:   v0alpha0.AccessPolicyStatus{},
 			expected: false,
 		},
 		{
 			name: "all ancestors accepted",
-			status: AccessPolicyStatus{
+			status: v0alpha0.AccessPolicyStatus{
 				Ancestors: []gwapiv1.PolicyAncestorStatus{
 					{
 						Conditions: []metav1.Condition{
 							{
-								Type:   string(PolicyConditionAccepted),
+								Type:   string(v0alpha0.PolicyConditionAccepted),
 								Status: metav1.ConditionTrue,
 							},
 						},
@@ -52,12 +54,12 @@ func TestXAccessPolicyIsAccepted(t *testing.T) {
 		},
 		{
 			name: "one ancestor rejected",
-			status: AccessPolicyStatus{
+			status: v0alpha0.AccessPolicyStatus{
 				Ancestors: []gwapiv1.PolicyAncestorStatus{
 					{
 						Conditions: []metav1.Condition{
 							{
-								Type:   string(PolicyConditionAccepted),
+								Type:   string(v0alpha0.PolicyConditionAccepted),
 								Status: metav1.ConditionTrue,
 							},
 						},
@@ -65,7 +67,7 @@ func TestXAccessPolicyIsAccepted(t *testing.T) {
 					{
 						Conditions: []metav1.Condition{
 							{
-								Type:   string(PolicyConditionAccepted),
+								Type:   string(v0alpha0.PolicyConditionAccepted),
 								Status: metav1.ConditionFalse,
 							},
 						},
@@ -76,7 +78,7 @@ func TestXAccessPolicyIsAccepted(t *testing.T) {
 		},
 		{
 			name: "no accepted condition type present",
-			status: AccessPolicyStatus{
+			status: v0alpha0.AccessPolicyStatus{
 				Ancestors: []gwapiv1.PolicyAncestorStatus{
 					{
 						Conditions: []metav1.Condition{
@@ -94,11 +96,11 @@ func TestXAccessPolicyIsAccepted(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &XAccessPolicy{
+			p := &v0alpha0.XAccessPolicy{
 				Status: tt.status,
 			}
-			if got := p.IsAccepted(); got != tt.expected {
-				t.Errorf("XAccessPolicy.IsAccepted() = %v, want %v", got, tt.expected)
+			if got := IsXAccessPolicyAccepted(p); got != tt.expected {
+				t.Errorf("IsXAccessPolicyAccepted() = %v, want %v", got, tt.expected)
 			}
 		})
 	}

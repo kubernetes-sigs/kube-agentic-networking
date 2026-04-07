@@ -31,6 +31,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0/helpers"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -206,7 +207,7 @@ func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name st
 	var policies []*agenticv0alpha0.XAccessPolicy
 	for _, accessPolicy := range allAccessPolicies {
 		// Only consider policies that have been accepted by the controller.
-		if !accessPolicy.IsAccepted() {
+		if !helpers.IsXAccessPolicyAccepted(accessPolicy) {
 			continue
 		}
 
