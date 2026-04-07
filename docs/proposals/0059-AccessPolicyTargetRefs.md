@@ -26,9 +26,9 @@ The `AccessPolicy` objects targeting the `Gateway` object are evaluated first.
     - If **any** ExternalAuth rule matching the request returns `deny`, the request is denied immediately.
 - **[InlineTools-type](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/cf8c85b85d067657a5dce7b87270f8099f1e302c/api/v0alpha0/accesspolicy_types.go#L165) Rules**:
     - Evaluated only if all ExternalAuth rules (if any) allowed the request.
-    - If there are **no** InlineTools rules matching the request, the request is allowed.
-    - If **any** InlineTools rule matching the request exists and allows it, the request is allowed.
-    - Otherwise, the request is denied.
+    - If there are **no** InlineTools rules matching the request, proceed to Backend-level evaluation.
+    - If **any** InlineTools rule matching the request exists and allows it, proceed to Backend-level evaluation.
+    - Otherwise, the request is denied immediately.
 
 If the request is denied at the gateway level, evaluation stops, and Backend-level policies are **NOT** evaluated.
 
