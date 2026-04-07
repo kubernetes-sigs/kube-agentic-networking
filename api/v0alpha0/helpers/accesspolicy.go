@@ -22,10 +22,10 @@ import (
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
-// IsAccepted returns true if the policy has been explicitly accepted for all its targets.
+// IsXAccessPolicyAccepted returns true if the policy has been explicitly accepted for all its targets.
 // A policy is considered accepted only if it has at least one ancestor status populated
 // and ALL ancestors have the 'Accepted' condition set to 'True'.
-func IsAccepted(p *v0alpha0.XAccessPolicy) bool {
+func IsXAccessPolicyAccepted(p *v0alpha0.XAccessPolicy) bool {
 	if len(p.Status.Ancestors) == 0 {
 		return false
 	}

@@ -207,7 +207,7 @@ func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name st
 	var policies []*agenticv0alpha0.XAccessPolicy
 	for _, accessPolicy := range allAccessPolicies {
 		// Only consider policies that have been accepted by the controller.
-		if !helpers.IsAccepted(accessPolicy) {
+		if !helpers.IsXAccessPolicyAccepted(accessPolicy) {
 			continue
 		}
 

@@ -25,7 +25,7 @@ import (
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
-func TestIsAccepted(t *testing.T) {
+func TestIsXAccessPolicyAccepted(t *testing.T) {
 	tests := []struct {
 		name     string
 		status   v0alpha0.AccessPolicyStatus
@@ -99,8 +99,8 @@ func TestIsAccepted(t *testing.T) {
 			p := &v0alpha0.XAccessPolicy{
 				Status: tt.status,
 			}
-			if got := IsAccepted(p); got != tt.expected {
-				t.Errorf("IsAccepted() = %v, want %v", got, tt.expected)
+			if got := IsXAccessPolicyAccepted(p); got != tt.expected {
+				t.Errorf("IsXAccessPolicyAccepted() = %v, want %v", got, tt.expected)
 			}
 		})
 	}

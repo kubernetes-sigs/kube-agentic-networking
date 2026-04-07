@@ -124,7 +124,7 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 // It also enqueues the targeted XBackend for finalizer reconciliation.
 // When an AccessPolicy targets a Gateway, that Gateway is enqueued so its finalizer can be re-evaluated on AccessPolicy delete (avoids deadlock).
 func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv0alpha0.XAccessPolicy) {
-	isAccepted := helpers.IsAccepted(policy)
+	isAccepted := helpers.IsXAccessPolicyAccepted(policy)
 	isDeleting := policy.DeletionTimestamp != nil
 	shouldEnqueueGW := isAccepted || isDeleting
 
@@ -180,7 +180,7 @@ func isGatewayTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionN
 func hasAccessPolicyChanged(oldPolicy, newPolicy *agenticv0alpha0.XAccessPolicy) bool {
 	specChanged := newPolicy.Generation != oldPolicy.Generation || !reflect.DeepEqual(newPolicy.Annotations, oldPolicy.Annotations)
 	deletionTimestampChanged := newPolicy.DeletionTimestamp != oldPolicy.DeletionTimestamp
-	acceptanceChanged := helpers.IsAccepted(newPolicy) != helpers.IsAccepted(oldPolicy)
+	acceptanceChanged := helpers.IsXAccessPolicyAccepted(newPolicy) != helpers.IsXAccessPolicyAccepted(oldPolicy)
 
 	return specChanged || deletionTimestampChanged || acceptanceChanged
 }
