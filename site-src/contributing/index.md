@@ -39,7 +39,7 @@ Bug reports should be filed as [GitHub Issues](https://github.com/kubernetes-sig
 
 ## Meetings
 
-Our community meetings are held weekly on **Thursday at 4PM UTC** ([convert to your timezone](http://www.thetimezoneconverter.com/?t=4PM&tz=UTC)).
+Our community meetings are held weekly on Thursday at 8:00 AM PT (Pacific Time) ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=08%3A00&tz=PT%20%28Pacific%20Time%29)).
 
 - [Meeting Notes](https://docs.google.com/document/d/1EQET_VWe_IAINyQhVj-wduZg99gBaObpz9612eZ1iYg/edit?tab=t.0#heading=h.q1zi45aa3n69)
 - [Zoom (client) Meeting Link](https://zoom.us/j/92037420986)
