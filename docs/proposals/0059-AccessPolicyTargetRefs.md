@@ -279,19 +279,19 @@ Linkerd's proxy makes an authorization decision for every incoming request using
 
     * YES `Server` exists: Proceed to step 2.
 
-1. Check for an `HTTPRoute`:
+2. Check for an `HTTPRoute`:
 
     * If the request matches a defined `HTTPRoute` (e.g., a specific path like `/admin`), only `AuthorizationPolicy` targeting that specific route are checked.
 
     * If no `HTTPRoute` matches (or none are defined), Linkerd checks policies targeting the `Server` itself.
 
-1. Final Verdict:
+3. Final Verdict:
 
     * If any matching policy allows the request: ALLOW.
 
     * If no policies match or the client fails authentication: DENY (HTTP 403 for HTTP traffic, or TCP connection refusal).
 
-1. When no `Server` resource is defined for a port, Linkerd looks at the `config.linkerd.io/default-inbound-policy` annotation (checked from Pod → Namespace → Cluster level).
+When no `Server` resource is defined for a port, Linkerd looks at the `config.linkerd.io/default-inbound-policy` annotation (checked from Pod → Namespace → Cluster level).
 
 #### Multi-Policy Interaction (AND vs. OR)
 
