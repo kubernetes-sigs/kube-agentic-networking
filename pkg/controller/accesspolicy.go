@@ -233,7 +233,7 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 
 	// 3. Update status for all targets based on the overall result.
 	for _, targetRef := range policy.Spec.TargetRefs {
-		reason := gwapiv1.PolicyConditionReason("Accepted")
+		reason := agenticv0alpha0.PolicyReasonAccepted
 		message := "AccessPolicy accepted for target"
 
 		if !shouldAccept {
