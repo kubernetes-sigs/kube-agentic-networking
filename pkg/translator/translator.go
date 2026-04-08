@@ -25,6 +25,7 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	httpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	envoyproxytypes "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
@@ -71,6 +72,7 @@ type Translator struct {
 	namespaceLister            corev1listers.NamespaceLister
 	serviceLister              corev1listers.ServiceLister
 	secretLister               corev1listers.SecretLister
+	configMapLister            corev1listers.ConfigMapLister
 	gatewayLister              gatewaylisters.GatewayLister
 	httprouteLister            gatewaylisters.HTTPRouteLister
 	referenceGrantLister       gatewaylistersv1beta1.ReferenceGrantLister // optional, for Service ref cross-namespace validation
@@ -85,6 +87,7 @@ func New(
 	namespaceLister corev1listers.NamespaceLister,
 	serviceLister corev1listers.ServiceLister,
 	secretLister corev1listers.SecretLister,
+	configMapLister corev1listers.ConfigMapLister,
 	gatewayLister gatewaylisters.GatewayLister,
 	httpRouteLister gatewaylisters.HTTPRouteLister,
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister,
@@ -98,6 +101,7 @@ func New(
 		namespaceLister,
 		serviceLister,
 		secretLister,
+		configMapLister,
 		gatewayLister,
 		httpRouteLister,
 		referenceGrantLister,
@@ -163,6 +167,9 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	envoyRoutes := []envoyproxytypes.Resource{}
 	allListenerStatuses := make(map[gatewayv1.SectionName]gatewayv1.ListenerStatus)
 
+	envoySecrets := []envoyproxytypes.Resource{}
+	seenSecrets := make(map[string]bool)
+
 	// 3. Build Envoy Clusters for any external auth configs referenced by AccessPolicies
 	envoyClusters := buildExtAuthzBackendClusters(t.accessPolicyLister)
 
@@ -224,6 +231,162 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 					Message:            "All references resolved",
 					ObservedGeneration: gateway.Generation,
 				})
+			}
+
+			// secret extraction
+			if listener.Protocol == gatewayv1.HTTPSProtocolType {
+				var certRef *gatewayv1.SecretObjectReference
+				var caRef *gatewayv1.ObjectReference
+
+				if listener.TLS != nil && len(listener.TLS.CertificateRefs) > 0 {
+					// TODO: should we support mutiple certs?
+					certRef = &listener.TLS.CertificateRefs[0]
+				}
+
+				if gateway.Spec.TLS != nil && gateway.Spec.TLS.Frontend != nil {
+					var matchedPort bool
+					for _, p := range gateway.Spec.TLS.Frontend.PerPort {
+						if p.Port == listener.Port {
+							if p.TLS.Validation != nil && len(p.TLS.Validation.CACertificateRefs) > 0 {
+								// TODO: should we support mutiple CAs?
+								caRef = &p.TLS.Validation.CACertificateRefs[0]
+							}
+							matchedPort = true
+							break
+						}
+					}
+					if !matchedPort && gateway.Spec.TLS.Frontend.Default.Validation != nil && len(gateway.Spec.TLS.Frontend.Default.Validation.CACertificateRefs) > 0 {
+						// TODO: should we support mutiple CAs?
+						caRef = &gateway.Spec.TLS.Frontend.Default.Validation.CACertificateRefs[0]
+					}
+				}
+
+				if certRef != nil && caRef == nil {
+					meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+						Type:               string(gatewayv1.ListenerConditionProgrammed),
+						Status:             metav1.ConditionFalse,
+						Reason:             "InvalidCACertificateRef",
+						Message:            "CertificateRefs provided without FrontendValidation.CACertificateRefs",
+						ObservedGeneration: gateway.Generation,
+					})
+					allListenerStatuses[listener.Name] = listenerStatus
+					continue
+				}
+
+				certValid := true
+				caValid := true
+
+				if certRef != nil {
+					ns := gateway.Namespace
+					if certRef.Namespace != nil {
+						ns = string(*certRef.Namespace)
+					}
+					secretName := string(certRef.Name)
+					sdsName := fmt.Sprintf("%s-%s", ns, secretName)
+
+					secret, err := t.secretLister.Secrets(ns).Get(secretName)
+					if err != nil {
+						meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+							Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+							Status:             metav1.ConditionFalse,
+							Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+							Message:            fmt.Sprintf("Failed to get secret %s: %v", secretName, err),
+							ObservedGeneration: gateway.Generation,
+						})
+						certValid = false
+					} else {
+						certBytes, hasCert := secret.Data["tls.crt"]
+						keyBytes, hasKey := secret.Data["tls.key"]
+						if !hasCert || !hasKey {
+							meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+								Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+								Status:             metav1.ConditionFalse,
+								Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+								Message:            fmt.Sprintf("Secret %s missing tls.crt or tls.key", secretName),
+								ObservedGeneration: gateway.Generation,
+							})
+							certValid = false
+						} else if !seenSecrets[sdsName] {
+							envoySecret := &tlsv3.Secret{
+								Name: sdsName,
+								Type: &tlsv3.Secret_TlsCertificate{
+									TlsCertificate: &tlsv3.TlsCertificate{
+										CertificateChain: &corev3.DataSource{
+											Specifier: &corev3.DataSource_InlineBytes{InlineBytes: certBytes},
+										},
+										PrivateKey: &corev3.DataSource{
+											Specifier: &corev3.DataSource_InlineBytes{InlineBytes: keyBytes},
+										},
+									},
+								},
+							}
+							envoySecrets = append(envoySecrets, envoySecret)
+							seenSecrets[sdsName] = true
+						}
+					}
+				}
+
+				if caRef != nil {
+					ns := gateway.Namespace
+					if caRef.Namespace != nil {
+						ns = string(*caRef.Namespace)
+					}
+					configMapName := string(caRef.Name)
+					sdsName := fmt.Sprintf("%s-%s", ns, configMapName)
+
+					if caRef.Kind != "" && caRef.Kind != "ConfigMap" {
+						meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+							Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+							Status:             metav1.ConditionFalse,
+							Reason:             "InvalidCACertificateKind",
+							Message:            fmt.Sprintf("CACertificateRef kind %s is not supported, only ConfigMap", caRef.Kind),
+							ObservedGeneration: gateway.Generation,
+						})
+						caValid = false
+					} else {
+						cm, err := t.configMapLister.ConfigMaps(ns).Get(configMapName)
+						if err != nil {
+							meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+								Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+								Status:             metav1.ConditionFalse,
+								Reason:             "InvalidCACertificateRef",
+								Message:            fmt.Sprintf("Failed to get configmap %s: %v", configMapName, err),
+								ObservedGeneration: gateway.Generation,
+							})
+							caValid = false
+						} else {
+							caStr, hasCA := cm.Data["ca.crt"]
+							if !hasCA {
+								meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+									Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+									Status:             metav1.ConditionFalse,
+									Reason:             "InvalidCACertificateRef",
+									Message:            fmt.Sprintf("ConfigMap %s missing ca.crt", configMapName),
+									ObservedGeneration: gateway.Generation,
+								})
+								caValid = false
+							} else if !seenSecrets[sdsName] {
+								envoySecret := &tlsv3.Secret{
+									Name: sdsName,
+									Type: &tlsv3.Secret_ValidationContext{
+										ValidationContext: &tlsv3.CertificateValidationContext{
+											TrustedCa: &corev3.DataSource{
+												Specifier: &corev3.DataSource_InlineBytes{InlineBytes: []byte(caStr)},
+											},
+										},
+									},
+								}
+								envoySecrets = append(envoySecrets, envoySecret)
+								seenSecrets[sdsName] = true
+							}
+						}
+					}
+				}
+
+				if !certValid || !caValid {
+					allListenerStatuses[listener.Name] = listenerStatus
+					continue
+				}
 			}
 
 			//nolint:exhaustive // Other protocols such as GRPCRoutes are currently not supported
@@ -371,6 +534,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			resourcev3.ListenerType: finalEnvoyListeners,
 			resourcev3.RouteType:    envoyRoutes,
 			resourcev3.ClusterType:  clustersSlice,
+			resourcev3.SecretType:   envoySecrets,
 		}, orderedStatuses,
 		httpRouteStatuses, nil, nil
 }

@@ -67,6 +67,9 @@ type coreResources struct {
 
 	secretLister corev1listers.SecretLister
 	secretSynced cache.InformerSynced
+
+	configMapLister corev1listers.ConfigMapLister
+	configMapSynced cache.InformerSynced
 }
 
 type gatewayResources struct {
@@ -122,6 +125,7 @@ func New(
 	namespaceInformer corev1informers.NamespaceInformer,
 	serviceInformer corev1informers.ServiceInformer,
 	secretInformer corev1informers.SecretInformer,
+	configMapInformer corev1informers.ConfigMapInformer,
 	gatewayClassInformer gatewayinformers.GatewayClassInformer,
 	gatewayInformer gatewayinformers.GatewayInformer,
 	httprouteInformer gatewayinformers.HTTPRouteInformer,
@@ -136,13 +140,15 @@ func New(
 
 	c := &Controller{
 		core: coreResources{
-			client:       kubeClientSet,
-			nsLister:     namespaceInformer.Lister(),
-			nsSynced:     namespaceInformer.Informer().HasSynced,
-			svcLister:    serviceInformer.Lister(),
-			svcSynced:    serviceInformer.Informer().HasSynced,
-			secretLister: secretInformer.Lister(),
-			secretSynced: secretInformer.Informer().HasSynced,
+			client:          kubeClientSet,
+			nsLister:        namespaceInformer.Lister(),
+			nsSynced:        namespaceInformer.Informer().HasSynced,
+			svcLister:       serviceInformer.Lister(),
+			svcSynced:       serviceInformer.Informer().HasSynced,
+			secretLister:    secretInformer.Lister(),
+			secretSynced:    secretInformer.Informer().HasSynced,
+			configMapLister: configMapInformer.Lister(),
+			configMapSynced: configMapInformer.Informer().HasSynced,
 		},
 		gateway: gatewayResources{
 			client:               gwClientSet,
@@ -184,6 +190,7 @@ func New(
 		namespaceInformer.Lister(),
 		serviceInformer.Lister(),
 		secretInformer.Lister(),
+		configMapInformer.Lister(),
 		gatewayInformer.Lister(),
 		httprouteInformer.Lister(),
 		referenceGrantInformer.Lister(),
@@ -233,6 +240,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		c.core.nsSynced,
 		c.core.svcSynced,
 		c.core.secretSynced,
+		c.core.configMapSynced,
 		c.gateway.gatewayClassSynced,
 		c.gateway.gatewaySynced,
 		c.gateway.httprouteSynced,

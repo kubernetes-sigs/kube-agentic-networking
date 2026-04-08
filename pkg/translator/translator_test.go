@@ -56,6 +56,8 @@ type expectedResult struct {
 	routes []expectedRoute
 	// clusters is the list of expected Envoy Cluster names.
 	clusters []string
+	// secrets is the list of expected Envoy Secret names.
+	secrets []string
 }
 
 type expectedListener struct {
@@ -69,6 +71,10 @@ type expectedListener struct {
 	maxBackendPolicies int
 	// conditions are the expected status conditions for this listener.
 	conditions []metav1.Condition
+	// expectedIdentitySDS is the expected name of the identity SDS secret config.
+	expectedIdentitySDS string
+	// expectedTrustSDS is the expected name of the trust SDS secret config.
+	expectedTrustSDS string
 }
 
 type expectedRoute struct {
@@ -89,17 +95,19 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 	trustDomain := "cluster.local"
 
 	tests := []struct {
-		name     string
-		gw       *gatewayv1.Gateway
-		backend  *agenticv0alpha0.XBackend
-		route    *gatewayv1.HTTPRoute
-		policies []*agenticv0alpha0.XAccessPolicy
-		mcpSvc   *corev1.Service
-		expected expectedResult
+		name       string
+		gw         *gatewayv1.Gateway
+		backend    *agenticv0alpha0.XBackend
+		route      *gatewayv1.HTTPRoute
+		policies   []*agenticv0alpha0.XAccessPolicy
+		mcpSvc     *corev1.Service
+		secrets    []runtime.Object
+		configMaps []runtime.Object
+		expected   expectedResult
 	}{
 		{
 			name:    "Basic mTLS and RBAC Translation",
-			gw:      newTestGateway("agentic-net-gateway", ns),
+			gw:      newTestGateway("agentic-net-gateway", ns, nil, nil),
 			backend: newTestBackend("local-mcp-backend", ns),
 			route:   newTestHTTPRoute("httproute-local-mcp", ns, "agentic-net-gateway", "local-mcp-backend"),
 			policies: []*agenticv0alpha0.XAccessPolicy{
@@ -157,7 +165,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 		},
 		{
 			name:    "Multiple Policies Targeting Gateway and Backend",
-			gw:      newTestGateway("multi-policy-gw", ns),
+			gw:      newTestGateway("multi-policy-gw", ns, nil, nil),
 			backend: newTestBackend("multi-policy-backend", ns),
 			route:   newTestHTTPRoute("multi-policy-route", ns, "multi-policy-gw", "multi-policy-backend"),
 			policies: []*agenticv0alpha0.XAccessPolicy{
@@ -218,13 +226,314 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				clusters: []string{"quickstart-ns-multi-policy-backend"},
 			},
 		},
+		{
+			name:    "Listener not programmed with only cert Ref",
+			gw:      newTestGateway("cert-only-gw", ns, []gatewayv1.SecretObjectReference{{Name: "my-cert"}}, nil),
+			backend: newTestBackend("cert-only-backend", ns),
+			route:   newTestHTTPRoute("cert-only-route", ns, "cert-only-gw", "cert-only-backend"),
+			policies: []*agenticv0alpha0.XAccessPolicy{
+				newTestAccessPolicy("cert-only-policy", ns, "cert-only-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
+			},
+			mcpSvc: newTestService("cert-only-backend-svc", ns, 3001),
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-cert", Namespace: ns},
+					Data: map[string][]byte{
+						"tls.crt": []byte("cert-data"),
+						"tls.key": []byte("key-data"),
+					},
+				},
+			},
+			expected: expectedResult{
+				listeners: []expectedListener{
+					{
+						envoyName: "", // Expect NO listener in Envoy
+						k8sName:   "https-listener",
+						conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.ListenerConditionProgrammed),
+								Status: metav1.ConditionFalse,
+								Reason: "InvalidCACertificateRef",
+							},
+						},
+					},
+				},
+				routes: []expectedRoute{
+					{
+						envoyName:    "route-10001",
+						k8sName:      "cert-only-route",
+						k8sNamespace: ns,
+						parentStatuses: []gatewayv1.RouteParentStatus{
+							{
+								ParentRef:      gatewayv1.ParentReference{Name: "cert-only-gw"},
+								ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+								Conditions: []metav1.Condition{
+									{
+										Type:   string(gatewayv1.RouteConditionAccepted),
+										Status: metav1.ConditionTrue,
+										Reason: string(gatewayv1.RouteReasonAccepted),
+									},
+								},
+							},
+						},
+					},
+				},
+				clusters: nil,
+				secrets:  nil,
+			},
+		},
+		{
+			name: "Listener programed with both cert Ref and CA Ref",
+			gw: newTestGateway("cert-ca-gw", ns, []gatewayv1.SecretObjectReference{{Name: "my-cert"}}, &gatewayv1.FrontendTLSConfig{
+				Default: gatewayv1.TLSConfig{
+					Validation: &gatewayv1.FrontendTLSValidation{
+						CACertificateRefs: []gatewayv1.ObjectReference{{Name: "my-ca"}},
+					},
+				},
+			}),
+			backend: newTestBackend("cert-ca-backend", ns),
+			route:   newTestHTTPRoute("cert-ca-route", ns, "cert-ca-gw", "cert-ca-backend"),
+			policies: []*agenticv0alpha0.XAccessPolicy{
+				newTestAccessPolicy("cert-ca-policy", ns, "cert-ca-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
+			},
+			mcpSvc: newTestService("cert-ca-backend-svc", ns, 3001),
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-cert", Namespace: ns},
+					Data: map[string][]byte{
+						"tls.crt": []byte("cert-data"),
+						"tls.key": []byte("key-data"),
+					},
+				},
+			},
+			configMaps: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-ca", Namespace: ns},
+					Data: map[string]string{
+						"ca.crt": "ca-data",
+					},
+				},
+			},
+			expected: expectedResult{
+				listeners: []expectedListener{
+					{
+						envoyName:           "listener-10001",
+						k8sName:             "https-listener",
+						maxBackendPolicies:  1,
+						expectedIdentitySDS: "quickstart-ns-my-cert",
+						expectedTrustSDS:    "quickstart-ns-my-ca",
+						conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.ListenerConditionProgrammed),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonProgrammed),
+							},
+							{
+								Type:   string(gatewayv1.ListenerConditionAccepted),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonAccepted),
+							},
+						},
+					},
+				},
+				routes: []expectedRoute{
+					{
+						envoyName:         "route-10001",
+						k8sName:           "cert-ca-route",
+						k8sNamespace:      ns,
+						backendPrincipals: []string{"spiffe://cluster.local/ns/ns1/sa/sa1"},
+						parentStatuses: []gatewayv1.RouteParentStatus{
+							{
+								ParentRef:      gatewayv1.ParentReference{Name: "cert-ca-gw"},
+								ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+								Conditions: []metav1.Condition{
+									{
+										Type:   string(gatewayv1.RouteConditionAccepted),
+										Status: metav1.ConditionTrue,
+										Reason: string(gatewayv1.RouteReasonAccepted),
+									},
+									{
+										Type:   string(gatewayv1.RouteConditionResolvedRefs),
+										Status: metav1.ConditionTrue,
+										Reason: string(gatewayv1.RouteReasonResolvedRefs),
+									},
+								},
+							},
+						},
+					},
+				},
+				clusters: []string{"quickstart-ns-cert-ca-backend"},
+				secrets:  []string{"quickstart-ns-my-cert", "quickstart-ns-my-ca"},
+			},
+		},
+		{
+			name: "Listener programmed with only CA Ref",
+			gw: newTestGateway("ca-only-gw", ns, nil, &gatewayv1.FrontendTLSConfig{
+				Default: gatewayv1.TLSConfig{
+					Validation: &gatewayv1.FrontendTLSValidation{
+						CACertificateRefs: []gatewayv1.ObjectReference{{Name: "my-ca"}},
+					},
+				},
+			}),
+			backend: newTestBackend("ca-only-backend", ns),
+			route:   newTestHTTPRoute("ca-only-route", ns, "ca-only-gw", "ca-only-backend"),
+			policies: []*agenticv0alpha0.XAccessPolicy{
+				newTestAccessPolicy("ca-only-policy", ns, "ca-only-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
+			},
+			mcpSvc: newTestService("ca-only-backend-svc", ns, 3001),
+			configMaps: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-ca", Namespace: ns},
+					Data: map[string]string{
+						"ca.crt": "ca-data",
+					},
+				},
+			},
+			expected: expectedResult{
+				listeners: []expectedListener{
+					{
+						envoyName:          "listener-10001",
+						k8sName:            "https-listener",
+						maxBackendPolicies: 1,
+						expectedTrustSDS:   "quickstart-ns-my-ca",
+						conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.ListenerConditionProgrammed),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonProgrammed),
+							},
+							{
+								Type:   string(gatewayv1.ListenerConditionAccepted),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonAccepted),
+							},
+						},
+					},
+				},
+				routes: []expectedRoute{
+					{
+						envoyName:         "route-10001",
+						k8sName:           "ca-only-route",
+						k8sNamespace:      ns,
+						backendPrincipals: []string{"spiffe://cluster.local/ns/ns1/sa/sa1"},
+						parentStatuses: []gatewayv1.RouteParentStatus{
+							{
+								ParentRef:      gatewayv1.ParentReference{Name: "ca-only-gw"},
+								ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+								Conditions: []metav1.Condition{
+									{
+										Type:   string(gatewayv1.RouteConditionAccepted),
+										Status: metav1.ConditionTrue,
+										Reason: string(gatewayv1.RouteReasonAccepted),
+									},
+									{
+										Type:   string(gatewayv1.RouteConditionResolvedRefs),
+										Status: metav1.ConditionTrue,
+										Reason: string(gatewayv1.RouteReasonResolvedRefs),
+									},
+								},
+							},
+						},
+					},
+				},
+				clusters: []string{"quickstart-ns-ca-only-backend"},
+				secrets:  []string{"quickstart-ns-my-ca"},
+			},
+		},
+		{
+			name: "Listener programmed with only per-port CA trust",
+			gw: newTestGateway("per-port-ca-gw", ns, nil, &gatewayv1.FrontendTLSConfig{
+				PerPort: []gatewayv1.TLSPortConfig{
+					{
+						Port: 10001,
+						TLS: gatewayv1.TLSConfig{
+							Validation: &gatewayv1.FrontendTLSValidation{
+								CACertificateRefs: []gatewayv1.ObjectReference{{Name: "my-ca"}},
+							},
+						},
+					},
+				},
+			}),
+			backend: newTestBackend("per-port-ca-backend", ns),
+			route:   newTestHTTPRoute("per-port-ca-route", ns, "per-port-ca-gw", "per-port-ca-backend"),
+			policies: []*agenticv0alpha0.XAccessPolicy{
+				newTestAccessPolicy("per-port-ca-policy", ns, "per-port-ca-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
+			},
+			mcpSvc: newTestService("per-port-ca-backend-svc", ns, 3001),
+			configMaps: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-ca", Namespace: ns},
+					Data: map[string]string{
+						"ca.crt": "ca-data",
+					},
+				},
+			},
+			expected: expectedResult{
+				listeners: []expectedListener{
+					{
+						envoyName:          "listener-10001",
+						k8sName:            "https-listener",
+						maxBackendPolicies: 1,
+						expectedTrustSDS:   "quickstart-ns-my-ca",
+						conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.ListenerConditionProgrammed),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonProgrammed),
+							},
+							{
+								Type:   string(gatewayv1.ListenerConditionAccepted),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonAccepted),
+							},
+						},
+					},
+				},
+				routes: []expectedRoute{
+					{
+						envoyName:         "route-10001",
+						k8sName:           "per-port-ca-route",
+						k8sNamespace:      ns,
+						backendPrincipals: []string{"spiffe://cluster.local/ns/ns1/sa/sa1"},
+						parentStatuses: []gatewayv1.RouteParentStatus{
+							{
+								ParentRef:      gatewayv1.ParentReference{Name: "per-port-ca-gw"},
+								ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+								Conditions: []metav1.Condition{
+									{
+										Type:   string(gatewayv1.RouteConditionAccepted),
+										Status: metav1.ConditionTrue,
+										Reason: string(gatewayv1.RouteReasonAccepted),
+									},
+									{
+										Type:   string(gatewayv1.RouteConditionResolvedRefs),
+										Status: metav1.ConditionTrue,
+										Reason: string(gatewayv1.RouteReasonResolvedRefs),
+									},
+								},
+							},
+						},
+					},
+				},
+				clusters: []string{"quickstart-ns-per-port-ca-backend"},
+				secrets:  []string{"quickstart-ns-my-ca"},
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup Fake Clients and Informers
 			ctx := context.Background()
-			k8sClient := fake.NewClientset(tc.mcpSvc)
+
+			var k8sObjs []runtime.Object
+			if tc.mcpSvc != nil {
+				k8sObjs = append(k8sObjs, tc.mcpSvc)
+			}
+			k8sObjs = append(k8sObjs, tc.secrets...)
+			k8sObjs = append(k8sObjs, tc.configMaps...)
+			k8sClient := fake.NewClientset(k8sObjs...)
+
 			gwClient := gatewayclient.NewClientset(tc.gw, tc.route)
 
 			var agenticObjs []runtime.Object
@@ -246,6 +555,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				coreInformerFactory.Core().V1().Namespaces().Lister(),
 				coreInformerFactory.Core().V1().Services().Lister(),
 				coreInformerFactory.Core().V1().Secrets().Lister(),
+				coreInformerFactory.Core().V1().ConfigMaps().Lister(),
 				gwInformerFactory.Gateway().V1().Gateways().Lister(),
 				gwInformerFactory.Gateway().V1().HTTPRoutes().Lister(),
 				nil, // referenceGrantLister
@@ -254,12 +564,20 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			)
 
 			// Populate Informer caches
-			_ = coreInformerFactory.Core().V1().Services().Informer().GetIndexer().Add(tc.mcpSvc)
+			if tc.mcpSvc != nil {
+				_ = coreInformerFactory.Core().V1().Services().Informer().GetIndexer().Add(tc.mcpSvc)
+			}
 			_ = gwInformerFactory.Gateway().V1().Gateways().Informer().GetIndexer().Add(tc.gw)
 			_ = gwInformerFactory.Gateway().V1().HTTPRoutes().Informer().GetIndexer().Add(tc.route)
 			_ = agenticInformerFactory.Agentic().V0alpha0().XBackends().Informer().GetIndexer().Add(tc.backend)
 			for _, p := range tc.policies {
 				_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(p)
+			}
+			for _, s := range tc.secrets {
+				_ = coreInformerFactory.Core().V1().Secrets().Informer().GetIndexer().Add(s)
+			}
+			for _, cm := range tc.configMaps {
+				_ = coreInformerFactory.Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
 			}
 
 			// Run Translation
@@ -272,27 +590,36 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			verifyListeners(t, resources[resourcev3.ListenerType], listenerStatuses, tc.expected.listeners)
 			verifyRoutes(t, resources[resourcev3.RouteType], httpRouteStatuses, tc.expected.routes)
 			verifyClusters(t, resources[resourcev3.ClusterType], tc.expected.clusters)
+			verifySecrets(t, resources[resourcev3.SecretType], tc.expected.secrets)
 		})
 	}
 }
 
 func verifyListeners(t *testing.T, got []envoyproxytypes.Resource, gotStatuses []gatewayv1.ListenerStatus, expected []expectedListener) {
-	if len(got) != len(expected) {
-		t.Errorf("expected %d listeners, got %d", len(expected), len(got))
+	var expEnvoyCount int
+	for _, e := range expected {
+		if e.envoyName != "" {
+			expEnvoyCount++
+		}
+	}
+	if len(got) != expEnvoyCount {
+		t.Errorf("expected %d listeners, got %d", expEnvoyCount, len(got))
 	}
 	for _, exp := range expected {
 		// Verify Envoy Listener
-		found := false
-		for _, res := range got {
-			lis := res.(*listenerv3.Listener)
-			if lis.GetName() == exp.envoyName {
-				found = true
-				checkListenerMTLS(t, lis)
-				checkListenerRBAC(t, lis, exp.gatewayPrincipals, exp.maxBackendPolicies)
+		if exp.envoyName != "" {
+			found := false
+			for _, res := range got {
+				lis := res.(*listenerv3.Listener)
+				if lis.GetName() == exp.envoyName {
+					found = true
+					checkListenerMTLS(t, lis, exp.expectedIdentitySDS, exp.expectedTrustSDS)
+					checkListenerRBAC(t, lis, exp.gatewayPrincipals, exp.maxBackendPolicies)
+				}
 			}
-		}
-		if !found {
-			t.Errorf("expected listener %s not found", exp.envoyName)
+			if !found {
+				t.Errorf("expected listener %s not found", exp.envoyName)
+			}
 		}
 
 		// Verify Listener Status
@@ -308,8 +635,16 @@ func verifyListeners(t *testing.T, got []envoyproxytypes.Resource, gotStatuses [
 			continue
 		}
 		for _, cond := range exp.conditions {
-			if !meta.IsStatusConditionTrue(ls.Conditions, cond.Type) {
-				t.Errorf("expected listener %s condition %s to be True", exp.k8sName, cond.Type)
+			actualCond := meta.FindStatusCondition(ls.Conditions, cond.Type)
+			if actualCond == nil {
+				t.Errorf("expected condition %s not found in listener %s", cond.Type, exp.k8sName)
+				continue
+			}
+			if actualCond.Status != cond.Status {
+				t.Errorf("expected listener %s condition %s to be %s, got %s", exp.k8sName, cond.Type, cond.Status, actualCond.Status)
+			}
+			if actualCond.Reason != cond.Reason {
+				t.Errorf("expected listener %s condition %s reason to be %s, got %s", exp.k8sName, cond.Type, cond.Reason, actualCond.Reason)
 			}
 		}
 	}
@@ -382,7 +717,32 @@ func verifyClusters(t *testing.T, got []envoyproxytypes.Resource, expected []str
 	}
 }
 
-func checkListenerMTLS(t *testing.T, lis *listenerv3.Listener) {
+func verifySecrets(t *testing.T, got []envoyproxytypes.Resource, expected []string) {
+	if len(got) != len(expected) {
+		t.Errorf("expected %d secrets, got %d", len(expected), len(got))
+	}
+	for _, expectedName := range expected {
+		found := false
+		for _, res := range got {
+			s := res.(*tlsv3.Secret)
+			if s.GetName() == expectedName {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected secret %s not found", expectedName)
+		}
+	}
+}
+
+func checkListenerMTLS(t *testing.T, lis *listenerv3.Listener, expectedIdentity, expectedTrust string) {
+	if expectedIdentity == "" {
+		expectedIdentity = constants.SpiffeIdentitySdsConfigName
+	}
+	if expectedTrust == "" {
+		expectedTrust = constants.SpiffeTrustSdsConfigName
+	}
+
 	foundTLS := false
 	for _, fc := range lis.GetFilterChains() {
 		if fc.GetTransportSocket() != nil && fc.GetTransportSocket().GetName() == "envoy.transport_sockets.tls" {
@@ -397,11 +757,11 @@ func checkListenerMTLS(t *testing.T, lis *listenerv3.Listener) {
 
 			// Verify SDS config names
 			common := tlsContext.GetCommonTlsContext()
-			if common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != constants.SpiffeIdentitySdsConfigName {
-				t.Errorf("Identity SDS config name mismatch: got %s, want %s", common.GetTlsCertificateSdsSecretConfigs()[0].GetName(), constants.SpiffeIdentitySdsConfigName)
+			if common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != expectedIdentity {
+				t.Errorf("Identity SDS config name mismatch: got %s, want %s", common.GetTlsCertificateSdsSecretConfigs()[0].GetName(), expectedIdentity)
 			}
-			if common.GetValidationContextSdsSecretConfig().GetName() != constants.SpiffeTrustSdsConfigName {
-				t.Errorf("Trust SDS config name mismatch: got %s, want %s", common.GetValidationContextSdsSecretConfig().GetName(), constants.SpiffeTrustSdsConfigName)
+			if common.GetValidationContextSdsSecretConfig().GetName() != expectedTrust {
+				t.Errorf("Trust SDS config name mismatch: got %s, want %s", common.GetValidationContextSdsSecretConfig().GetName(), expectedTrust)
 			}
 		}
 	}
