@@ -19,6 +19,7 @@ package translator
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"time"
 
@@ -40,6 +41,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -163,64 +165,156 @@ func (t *Translator) validateCertificateRefs(gateway *gatewayv1.Gateway, listene
 	}
 
 	for _, ref := range listener.TLS.CertificateRefs {
-		group := ""
-		if ref.Group != nil {
-			group = string(*ref.Group)
+		if cond := t.validateCertificateRef(gateway, ref); cond != nil {
+			return cond
 		}
-		kind := "Secret"
-		if ref.Kind != nil {
-			kind = string(*ref.Kind)
-		}
+	}
 
-		if (group != "" && group != "core") || kind != "Secret" {
-			return &metav1.Condition{
-				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:             metav1.ConditionFalse,
-				Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
-				Message:            fmt.Sprintf("Unsupported certificate reference group %q kind %q. Only core/Secret is supported.", group, kind),
-				ObservedGeneration: gateway.Generation,
-			}
-		}
+	return nil
+}
 
-		ns := gateway.Namespace
-		if ref.Namespace != nil {
-			ns = string(*ref.Namespace)
-		}
+func (t *Translator) validateCertificateRef(gateway *gatewayv1.Gateway, ref gatewayv1.SecretObjectReference) *metav1.Condition {
+	group := ""
+	if ref.Group != nil {
+		group = string(*ref.Group)
+	}
+	kind := "Secret"
+	if ref.Kind != nil {
+		kind = string(*ref.Kind)
+	}
 
-		// Check if secret exists
-		_, err := t.secretLister.Secrets(ns).Get(string(ref.Name))
-		if err != nil {
-			reason := string(gatewayv1.ListenerReasonInvalidCertificateRef)
-			message := fmt.Sprintf("Failed to get Secret %s/%s: %v", ns, ref.Name, err)
-			if apierrors.IsNotFound(err) {
-				message = fmt.Sprintf("Secret %s/%s not found", ns, ref.Name)
-			}
-			return &metav1.Condition{
-				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:             metav1.ConditionFalse,
-				Reason:             reason,
-				Message:            message,
-				ObservedGeneration: gateway.Generation,
-			}
+	if (group != "" && group != "core") || kind != "Secret" {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Unsupported certificate reference group %q kind %q. Only core/Secret is supported.", group, kind),
+			ObservedGeneration: gateway.Generation,
 		}
+	}
 
-		// Check if cross-namespace reference is allowed by ReferenceGrant
-		if ns == gateway.Namespace {
-			continue
+	ns := gateway.Namespace
+	if ref.Namespace != nil {
+		ns = string(*ref.Namespace)
+	}
+
+	// Check if secret exists
+	secret, err := t.secretLister.Secrets(ns).Get(string(ref.Name))
+	if err != nil {
+		reason := string(gatewayv1.ListenerReasonInvalidCertificateRef)
+		message := fmt.Sprintf("Failed to get Secret %s/%s: %v", ns, ref.Name, err)
+		if apierrors.IsNotFound(err) {
+			message = fmt.Sprintf("Secret %s/%s not found", ns, ref.Name)
 		}
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             reason,
+			Message:            message,
+			ObservedGeneration: gateway.Generation,
+		}
+	}
 
-		if !AllowedByReferenceGrant(
-			gateway.Namespace, "gateway.networking.k8s.io", "Gateway",
-			ns, "", "Secret", string(ref.Name),
-			t.referenceGrantLister,
-		) {
-			return &metav1.Condition{
-				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:             metav1.ConditionFalse,
-				Reason:             string(gatewayv1.ListenerReasonRefNotPermitted),
-				Message:            fmt.Sprintf("Reference to Secret %s/%s not permitted by ReferenceGrant", ns, ref.Name),
-				ObservedGeneration: gateway.Generation,
-			}
+	certBytes, hasCert := secret.Data[corev1.TLSCertKey]
+	keyBytes, hasKey := secret.Data[corev1.TLSPrivateKeyKey]
+	if !hasCert || !hasKey {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Secret %s/%s missing keys %s or %s", ns, ref.Name, corev1.TLSCertKey, corev1.TLSPrivateKeyKey),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	block, _ := pem.Decode(certBytes)
+	if block == nil {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Secret %s/%s contains invalid PEM data in %s", ns, ref.Name, corev1.TLSCertKey),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	// Basic validation that the private key is also present and decodeable
+	if block, _ := pem.Decode(keyBytes); block == nil {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Secret %s/%s contains invalid PEM data in %s", ns, ref.Name, corev1.TLSPrivateKeyKey),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	// Check if cross-namespace reference is allowed by ReferenceGrant
+	if ns != gateway.Namespace && !AllowedByReferenceGrant(
+		gateway.Namespace, "gateway.networking.k8s.io", "Gateway",
+		ns, "", "Secret", string(ref.Name),
+		t.referenceGrantLister,
+	) {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonRefNotPermitted),
+			Message:            fmt.Sprintf("Reference to Secret %s/%s not permitted by ReferenceGrant", ns, ref.Name),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	return nil
+}
+
+func (t *Translator) validateCACertificateRef(gateway *gatewayv1.Gateway, caRef gatewayv1.ObjectReference) *metav1.Condition {
+	ns := gateway.Namespace
+	if caRef.Namespace != nil {
+		ns = string(*caRef.Namespace)
+	}
+	configMapName := string(caRef.Name)
+
+	group := string(caRef.Group)
+	kind := string(caRef.Kind)
+	if (group != "" && group != "core") || kind != "ConfigMap" {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCACertificateKind),
+			Message:            fmt.Sprintf("Unsupported CA certificate reference group %q kind %q. Only ConfigMap is supported.", group, kind),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	if ns != gateway.Namespace && !AllowedByReferenceGrant(gateway.Namespace, gatewayv1.GroupName, "Gateway", ns, "", "ConfigMap", configMapName, t.referenceGrantLister) {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonRefNotPermitted),
+			Message:            fmt.Sprintf("Reference to ConfigMap %s/%s not permitted by ReferenceGrant", ns, configMapName),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	cm, err := t.configMapLister.ConfigMaps(ns).Get(configMapName)
+	if err != nil {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCACertificateRef),
+			Message:            fmt.Sprintf("Failed to get configmap %s: %v", configMapName, err),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	_, hasCA := cm.Data[corev1.ServiceAccountRootCAKey]
+	if !hasCA {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCACertificateRef),
+			Message:            fmt.Sprintf("ConfigMap %s missing key %s", configMapName, corev1.ServiceAccountRootCAKey),
+			ObservedGeneration: gateway.Generation,
 		}
 	}
 
@@ -253,7 +347,7 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 			filterChain.FilterChainMatch.ServerNames = []string{string(*lis.Hostname)}
 		}
 
-		tlsContext, err := buildDownstreamTLSContext()
+		tlsContext, err := buildDownstreamTLSContext(lis, gateway)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS context for listener %s: %w", lis.Name, err)
 		}
@@ -675,39 +769,71 @@ func buildRouterFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-// TODO: We may want to optimize this in the future by supporting both listener's TLS config and the shared TLS context.
-// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/94
-func buildDownstreamTLSContext() (*anypb.Any, error) {
-	tlsContext := &tlsv3.DownstreamTlsContext{
-		CommonTlsContext: &tlsv3.CommonTlsContext{
-			TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{
-				{
-					Name: constants.SpiffeIdentitySdsConfigName,
-					SdsConfig: &corev3.ConfigSource{
-						ResourceApiVersion: corev3.ApiVersion_V3,
-						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
-							PathConfigSource: &corev3.PathConfigSource{
-								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeIdentitySdsFileName),
-							},
-						},
-					},
-				},
+func newAdsSdsSecretConfig(secretName string) *tlsv3.SdsSecretConfig {
+	return &tlsv3.SdsSecretConfig{
+		Name: secretName,
+		SdsConfig: &corev3.ConfigSource{
+			ResourceApiVersion: corev3.ApiVersion_V3,
+			ConfigSourceSpecifier: &corev3.ConfigSource_Ads{
+				Ads: &corev3.AggregatedConfigSource{},
 			},
-			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
-				ValidationContextSdsSecretConfig: &tlsv3.SdsSecretConfig{
-					Name: constants.SpiffeTrustSdsConfigName,
-					SdsConfig: &corev3.ConfigSource{
-						ResourceApiVersion: corev3.ApiVersion_V3,
-						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
-							PathConfigSource: &corev3.PathConfigSource{
-								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeTrustSdsFileName),
-							},
-						},
-					},
+		},
+	}
+}
+
+func newPathSdsSecretConfig(name, filename string) *tlsv3.SdsSecretConfig {
+	return &tlsv3.SdsSecretConfig{
+		Name: name,
+		SdsConfig: &corev3.ConfigSource{
+			ResourceApiVersion: corev3.ApiVersion_V3,
+			ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
+				PathConfigSource: &corev3.PathConfigSource{
+					Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, filename),
 				},
 			},
 		},
+	}
+}
+
+// buildDownstreamTLSContext configures TLS for the downstream (client-to-gateway) connection.
+func buildDownstreamTLSContext(lis gatewayv1.Listener, gateway *gatewayv1.Gateway) (*anypb.Any, error) {
+	certRef, caRef, hasMultipleCerts, hasMultipleCAs := extractCertificateRefs(gateway, lis)
+	if certRef != nil && hasMultipleCerts {
+		klog.Warningf("Gateway %s/%s, listener %s has multiple certificateRefs, only the first one will be used and the rest will be ignored", gateway.Namespace, gateway.Name, lis.Name)
+	}
+	if caRef != nil && hasMultipleCAs {
+		klog.Warningf("Gateway %s/%s, listener %s has multiple CACertificateRefs, only the first one will be used and the rest will be ignored", gateway.Namespace, gateway.Name, lis.Name)
+	}
+
+	tlsContext := &tlsv3.DownstreamTlsContext{
+		CommonTlsContext:         &tlsv3.CommonTlsContext{},
 		RequireClientCertificate: wrapperspb.Bool(true),
+	}
+
+	commonTLS := tlsContext.GetCommonTlsContext()
+
+	// 1. Server Certificate
+	var serverSecretName string
+	if certRef != nil {
+		serverSecretName = fmt.Sprintf("%s-%s", gateway.Namespace, certRef.Name)
+		commonTLS.TlsCertificateSdsSecretConfigs = []*tlsv3.SdsSecretConfig{
+			newAdsSdsSecretConfig(serverSecretName),
+		}
+	} else {
+		commonTLS.TlsCertificateSdsSecretConfigs = []*tlsv3.SdsSecretConfig{
+			newPathSdsSecretConfig(constants.SpiffeIdentitySdsConfigName, constants.SpiffeIdentitySdsFileName),
+		}
+	}
+
+	// 2. Client Validation
+	if caRef != nil {
+		commonTLS.ValidationContextType = &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
+			ValidationContextSdsSecretConfig: newAdsSdsSecretConfig(fmt.Sprintf("%s-%s", gateway.Namespace, caRef.Name)),
+		}
+	} else {
+		commonTLS.ValidationContextType = &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
+			ValidationContextSdsSecretConfig: newPathSdsSecretConfig(constants.SpiffeTrustSdsConfigName, constants.SpiffeTrustSdsFileName),
+		}
 	}
 
 	anyObj, err := anypb.New(tlsContext)

@@ -2,3 +2,4 @@ nav:
   - Quickstart: quickstart
   - External Auth: external-auth-quickstart
   - AI Agents: ai-agents.md
+  - Mutual TLS: mtls.md
