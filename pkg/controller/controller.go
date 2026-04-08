@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
@@ -44,6 +45,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -55,6 +57,13 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/xds"
 	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
+
+// maxGatewaySyncRetries is the maximum number of rate-limited requeues for a
+// single Gateway key before the worker drops it (avoids infinite hot loops).
+const maxGatewaySyncRetries = 15
+
+// maxBackendFinalizerRetries is the same cap for the XBackend finalizer queue.
+const maxBackendFinalizerRetries = 15
 
 type coreResources struct {
 	client kubernetes.Interface
@@ -277,9 +286,13 @@ func (c *Controller) processNextGatewayItem(ctx context.Context) bool {
 
 	// We expect strings (namespace/name) to come off the workqueue.
 	if err := c.syncGateway(ctx, obj); err != nil {
-		// Put the item back on the workqueue to handle any transient errors.
-		c.gatewayqueue.AddRateLimited(obj)
-		klog.ErrorS(err, "Error syncing", "key", obj)
+		if c.gatewayqueue.NumRequeues(obj) < maxGatewaySyncRetries {
+			c.gatewayqueue.AddRateLimited(obj)
+			klog.ErrorS(err, "Error syncing gateway; will retry with rate limit", "key", obj, "requeues", c.gatewayqueue.NumRequeues(obj))
+		} else {
+			c.gatewayqueue.Forget(obj)
+			klog.ErrorS(err, "Dropping gateway sync after max retries", "key", obj, "maxRetries", maxGatewaySyncRetries)
+		}
 		return true
 	}
 
@@ -302,8 +315,13 @@ func (c *Controller) processNextBackendFinalizerItem(ctx context.Context) bool {
 	}
 	defer c.backendFinalizerQueue.Done(obj)
 	if err := c.syncBackendFinalizer(ctx, obj); err != nil {
-		c.backendFinalizerQueue.AddRateLimited(obj)
-		klog.ErrorS(err, "Error syncing backend finalizer", "key", obj)
+		if c.backendFinalizerQueue.NumRequeues(obj) < maxBackendFinalizerRetries {
+			c.backendFinalizerQueue.AddRateLimited(obj)
+			klog.ErrorS(err, "Error syncing backend finalizer; will retry with rate limit", "key", obj, "requeues", c.backendFinalizerQueue.NumRequeues(obj))
+		} else {
+			c.backendFinalizerQueue.Forget(obj)
+			klog.ErrorS(err, "Dropping backend finalizer sync after max retries", "key", obj, "maxRetries", maxBackendFinalizerRetries)
+		}
 		return true
 	}
 	c.backendFinalizerQueue.Forget(obj)
@@ -359,25 +377,24 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 		if errDel := envoy.DeleteProxy(ctx, c.core.client, namespace, name); errDel != nil {
 			return errDel
 		}
-		newGW := gateway.DeepCopy()
-		if removeFinalizer(&newGW.ObjectMeta, constants.GatewayFinalizer) {
-			if _, errUpdate := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); errUpdate != nil {
-				return fmt.Errorf("failed to remove finalizer from Gateway: %w", errUpdate)
-			}
+		if err = c.updateGatewayRemoveFinalizer(ctx, namespace, name); err != nil {
+			return fmt.Errorf("failed to remove finalizer from Gateway: %w", err)
 		}
 		return nil
 	}
 
-	newGW := gateway.DeepCopy()
-	if ensureFinalizer(&newGW.ObjectMeta, constants.GatewayFinalizer) {
-		if _, errUpdate := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, newGW, metav1.UpdateOptions{}); errUpdate != nil {
-			return fmt.Errorf("failed to add finalizer to Gateway: %w", errUpdate)
-		}
+	finalizerAdded, err := c.ensureGatewayFinalizer(ctx, namespace, name)
+	if err != nil {
+		return fmt.Errorf("failed to add finalizer to Gateway: %w", err)
+	}
+	if finalizerAdded {
 		c.gatewayqueue.Add(key)
 		return nil
 	}
 
 	logger.Info("Syncing gateway")
+
+	newGW := gateway.DeepCopy()
 
 	// Ensure Envoy proxy deployment and service exist.
 	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
@@ -414,14 +431,81 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	setGatewayConditions(newGW, listenerStatuses, err)
 
 	if !reflect.DeepEqual(gateway.Status, newGW.Status) {
-		_, err := c.gateway.client.GatewayV1().Gateways(newGW.Namespace).UpdateStatus(ctx, newGW, metav1.UpdateOptions{})
-		if err != nil {
-			klog.Errorf("Failed to update gateway status: %v", err)
-			return err
+		if err := c.updateGatewayStatus(ctx, newGW.Namespace, newGW.Name, &newGW.Status); err != nil {
+			return fmt.Errorf("failed to update gateway status: %w", err)
 		}
 		logger.Info("Updated gateway status")
 	}
 	return c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
+}
+
+func (c *Controller) updateGatewayRemoveFinalizer(ctx context.Context, namespace, name string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		u := latest.DeepCopy()
+		if !removeFinalizer(&u.ObjectMeta, constants.GatewayFinalizer) {
+			return nil
+		}
+		_, err = c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, u, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+// ensureGatewayFinalizer adds the controller finalizer via the API when missing.
+// It returns (true, nil) when the finalizer was absent at the start of the call and is present
+// after a successful retry loop (caller should requeue and exit early so metadata is fresh).
+func (c *Controller) ensureGatewayFinalizer(ctx context.Context, namespace, name string) (requeue bool, err error) {
+	gw, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
+	if err != nil {
+		return false, err
+	}
+	hadFinalizer := sets.New(gw.Finalizers...).Has(constants.GatewayFinalizer)
+	probe := gw.DeepCopy()
+	if !ensureFinalizer(&probe.ObjectMeta, constants.GatewayFinalizer) {
+		return false, nil
+	}
+	if retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest, getErr := c.gateway.gatewayLister.Gateways(namespace).Get(name)
+		if getErr != nil {
+			return getErr
+		}
+		u := latest.DeepCopy()
+		if !ensureFinalizer(&u.ObjectMeta, constants.GatewayFinalizer) {
+			return nil
+		}
+		_, updErr := c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, u, metav1.UpdateOptions{})
+		return updErr
+	}); retryErr != nil {
+		return false, retryErr
+	}
+	fresh, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
+	if err != nil {
+		return false, err
+	}
+	nowHas := sets.New(fresh.Finalizers...).Has(constants.GatewayFinalizer)
+	return !hadFinalizer && nowHas, nil
+}
+
+func (c *Controller) updateGatewayStatus(ctx context.Context, namespace, name string, desired *gatewayv1.GatewayStatus) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
+		if err != nil {
+			return err
+		}
+		if reflect.DeepEqual(latest.Status, *desired) {
+			return nil
+		}
+		u := latest.DeepCopy()
+		u.Status = *desired.DeepCopy()
+		_, err = c.gateway.client.GatewayV1().Gateways(namespace).UpdateStatus(ctx, u, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 // hasHTTPRoutesReferencingGateway returns true if any HTTPRoute has a ParentRef to the given Gateway.

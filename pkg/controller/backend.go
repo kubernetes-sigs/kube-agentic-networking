@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -142,7 +143,18 @@ func (c *Controller) syncBackendFinalizer(ctx context.Context, key string) error
 			return nil
 		}
 		if removeFinalizer(&newBackend.ObjectMeta, constants.XBackendFinalizer) {
-			if _, err := c.agentic.client.AgenticV0alpha0().XBackends(namespace).Update(ctx, newBackend, metav1.UpdateOptions{}); err != nil {
+			if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				latest, err := c.agentic.backendLister.XBackends(namespace).Get(name)
+				if err != nil {
+					return err
+				}
+				u := latest.DeepCopy()
+				if !removeFinalizer(&u.ObjectMeta, constants.XBackendFinalizer) {
+					return nil
+				}
+				_, err = c.agentic.client.AgenticV0alpha0().XBackends(namespace).Update(ctx, u, metav1.UpdateOptions{})
+				return err
+			}); err != nil {
 				return fmt.Errorf("failed to remove finalizer from XBackend: %w", err)
 			}
 		}
@@ -150,7 +162,18 @@ func (c *Controller) syncBackendFinalizer(ctx context.Context, key string) error
 	}
 
 	if ensureFinalizer(&newBackend.ObjectMeta, constants.XBackendFinalizer) {
-		if _, err := c.agentic.client.AgenticV0alpha0().XBackends(namespace).Update(ctx, newBackend, metav1.UpdateOptions{}); err != nil {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			latest, err := c.agentic.backendLister.XBackends(namespace).Get(name)
+			if err != nil {
+				return err
+			}
+			u := latest.DeepCopy()
+			if !ensureFinalizer(&u.ObjectMeta, constants.XBackendFinalizer) {
+				return nil
+			}
+			_, err = c.agentic.client.AgenticV0alpha0().XBackends(namespace).Update(ctx, u, metav1.UpdateOptions{})
+			return err
+		}); err != nil {
 			return fmt.Errorf("failed to add finalizer to XBackend: %w", err)
 		}
 	}
