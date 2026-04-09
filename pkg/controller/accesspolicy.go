@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
@@ -277,52 +278,56 @@ func getTargetID(ref gwapiv1.LocalPolicyTargetReferenceWithSectionName) string {
 }
 
 func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agenticv0alpha0.XAccessPolicy, targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionName, accepted bool, reason gwapiv1.PolicyConditionReason, message string) error {
-	policyCopy := policy.DeepCopy()
-
-	status := metav1.ConditionTrue
-	if !accepted {
-		status = metav1.ConditionFalse
-	}
-
-	newCondition := metav1.Condition{
-		Type:               string(agenticv0alpha0.PolicyConditionAccepted),
-		Status:             status,
-		Reason:             string(reason),
-		Message:            message,
-		ObservedGeneration: policy.Generation,
-	}
-
-	parentRef := gwapiv1.ParentReference{
-		Group:     ptr.To(targetRef.Group),
-		Kind:      ptr.To(targetRef.Kind),
-		Namespace: ptr.To(gwapiv1.Namespace(policy.Namespace)),
-		Name:      targetRef.Name,
-	}
-
-	// Find or create the AncestorStatus for this target.
-	var ancestorStatus *gwapiv1.PolicyAncestorStatus
-	for i := range policyCopy.Status.Ancestors {
-		if reflect.DeepEqual(policyCopy.Status.Ancestors[i].AncestorRef, parentRef) {
-			ancestorStatus = &policyCopy.Status.Ancestors[i]
-			break
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh, err := c.agentic.accessPolicyLister.XAccessPolicies(policy.Namespace).Get(policy.Name)
+		if err != nil {
+			return err
 		}
-	}
+		policyCopy := fresh.DeepCopy()
 
-	if ancestorStatus == nil {
-		policyCopy.Status.Ancestors = append(policyCopy.Status.Ancestors, gwapiv1.PolicyAncestorStatus{
-			AncestorRef:    parentRef,
-			ControllerName: gwapiv1.GatewayController(constants.ControllerName),
-		})
-		ancestorStatus = &policyCopy.Status.Ancestors[len(policyCopy.Status.Ancestors)-1]
-	}
+		status := metav1.ConditionTrue
+		if !accepted {
+			status = metav1.ConditionFalse
+		}
 
-	// meta.SetStatusCondition will only update LastTransitionTime if the status, reason or message changes.
-	meta.SetStatusCondition(&ancestorStatus.Conditions, newCondition)
+		newCondition := metav1.Condition{
+			Type:               string(agenticv0alpha0.PolicyConditionAccepted),
+			Status:             status,
+			Reason:             string(reason),
+			Message:            message,
+			ObservedGeneration: fresh.Generation,
+		}
 
-	if reflect.DeepEqual(policy.Status, policyCopy.Status) {
-		return nil
-	}
+		parentRef := gwapiv1.ParentReference{
+			Group:     ptr.To(targetRef.Group),
+			Kind:      ptr.To(targetRef.Kind),
+			Namespace: ptr.To(gwapiv1.Namespace(policy.Namespace)),
+			Name:      targetRef.Name,
+		}
 
-	_, err := c.agentic.client.AgenticV0alpha0().XAccessPolicies(policy.Namespace).UpdateStatus(ctx, policyCopy, metav1.UpdateOptions{})
-	return err
+		var ancestorStatus *gwapiv1.PolicyAncestorStatus
+		for i := range policyCopy.Status.Ancestors {
+			if reflect.DeepEqual(policyCopy.Status.Ancestors[i].AncestorRef, parentRef) {
+				ancestorStatus = &policyCopy.Status.Ancestors[i]
+				break
+			}
+		}
+
+		if ancestorStatus == nil {
+			policyCopy.Status.Ancestors = append(policyCopy.Status.Ancestors, gwapiv1.PolicyAncestorStatus{
+				AncestorRef:    parentRef,
+				ControllerName: gwapiv1.GatewayController(constants.ControllerName),
+			})
+			ancestorStatus = &policyCopy.Status.Ancestors[len(policyCopy.Status.Ancestors)-1]
+		}
+
+		meta.SetStatusCondition(&ancestorStatus.Conditions, newCondition)
+
+		if reflect.DeepEqual(fresh.Status, policyCopy.Status) {
+			return nil
+		}
+
+		_, err = c.agentic.client.AgenticV0alpha0().XAccessPolicies(policy.Namespace).UpdateStatus(ctx, policyCopy, metav1.UpdateOptions{})
+		return err
+	})
 }
