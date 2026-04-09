@@ -525,6 +525,7 @@ func TestSyncGateway_EnsureProxyExistError_HTTPRouteStatusUpdated(t *testing.T) 
 		httpRouteLister,
 		gatewaylistersv1beta1.NewReferenceGrantLister(emptyIndexer()),
 		agenticlistersv1alpha1.NewXAccessPolicyLister(emptyIndexer()),
+		nil, // accessPolicyIndexer
 		agenticlisters.NewXBackendLister(emptyIndexer()),
 		0.0,
 	)
