@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	corev1 "k8s.io/api/core/v1"
@@ -65,6 +66,52 @@ func (e *ControllerError) Error() string {
 	return e.Message
 }
 
+// translationErrors accumulates non-fatal semantic issues during one Gateway translation run.
+// Fields group issues by resource kind so callers can update status selectively; additional maps
+// can be added when other resources need translation feedback without threading new parameters.
+//
+// XAccessPolicy issues are stored as Go errors (preserving wrap chains); accessPolicyIssuesSnapshot
+// turns them into strings for Gateway API condition messages.
+type translationErrors struct {
+	accessPolicyIssues map[types.NamespacedName][]error
+}
+
+func newTranslationErrors() *translationErrors {
+	return &translationErrors{accessPolicyIssues: make(map[types.NamespacedName][]error)}
+}
+
+// recordAccessPolicyIssue attaches a short description and wraps err for one XAccessPolicy issue.
+// ruleName is optional; when set, the formatted error begins with rule "<ruleName>": ...
+func (e *translationErrors) recordAccessPolicyIssue(nn types.NamespacedName, ruleName, desc string, err error) {
+	if e == nil || err == nil {
+		return
+	}
+	var combined error
+	if ruleName != "" {
+		combined = fmt.Errorf("rule %q: %s: %w", ruleName, desc, err)
+	} else {
+		combined = fmt.Errorf("%s: %w", desc, err)
+	}
+	e.accessPolicyIssues[nn] = append(e.accessPolicyIssues[nn], combined)
+}
+
+func (e *translationErrors) accessPolicyIssuesSnapshot() map[types.NamespacedName][]string {
+	if e == nil {
+		return nil
+	}
+	out := make(map[types.NamespacedName][]string, len(e.accessPolicyIssues))
+	for k, errs := range e.accessPolicyIssues {
+		ss := make([]string, 0, len(errs))
+		for _, err := range errs {
+			if err != nil {
+				ss = append(ss, err.Error())
+			}
+		}
+		out[k] = ss
+	}
+	return out
+}
+
 // Translator holds the xDS cache and version for generating snapshots.
 type Translator struct {
 	agenticIdentityTrustDomain string
@@ -78,6 +125,7 @@ type Translator struct {
 	httprouteLister            gatewaylisters.HTTPRouteLister
 	referenceGrantLister       gatewaylistersv1beta1.ReferenceGrantLister // optional, for Service ref cross-namespace validation
 	accessPolicyLister         agenticlisters.XAccessPolicyLister
+	accessPolicyIndexer        cache.Indexer // optional; enables indexed attachment queries instead of listing all policies
 	backendLister              agenticlisters.XBackendLister
 }
 
@@ -93,6 +141,7 @@ func New(
 	httpRouteLister gatewaylisters.HTTPRouteLister,
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister,
 	accessPolicyLister agenticlisters.XAccessPolicyLister,
+	accessPolicyIndexer cache.Indexer,
 	backendLister agenticlisters.XBackendLister,
 ) *Translator {
 	return &Translator{
@@ -107,19 +156,28 @@ func New(
 		httpRouteLister,
 		referenceGrantLister,
 		accessPolicyLister,
+		accessPolicyIndexer,
 		backendLister,
 	}
 }
 
 // TranslateGatewayToXDS translates Gateway and HTTPRoute resources into Envoy xDS resources.
-func (t *Translator) TranslateGatewayToXDS(_ context.Context, gw *gatewayv1.Gateway) (map[resourcev3.Type][]envoyproxytypes.Resource, []gatewayv1.ListenerStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, error) {
-	// Get the desired state
-	envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, err := t.buildEnvoyResourcesForGateway(gw)
+// The returned map keys XAccessPolicies that had rules skipped or only partially translated;
+// values are human-readable failure messages for status updates.
+func (t *Translator) TranslateGatewayToXDS(_ context.Context, gw *gatewayv1.Gateway) (
+	map[resourcev3.Type][]envoyproxytypes.Resource,
+	[]gatewayv1.ListenerStatus,
+	map[types.NamespacedName][]gatewayv1.RouteParentStatus,
+	map[types.NamespacedName][]gatewayv1.RouteParentStatus,
+	map[types.NamespacedName][]string,
+	error,
+) {
+	envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, accessPolicyIssues, err := t.buildEnvoyResourcesForGateway(gw)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
-	return envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, nil
+	return envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, accessPolicyIssues, nil
 }
 
 var SupportedKinds = sets.New[gatewayv1.Kind](
@@ -134,8 +192,10 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	[]gatewayv1.ListenerStatus,
 	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // HTTPRoutes
 	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // GRPCRoutes
+	map[types.NamespacedName][]string, // XAccessPolicy translation issues
 	error,
 ) {
+	te := newTranslationErrors()
 	routesByListener, httpRouteStatuses := t.HTTPRoutesAndStatuses(gateway)
 
 	// Start building Envoy config using only the pre-validated and accepted routes
@@ -224,7 +284,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				// (and optionally XAccessPolicy) exists but no HTTPRoute routes traffic to it, no cluster
 				// or RBAC config is generated for that backend.
 				for _, httpRoute := range routesByListener[listener.Name] {
-					routes, allValidBackends, resolvedRefsCondition := t.translateHTTPRouteToEnvoyRoutes(httpRoute)
+					routes, allValidBackends, resolvedRefsCondition := t.translateHTTPRouteToEnvoyRoutes(httpRoute, te)
 
 					key := types.NamespacedName{Name: httpRoute.Name, Namespace: httpRoute.Namespace}
 					currentParentStatuses := httpRouteStatuses[key]
@@ -238,7 +298,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 					clusters, err := buildClustersFromRouteBackends(allValidBackends)
 					if err != nil {
-						return nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
+						return nil, nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
 					}
 					for _, cluster := range clusters {
 						envoyClusters[cluster.GetName()] = cluster
@@ -276,7 +336,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			}
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
-			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway)
+			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway, te)
 			switch {
 			case err != nil:
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
@@ -347,7 +407,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			// For HTTPS, we create one filter chain per listener because they have unique
 			// SNI matches and TLS settings.
 			if listeners[0].Protocol == gatewayv1.HTTPProtocolType {
-				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, gateway)
+				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, gateway, te)
 				envoyListener.FilterChains = []*listenerv3.FilterChain{filterChain}
 			}
 			finalEnvoyListeners = append(finalEnvoyListeners, envoyListener)
@@ -372,7 +432,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			resourcev3.ClusterType:  clustersSlice,
 			resourcev3.SecretType:   envoySecrets,
 		}, orderedStatuses,
-		httpRouteStatuses, nil, nil
+		httpRouteStatuses, nil, te.accessPolicyIssuesSnapshot(), nil
 }
 
 func (t *Translator) HTTPRoutesAndStatuses(gateway *gatewayv1.Gateway) (

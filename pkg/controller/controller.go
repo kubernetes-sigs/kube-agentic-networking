@@ -65,6 +65,9 @@ const maxGatewaySyncRetries = 30
 // maxBackendFinalizerRetries is the same cap for the XBackend finalizer queue.
 const maxBackendFinalizerRetries = 15
 
+// AccessPolicyTargetRefIndex is re-exported for tests and helpers that look up policies by XBackend targetRef key.
+const AccessPolicyTargetRefIndex = translator.AccessPolicyTargetRefIndex
+
 type coreResources struct {
 	client kubernetes.Interface
 
@@ -144,8 +147,11 @@ func New(
 	accessPolicyInformer agenticinformers.XAccessPolicyInformer,
 ) (*Controller, error) {
 	apInformer := accessPolicyInformer.Informer()
-	if err := apInformer.AddIndexers(cache.Indexers{AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc}); err != nil {
-		return nil, fmt.Errorf("add AccessPolicy targetRef index: %w", err)
+	if err := apInformer.AddIndexers(cache.Indexers{
+		translator.AccessPolicyTargetRefIndex:     translator.AccessPolicyXBackendTargetRefIndexFunc,
+		translator.AccessPolicyGatewayTargetIndex: translator.AccessPolicyGatewayTargetRefIndexFunc,
+	}); err != nil {
+		return nil, fmt.Errorf("add AccessPolicy indexers: %w", err)
 	}
 
 	if err := httprouteInformer.Informer().AddIndexers(cache.Indexers{HTTPRouteBackendRefNamespaceIndex: HTTPRouteBackendRefNamespaceIndexFunc}); err != nil {
@@ -214,6 +220,7 @@ func New(
 		httprouteInformer.Lister(),
 		referenceGrantInformer.Lister(),
 		accessPolicyInformer.Lister(),
+		apInformer.GetIndexer(),
 		backendInformer.Lister(),
 	)
 
@@ -446,13 +453,15 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyAddress", proxyAddress)
 
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
-	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
+	resources, listenerStatuses, httpRouteStatuses, _, accessPolicyIssues, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
 		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, fmt.Errorf("failed to translate gateway to xDS resources: %w", err))
 		return errors.Join(err, updateErr)
 	}
 
 	logger.Info("Translated gateway to xDS resources")
+
+	c.reconcileAccessPolicyTranslationStatus(ctx, gateway, accessPolicyIssues)
 
 	newGW.Status.Listeners = listenerStatuses
 	// Update the xDS server with the new resources.

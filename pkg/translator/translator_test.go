@@ -696,8 +696,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			for _, p := range tc.policies {
 				agenticObjs = append(agenticObjs, p)
 			}
-			//nolint:staticcheck // generated clientset doesn't have NewClientset without applyconfig
-			agenticClient := agenticclient.NewSimpleClientset(agenticObjs...)
+			agenticClient := agenticclient.NewClientset(agenticObjs...)
 
 			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
@@ -715,6 +714,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				gwInformerFactory.Gateway().V1().HTTPRoutes().Lister(),
 				nil, // referenceGrantLister
 				agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister(),
+				nil, // accessPolicyIndexer (tests use slow attachment path)
 				agenticInformerFactory.Agentic().V0alpha0().XBackends().Lister(),
 			)
 
@@ -744,7 +744,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			}
 
 			// Run Translation
-			resources, listenerStatuses, httpRouteStatuses, _, err := tr.TranslateGatewayToXDS(ctx, tc.gw)
+			resources, listenerStatuses, httpRouteStatuses, _, _, err := tr.TranslateGatewayToXDS(ctx, tc.gw)
 			if err != nil {
 				t.Fatalf("Translation failed: %v", err)
 			}
@@ -1044,5 +1044,76 @@ func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincip
 				}
 			}
 		}
+	}
+}
+
+func TestTranslateGatewayToXDS_AccessPolicyTranslationIssues(t *testing.T) {
+	ctx := context.Background()
+	ns := "quickstart-ns"
+	trustDomain := "cluster.local"
+	gw := newTestGateway("agentic-net-gateway", ns, nil, nil)
+	backend := newTestBackend("local-mcp-backend", ns)
+	route := newTestHTTPRoute("httproute-local-mcp", ns, "agentic-net-gateway", "local-mcp-backend")
+	mcpSvc := newTestService("local-mcp-backend-svc", ns, 3001)
+
+	principal := "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa"
+	inlinePol := newTestAccessPolicy("auth-policy-local-mcp", ns, "local-mcp-backend", "XBackend", principal)
+
+	kind := gatewayv1.Kind("XBackend")
+	badExtPol := newTestAccessPolicy("bad-ext-pol", ns, "agentic-net-gateway", "Gateway", principal)
+	badExtPol.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+		Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+		ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+			ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthHTTPProtocol,
+			HTTPAuthConfig:       &gatewayv1.HTTPAuthConfig{Path: "/check"},
+			BackendRef: gatewayv1.BackendObjectReference{
+				Name: "auth",
+				Kind: &kind,
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientset(mcpSvc)
+	gwClient := gatewayclient.NewClientset(gw, route)
+	agenticClient := agenticclient.NewClientset(backend, inlinePol, badExtPol)
+
+	gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
+	coreInformerFactory := informers.NewSharedInformerFactory(k8sClient, 0)
+
+	tr := New(
+		trustDomain,
+		k8sClient,
+		gwClient,
+		coreInformerFactory.Core().V1().Namespaces().Lister(),
+		coreInformerFactory.Core().V1().Services().Lister(),
+		coreInformerFactory.Core().V1().Secrets().Lister(),
+		coreInformerFactory.Core().V1().ConfigMaps().Lister(),
+		gwInformerFactory.Gateway().V1().Gateways().Lister(),
+		gwInformerFactory.Gateway().V1().HTTPRoutes().Lister(),
+		nil,
+		agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister(),
+		nil,
+		agenticInformerFactory.Agentic().V0alpha0().XBackends().Lister(),
+	)
+
+	_ = coreInformerFactory.Core().V1().Services().Informer().GetIndexer().Add(mcpSvc)
+	_ = gwInformerFactory.Gateway().V1().Gateways().Informer().GetIndexer().Add(gw)
+	_ = gwInformerFactory.Gateway().V1().HTTPRoutes().Informer().GetIndexer().Add(route)
+	_ = agenticInformerFactory.Agentic().V0alpha0().XBackends().Informer().GetIndexer().Add(backend)
+	_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(inlinePol)
+	_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(badExtPol)
+
+	_, _, _, _, issues, err := tr.TranslateGatewayToXDS(ctx, gw)
+	if err != nil {
+		t.Fatalf("TranslateGatewayToXDS: %v", err)
+	}
+	key := types.NamespacedName{Namespace: ns, Name: "bad-ext-pol"}
+	msgs, ok := issues[key]
+	if !ok || len(msgs) == 0 {
+		t.Fatalf("expected translation issues for %v, got %#v", key, issues)
+	}
+	if !strings.Contains(msgs[0], "rule-1") && !strings.Contains(strings.Join(msgs, " "), "rule-1") {
+		t.Errorf("expected rule name in issue messages: %v", msgs)
 	}
 }
