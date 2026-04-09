@@ -27,16 +27,20 @@ logger = logging.getLogger(__name__)
 
 # Environment variables
 envoy_service = os.environ.get("ENVOY_SERVICE")
+gemini_model = os.environ.get("GEMINI_MODEL")
 hf_model = os.environ.get("HF_MODEL")
 ollama_base_url = os.environ.get("OLLAMA_BASE_URL")
 ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 
-# Default to Hugging Face mode if provided
+# Default to Hugging Face mode if provided, then Gemini, then Ollama
 if hf_model:
     logger.info(f"Using Hugging Face model: {hf_model}")
     model = LiteLlm(
         model=hf_model,
     )
+elif gemini_model:
+    logger.info(f"Using Gemini model: {gemini_model}")
+    model = gemini_model
 else:
     # Use Ollama (either custom URL or default host.docker.internal)
     base_url = ollama_base_url or "http://host.docker.internal:11434"

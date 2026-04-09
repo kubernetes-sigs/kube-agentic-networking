@@ -70,6 +70,14 @@ while [[ $# -gt 0 ]]; do
       QUICKSTART_ARGS+=("--ollama-model" "$2")
       shift 2
       ;;
+    --gemini)
+      QUICKSTART_ARGS+=("--gemini")
+      shift
+      ;;
+    --gemini-model)
+      QUICKSTART_ARGS+=("--gemini-model" "$2")
+      shift 2
+      ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
       echo ""
@@ -79,12 +87,18 @@ while [[ $# -gt 0 ]]; do
       echo "  --ollama              Use Ollama instead of HuggingFace (default: false)"
       echo "  --ollama-url URL      Ollama base URL (default: http://host.docker.internal:11434)"
       echo "  --ollama-model MODEL  Ollama model name (default: qwen2.5:7b)"
+      echo "  --gemini              Use Gemini instead of HuggingFace (default: false)"
+      echo "  --gemini-model MODEL  Gemini model name (default: gemini/gemini-2.5-flash)"
       echo "  --help, -h            Show this help message"
       echo ""
       echo "Examples:"
       echo "  # Use HuggingFace (requires HF_TOKEN):"
       echo "  export HF_TOKEN=<your-token>"
       echo "  $0"
+      echo ""
+      echo "  # Use Gemini (requires GOOGLE_API_KEY):"
+      echo "  export GOOGLE_API_KEY=<your-api-key>"
+      echo "  $0 --gemini"
       echo ""
       echo "  # Use Ollama with defaults:"
       echo "  $0 --ollama"

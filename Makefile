@@ -179,6 +179,39 @@ quickstart: ## Run the quickstart setup with HuggingFace (requires HF_TOKEN env 
 quickstart-ollama: ## Run the quickstart setup with Ollama
 	site-src/guides/quickstart/run-quickstart.sh --ollama
 
+.PHONY: quickstart-gemini
+quickstart-gemini: ## Run the quickstart setup with Gemini (requires GOOGLE_API_KEY env var)
+	site-src/guides/quickstart/run-quickstart.sh --gemini
+
+# Variables for easy updates
+AGENT_IMG    := locally-built-adk-agent-image
+AGENT_TAG    := dev
+NAMESPACE    := quickstart-ns
+CONTEXT      := $(shell kubectl config current-context)
+
+.PHONY: dev-reload-agent
+dev-reload-agent: ## Build, load and restart ADK agent in Kind with safety checks
+	@if [[ "$(CONTEXT)" != kind-* ]]; then \
+		echo "Error: Current context is '$(CONTEXT)', not a Kind cluster."; \
+		exit 1; \
+	fi
+
+	@echo "Building ADK agent image..."
+	DOCKER_BUILDKIT=1 docker build -t $(AGENT_IMG):$(AGENT_TAG) site-src/guides/quickstart/adk-agent/
+
+	@CLUSTER_NAME=$(shell echo $(CONTEXT) | sed 's/kind-//'); \
+	echo "Loading image into Kind cluster: $$CLUSTER_NAME..."; \
+	kind load docker-image $(AGENT_IMG):$(AGENT_TAG) --name $$CLUSTER_NAME
+
+	@echo "Updating Deployment in namespace: $(NAMESPACE)..."
+	kubectl patch deployment adk-agent -n $(NAMESPACE) --type=json \
+		-p='[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "IfNotPresent"}]'
+	
+	kubectl set image deployment/adk-agent adk-agent=$(AGENT_IMG):$(AGENT_TAG) -n $(NAMESPACE)
+	
+	@echo "Restarting adk-agent pods..."
+	kubectl rollout restart deployment/adk-agent -n $(NAMESPACE)
+
 ##@Docs
 
 .PHONY: build-docs
