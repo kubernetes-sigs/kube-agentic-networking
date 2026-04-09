@@ -159,7 +159,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 
 			for gwn, expectedNames := range tt.gatewaysToCheck {
 				gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwn, Namespace: ns}}
-				filters, err := tr.buildGatewayLevelRBACFilters(gw)
+				filters, err := tr.buildGatewayLevelRBACFilters(gw, nil)
 				if err != nil {
 					t.Fatalf("Gateway %s: Failed to build filters: %v", gwn, err)
 				}
@@ -416,7 +416,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			for ben, expectedFilterNames := range tt.backendsToCheck {
 				xbackend := &agenticv0alpha0.XBackend{ObjectMeta: metav1.ObjectMeta{Name: ben, Namespace: ns}}
 
-				configs, err := tr.buildBackendLevelRBACOverrides(xbackend)
+				configs, err := tr.buildBackendLevelRBACOverrides(xbackend, nil)
 				if err != nil {
 					t.Fatalf("Backend %s: Failed to build configs: %v", ben, err)
 				}
@@ -443,7 +443,7 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 		},
 	}
 
-	rbac := tr.buildRBACConfigWithCommonPolicies(policy)
+	rbac := tr.buildRBACConfigWithCommonPolicies(policy, nil)
 
 	expectedPolicies := []string{
 		"custom-rule",
@@ -737,7 +737,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
-			rbac := tr.translateAccessPolicyToRBAC(tc.accessPolicy)
+			rbac := tr.translateAccessPolicyToRBAC(tc.accessPolicy, nil)
 
 			verifyRBAC(t, rbac.GetRules(), tc.expectedRules)
 			verifyRBAC(t, rbac.GetShadowRules(), tc.expectedShadowRules)

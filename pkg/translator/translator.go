@@ -63,6 +63,38 @@ func (e *ControllerError) Error() string {
 	return e.Message
 }
 
+// accessPolicyTranslationCollector records semantic translation failures for
+// XAccessPolicy resources during a single Gateway translation. The controller
+// uses the snapshot to set Policy Accepted=False with PolicyReasonInvalid.
+type accessPolicyTranslationCollector struct {
+	issues map[types.NamespacedName][]string
+}
+
+func newAccessPolicyTranslationCollector() *accessPolicyTranslationCollector {
+	return &accessPolicyTranslationCollector{issues: make(map[types.NamespacedName][]string)}
+}
+
+func (c *accessPolicyTranslationCollector) record(namespace, name, msg string) {
+	if c == nil || msg == "" {
+		return
+	}
+	nn := types.NamespacedName{Namespace: namespace, Name: name}
+	c.issues[nn] = append(c.issues[nn], msg)
+}
+
+func (c *accessPolicyTranslationCollector) snapshot() map[types.NamespacedName][]string {
+	if c == nil {
+		return nil
+	}
+	out := make(map[types.NamespacedName][]string, len(c.issues))
+	for k, v := range c.issues {
+		cp := make([]string, len(v))
+		copy(cp, v)
+		out[k] = cp
+	}
+	return out
+}
+
 // Translator holds the xDS cache and version for generating snapshots.
 type Translator struct {
 	agenticIdentityTrustDomain string
@@ -107,14 +139,22 @@ func New(
 }
 
 // TranslateGatewayToXDS translates Gateway and HTTPRoute resources into Envoy xDS resources.
-func (t *Translator) TranslateGatewayToXDS(_ context.Context, gw *gatewayv1.Gateway) (map[resourcev3.Type][]envoyproxytypes.Resource, []gatewayv1.ListenerStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, error) {
-	// Get the desired state
-	envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, err := t.buildEnvoyResourcesForGateway(gw)
+// The returned map keys XAccessPolicies that had rules skipped or only partially translated;
+// values are human-readable failure messages for status updates.
+func (t *Translator) TranslateGatewayToXDS(_ context.Context, gw *gatewayv1.Gateway) (
+	map[resourcev3.Type][]envoyproxytypes.Resource,
+	[]gatewayv1.ListenerStatus,
+	map[types.NamespacedName][]gatewayv1.RouteParentStatus,
+	map[types.NamespacedName][]gatewayv1.RouteParentStatus,
+	map[types.NamespacedName][]string,
+	error,
+) {
+	envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, accessPolicyIssues, err := t.buildEnvoyResourcesForGateway(gw)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
-	return envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, nil
+	return envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, accessPolicyIssues, nil
 }
 
 var SupportedKinds = sets.New[gatewayv1.Kind](
@@ -129,8 +169,10 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	[]gatewayv1.ListenerStatus,
 	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // HTTPRoutes
 	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // GRPCRoutes
+	map[types.NamespacedName][]string, // XAccessPolicy translation issues
 	error,
 ) {
+	apTranslation := newAccessPolicyTranslationCollector()
 	httpRouteStatuses := make(map[types.NamespacedName][]gatewayv1.RouteParentStatus)
 	routesByListener := make(map[gatewayv1.SectionName][]*gatewayv1.HTTPRoute)
 
@@ -234,7 +276,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				// (and optionally XAccessPolicy) exists but no HTTPRoute routes traffic to it, no cluster
 				// or RBAC config is generated for that backend.
 				for _, httpRoute := range routesByListener[listener.Name] {
-					routes, allValidBackends, resolvedRefsCondition := t.translateHTTPRouteToEnvoyRoutes(httpRoute)
+					routes, allValidBackends, resolvedRefsCondition := t.translateHTTPRouteToEnvoyRoutes(httpRoute, apTranslation)
 
 					key := types.NamespacedName{Name: httpRoute.Name, Namespace: httpRoute.Namespace}
 					currentParentStatuses := httpRouteStatuses[key]
@@ -248,7 +290,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 					clusters, err := buildClustersFromRouteBackends(allValidBackends)
 					if err != nil {
-						return nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
+						return nil, nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
 					}
 					for _, cluster := range clusters {
 						envoyClusters[cluster.GetName()] = cluster
@@ -287,7 +329,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			}
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
-			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway)
+			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway, apTranslation)
 			if err != nil {
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
@@ -348,7 +390,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			// For HTTPS, we create one filter chain per listener because they have unique
 			// SNI matches and TLS settings.
 			if listeners[0].Protocol == gatewayv1.HTTPProtocolType {
-				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, gateway)
+				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, gateway, apTranslation)
 				envoyListener.FilterChains = []*listenerv3.FilterChain{filterChain}
 			}
 			finalEnvoyListeners = append(finalEnvoyListeners, envoyListener)
@@ -372,7 +414,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			resourcev3.RouteType:    envoyRoutes,
 			resourcev3.ClusterType:  clustersSlice,
 		}, orderedStatuses,
-		httpRouteStatuses, nil, nil
+		httpRouteStatuses, nil, apTranslation.snapshot(), nil
 }
 
 func getSupportedKinds(listener gatewayv1.Listener) ([]gatewayv1.RouteGroupKind, bool) {

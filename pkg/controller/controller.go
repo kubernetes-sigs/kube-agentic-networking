@@ -399,13 +399,15 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
 
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
-	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
+	resources, listenerStatuses, httpRouteStatuses, _, accessPolicyIssues, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
 		// TODO: Update Gateway status with the error.
 		return fmt.Errorf("failed to translate gateway to xDS resources: %w", err)
 	}
 
 	logger.Info("Translated gateway to xDS resources")
+
+	c.reconcileAccessPolicyTranslationStatus(ctx, gateway, accessPolicyIssues)
 
 	newGW.Status.Listeners = listenerStatuses
 	// Update the xDS server with the new resources.

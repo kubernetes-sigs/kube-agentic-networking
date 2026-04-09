@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -158,13 +159,29 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 	return listenerConditions
 }
 
-func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
+// ListAccessPoliciesAttachedToGateway returns every XAccessPolicy (any namespace) that is
+// attached to the Gateway via a Gateway or XBackend targetRef reachable from this Gateway's HTTPRoutes.
+func (t *Translator) ListAccessPoliciesAttachedToGateway(gateway *gatewayv1.Gateway) ([]*v0alpha0.XAccessPolicy, error) {
+	all, err := t.accessPolicyLister.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
+	}
+	var out []*v0alpha0.XAccessPolicy
+	for _, ap := range all {
+		if t.isAccessPolicyAttachedToGateway(ap, gateway) {
+			out = append(out, ap)
+		}
+	}
+	return out, nil
+}
+
+func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway, apTranslation *accessPolicyTranslationCollector) (*listener.FilterChain, error) {
 	var filterChain *listener.FilterChain
 	var err error
 
 	switch lis.Protocol {
 	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		filterChain, err = t.buildHTTPFilterChain(lis, routeName, gateway)
+		filterChain, err = t.buildHTTPFilterChain(lis, routeName, gateway, apTranslation)
 	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType:
 		filterChain, err = buildTCPFilterChain(lis)
 	case gatewayv1.UDPProtocolType:
@@ -276,8 +293,8 @@ func buildLocalReplyConfig() *hcm.LocalReplyConfig {
 	}
 }
 
-func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
-	httpFilters, err := t.buildHTTPFilters(gateway)
+func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway, apTranslation *accessPolicyTranslationCollector) (*listener.FilterChain, error) {
+	httpFilters, err := t.buildHTTPFilters(gateway, apTranslation)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +372,7 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
-func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway, apTranslation *accessPolicyTranslationCollector) ([]*hcm.HttpFilter, error) {
 	// 1. Add MCP filter.
 	mcpFilter, err := buildMCPFilter()
 	if err != nil {
@@ -363,7 +380,7 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 2. Add Gateway-level RBAC filters.
-	gatewayRBACFilters, err := t.buildGatewayLevelRBACFilters(gateway)
+	gatewayRBACFilters, err := t.buildGatewayLevelRBACFilters(gateway, apTranslation)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +395,7 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 4. Add ext_authz filters.
-	extAuthzFilters, err := t.buildExtAuthzFilters(gateway)
+	extAuthzFilters, err := t.buildExtAuthzFilters(gateway, apTranslation)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +439,7 @@ func buildMCPFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway, apTranslation *accessPolicyTranslationCollector) ([]*hcm.HttpFilter, error) {
 	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
@@ -435,6 +452,7 @@ func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.Ht
 		if !t.isAccessPolicyAttachedToGateway(ap, gateway) {
 			continue
 		}
+		apKey := types.NamespacedName{Namespace: ap.Namespace, Name: ap.Name}
 		for _, rule := range ap.Spec.Rules {
 			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
 				continue
@@ -443,6 +461,7 @@ func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.Ht
 			uniqueID, err := externalAuthUniqueID(extAuthz)
 			if err != nil {
 				klog.Error(err)
+				apTranslation.record(apKey.Namespace, apKey.Name, fmt.Sprintf("rule %q: cannot fingerprint external authorization config: %v", rule.Name, err))
 				continue
 			}
 			if _, exists := uniqueExtAuthzConfigs[uniqueID]; exists {
@@ -454,6 +473,7 @@ func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.Ht
 			extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, ap.GetNamespace())
 			if err != nil {
 				klog.Error(err)
+				apTranslation.record(apKey.Namespace, apKey.Name, fmt.Sprintf("rule %q: %v", rule.Name, err))
 				continue
 			}
 			filters = append(filters, extAuthzFilter)
