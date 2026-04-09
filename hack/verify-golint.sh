@@ -45,7 +45,7 @@ for module in $(find . -name "go.mod" | xargs -n1 dirname); do
     -e GOMODCACHE="/gomodcache" \
     -e GOCACHE="/gocache" \
     "golangci/golangci-lint:$VERSION" \
-    golangci-lint run -v --timeout=5m || failed=true
+    golangci-lint run -v --timeout=15m || failed=true
 done
 
 if ${failed}; then

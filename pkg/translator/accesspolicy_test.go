@@ -17,6 +17,8 @@ limitations under the License.
 package translator
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +26,7 @@ import (
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -146,7 +149,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agenticClient := agenticclient.NewSimpleClientset(tt.policies...)
+			agenticClient := agenticclient.NewClientset(tt.policies...)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 			lister := agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
 
@@ -158,7 +161,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 
 			for gwn, expectedNames := range tt.gatewaysToCheck {
 				gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwn, Namespace: ns}}
-				filters, err := tr.buildGatewayLevelRBACFilters(gw)
+				filters, err := tr.buildGatewayLevelRBACFilters(gw, nil)
 				if err != nil {
 					t.Fatalf("Gateway %s: Failed to build filters: %v", gwn, err)
 				}
@@ -274,7 +277,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agenticClient := agenticclient.NewSimpleClientset(tt.policies...)
+			agenticClient := agenticclient.NewClientset(tt.policies...)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 			lister := agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
 
@@ -287,7 +290,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			for ben, expectedFilterNames := range tt.backendsToCheck {
 				xbackend := &agenticv0alpha0.XBackend{ObjectMeta: metav1.ObjectMeta{Name: ben, Namespace: ns}}
 
-				configs, err := tr.buildBackendLevelRBACOverrides(xbackend)
+				configs, err := tr.buildBackendLevelRBACOverrides(xbackend, nil)
 				if err != nil {
 					t.Fatalf("Backend %s: Failed to build configs: %v", ben, err)
 				}
@@ -324,7 +327,7 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 		},
 	}
 
-	rbac := tr.buildRBACConfigWithCommonPolicies(policy)
+	rbac := tr.buildRBACConfigWithCommonPolicies(policy, nil)
 
 	rbacPolicy := rbac.GetRules().GetPolicies()["custom-rule"]
 	if rbacPolicy == nil {
@@ -423,7 +426,7 @@ func TestBuildRBACConfigWithoutCommonPolicies(t *testing.T) {
 		},
 	}
 
-	rbac := tr.buildRBACConfigWithCommonPolicies(policy)
+	rbac := tr.translateAccessPolicyToRBAC(policy, nil)
 
 	expectedPolicies := []string{
 		"custom-rule",
@@ -489,7 +492,7 @@ func TestFindAccessPoliciesForTarget(t *testing.T) {
 		},
 	}
 
-	agenticClient := agenticclient.NewSimpleClientset(policies...)
+	agenticClient := agenticclient.NewClientset(policies...)
 	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 	lister := agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
 
@@ -864,7 +867,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
-			rbac := tr.translateAccessPolicyToRBAC(tc.accessPolicy)
+			rbac := tr.translateAccessPolicyToRBAC(tc.accessPolicy, nil)
 
 			verifyRBAC(t, rbac.GetRules(), tc.expectedRules)
 			verifyRBAC(t, rbac.GetShadowRules(), tc.expectedShadowRules)
@@ -873,6 +876,140 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				t.Errorf("ShadowRulesStatPrefix: expected set=%v, got %q", tc.expectShadowStatPrefix, rbac.GetShadowRulesStatPrefix())
 			}
 		})
+	}
+}
+
+// TestTranslateAccessPolicyToRBAC_recordsExternalAuthFingerprintFailure exercises the path at
+// accesspolicy.go where externalAuthUniqueID fails. json.Marshal on well-formed Gateway API
+// objects essentially never fails in production; this replaces marshalExternalAuthForUniqueID to
+// prove the collector message is what reconcileAccessPolicyTranslationStatus surfaces on status.
+// Do not call t.Parallel here: the test temporarily mutates that package-level hook.
+func TestTranslateAccessPolicyToRBAC_recordsExternalAuthFingerprintFailure(t *testing.T) {
+	const (
+		simulatedMarshalFailureErrText = "simulated marshal failure"
+		wantIssueContainsFingerprint   = "cannot fingerprint external authorization config"
+	)
+
+	orig := marshalExternalAuthForUniqueID
+	marshalExternalAuthForUniqueID = func(_ any) ([]byte, error) {
+		return nil, errors.New(simulatedMarshalFailureErrText)
+	}
+	t.Cleanup(func() { marshalExternalAuthForUniqueID = orig })
+
+	spiffe := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://cluster.local/ns/default/sa/sa1")
+	policy := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pol-fingerprint"},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeExternalAuth,
+			ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+				ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+				BackendRef:           gatewayv1.BackendObjectReference{Name: "auth-svc"},
+			},
+			TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
+				{
+					LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+						Group: gatewayv1.GroupName,
+						Kind:  "Gateway",
+						Name:  "gw",
+					},
+				},
+			},
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name:   "ext-rule",
+					Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE, SPIFFE: &spiffe},
+				},
+			},
+		},
+	}
+
+	coll := newTranslationErrors()
+	tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
+	_ = tr.translateAccessPolicyToRBAC(policy, coll)
+
+	snap := coll.policyIssues()
+	nn := types.NamespacedName{Namespace: "default", Name: "pol-fingerprint"}
+	msgs, ok := snap[nn]
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("expected one recorded issue for %v, got %#v", nn, snap)
+	}
+	if !strings.Contains(msgs[0], wantIssueContainsFingerprint) {
+		t.Errorf("message %q should mention fingerprint failure", msgs[0])
+	}
+	if !strings.Contains(msgs[0], simulatedMarshalFailureErrText) {
+		t.Errorf("message should include underlying error: %q", msgs[0])
+	}
+}
+
+func TestMergeAllowPoliciesToRBAC_skipsInvalidCELAndEnforcesValidRules(t *testing.T) {
+	tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
+	spiffe := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://cluster.local/ns/default/sa/tester")
+	policy := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "allow-partial"},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name:   "bad-cel",
+					Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE, SPIFFE: &spiffe},
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeCEL,
+						CEL:  &agenticv1alpha1.AccessPolicyCELRule{Expression: "this is not valid cel"},
+					},
+				},
+				{
+					Name:   "good-inline",
+					Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE, SPIFFE: &spiffe},
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP: agenticv1alpha1.MCPAttributes{
+							Methods: []agenticv1alpha1.MCPMethod{{Name: agenticv1alpha1.MCPMethodName("echo")}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	coll := newTranslationErrors()
+	rbac := tr.mergeAllowPoliciesToRBAC([]*agenticv1alpha1.XAccessPolicy{policy}, coll)
+
+	if _, ok := rbac.GetRules().GetPolicies()["bad-cel"]; ok {
+		t.Fatal("invalid CEL rule should not be programmed")
+	}
+	if _, ok := rbac.GetRules().GetPolicies()["good-inline"]; !ok {
+		t.Fatal("expected valid rule to be programmed")
+	}
+
+	msgs := coll.policyIssues()[types.NamespacedName{Namespace: "default", Name: "allow-partial"}]
+	if len(msgs) != 1 || !strings.Contains(msgs[0], `rule "bad-cel"`) {
+		t.Fatalf("expected skipped-rule issue for bad-cel, got %#v", msgs)
+	}
+}
+
+func TestTranslateAccessPolicyToRBAC_allRulesInvalidProducesNoAllowRules(t *testing.T) {
+	tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
+	spiffe := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://cluster.local/ns/default/sa/tester")
+	policy := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "allow-all-invalid"},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name:   "only-rule",
+					Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE, SPIFFE: &spiffe},
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeCEL,
+						CEL:  &agenticv1alpha1.AccessPolicyCELRule{Expression: "not valid"},
+					},
+				},
+			},
+		},
+	}
+
+	rbac := tr.translateAccessPolicyToRBAC(policy, newTranslationErrors())
+	if len(rbac.GetRules().GetPolicies()) != 0 {
+		t.Fatalf("expected no programmed allow rules, got %#v", rbac.GetRules().GetPolicies())
 	}
 }
 

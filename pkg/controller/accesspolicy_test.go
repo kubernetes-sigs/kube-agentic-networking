@@ -18,17 +18,24 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayclientfake "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
+	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/fake"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
 
 func TestIsPolicyUnderTargetLimit(t *testing.T) {
@@ -220,7 +227,7 @@ func TestIsPolicyUnderTargetLimit(t *testing.T) {
 			allPolicies := make([]runtime.Object, 0, len(tt.existing)+1)
 			allPolicies = append(allPolicies, tt.existing...)
 			allPolicies = append(allPolicies, tt.currentPolicy)
-			fakeClient := agenticclient.NewSimpleClientset(allPolicies...)
+			fakeClient := agenticclient.NewClientset(allPolicies...)
 			informerFactory := agenticinformers.NewSharedInformerFactory(fakeClient, 0)
 			lister := informerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
 
@@ -255,5 +262,260 @@ func TestIsPolicyUnderTargetLimit(t *testing.T) {
 				t.Errorf("Expected %d status updates, got %d", expectedUpdates, updateCount)
 			}
 		})
+	}
+}
+
+func TestFilterEmptyStrings(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{name: "empty", in: nil, want: nil},
+		{name: "drops empties", in: []string{"a", "", "b", ""}, want: []string{"a", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterEmptyStrings(tt.in)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("filterEmptyStrings() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAccessPolicyNeedsTranslationStatusRefresh(t *testing.T) {
+	ns := gwapiv1.Namespace("default")
+	gwGroup := gwapiv1.Group(gwapiv1.GroupName)
+	gwKind := gwapiv1.Kind("Gateway")
+	invalidAncestor := gwapiv1.PolicyAncestorStatus{
+		AncestorRef: gwapiv1.ParentReference{
+			Group:     &gwGroup,
+			Kind:      &gwKind,
+			Namespace: &ns,
+			Name:      "gw",
+		},
+		ControllerName: gwapiv1.GatewayController(constants.ControllerName),
+		Conditions: []metav1.Condition{
+			{
+				Type:   string(agenticv1alpha1.PolicyConditionAccepted),
+				Status: metav1.ConditionFalse,
+				Reason: string(gwapiv1.PolicyReasonInvalid),
+			},
+		},
+	}
+	warningAncestor := gwapiv1.PolicyAncestorStatus{
+		AncestorRef:    invalidAncestor.AncestorRef,
+		ControllerName: invalidAncestor.ControllerName,
+		Conditions: []metav1.Condition{
+			{
+				Type:    string(agenticv1alpha1.PolicyConditionAccepted),
+				Status:  metav1.ConditionTrue,
+				Reason:  string(agenticv1alpha1.PolicyReasonAccepted),
+				Message: accessPolicyTranslationWarningMessage([]string{`rule "r1": broken`}),
+			},
+		},
+	}
+	tests := []struct {
+		name   string
+		policy *agenticv1alpha1.XAccessPolicy
+		want   bool
+	}{
+		{
+			name:   "no ancestors",
+			policy: &agenticv1alpha1.XAccessPolicy{},
+			want:   false,
+		},
+		{
+			name: "stale invalid translation status",
+			policy: &agenticv1alpha1.XAccessPolicy{
+				Status: agenticv1alpha1.AccessPolicyStatus{Ancestors: []gwapiv1.PolicyAncestorStatus{invalidAncestor}},
+			},
+			want: true,
+		},
+		{
+			name: "stale skipped-rules warning",
+			policy: &agenticv1alpha1.XAccessPolicy{
+				Status: agenticv1alpha1.AccessPolicyStatus{Ancestors: []gwapiv1.PolicyAncestorStatus{warningAncestor}},
+			},
+			want: true,
+		},
+		{
+			name: "false for limit exceeded",
+			policy: &agenticv1alpha1.XAccessPolicy{
+				Status: agenticv1alpha1.AccessPolicyStatus{
+					Ancestors: []gwapiv1.PolicyAncestorStatus{
+						{
+							AncestorRef: invalidAncestor.AncestorRef,
+							Conditions: []metav1.Condition{
+								{
+									Type:   string(agenticv1alpha1.PolicyConditionAccepted),
+									Status: metav1.ConditionFalse,
+									Reason: string(agenticv1alpha1.PolicyLimitPerTargetExceeded),
+								},
+							},
+						},
+					},
+				},
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := accessPolicyNeedsTranslationStatusRefresh(tt.policy); got != tt.want {
+				t.Errorf("accessPolicyNeedsTranslationStatusRefresh() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func testPolicyGatewayTarget(name, ns, gwName string) *agenticv1alpha1.XAccessPolicy {
+	spiffeID := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://cluster.local/ns/x/sa/y")
+	return &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Generation: 1},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{
+				{
+					LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+						Group: gwapiv1.GroupName,
+						Kind:  "Gateway",
+						Name:  gwapiv1.ObjectName(gwName),
+					},
+				},
+			},
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name:   "r1",
+					Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE, SPIFFE: &spiffeID},
+				},
+			},
+		},
+	}
+}
+
+func TestReconcileAccessPolicyTranslationStatus_setsAcceptedWithSkippedRuleWarning(t *testing.T) {
+	ctx := context.Background()
+	ns := "default"
+	gwName := "gw1"
+	policy := testPolicyGatewayTarget("pol1", ns, gwName)
+
+	fakeAgentic := agenticclient.NewClientset(policy)
+	agenticFactory := agenticinformers.NewSharedInformerFactory(fakeAgentic, 0)
+	_ = agenticFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Add(policy)
+	apLister := agenticFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
+
+	tr := translator.New(
+		"cluster.local",
+		nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil,
+		apLister,
+		nil,
+		nil,
+	)
+
+	c := &Controller{
+		agentic: agenticNetResources{
+			client:             fakeAgentic,
+			accessPolicyLister: apLister,
+		},
+		translator: tr,
+	}
+
+	gw := &gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
+	issues := map[types.NamespacedName][]string{
+		{Namespace: ns, Name: "pol1"}: {"dup", "dup", "rule x: broken"},
+	}
+	c.reconcileAccessPolicyTranslationStatus(ctx, gw, issues)
+
+	updated, err := fakeAgentic.AgenticV1alpha1().XAccessPolicies(ns).Get(ctx, "pol1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get policy: %v", err)
+	}
+	if len(updated.Status.Ancestors) != 1 {
+		t.Fatalf("expected 1 ancestor status, got %d", len(updated.Status.Ancestors))
+	}
+	cond := meta.FindStatusCondition(updated.Status.Ancestors[0].Conditions, string(agenticv1alpha1.PolicyConditionAccepted))
+	if cond == nil {
+		t.Fatal("missing Accepted condition")
+	}
+	if cond.Status != metav1.ConditionTrue || cond.Reason != string(agenticv1alpha1.PolicyReasonAccepted) {
+		t.Fatalf("Accepted condition = %+v, want True/Accepted", cond)
+	}
+	wantMsg := accessPolicyTranslationWarningMessage([]string{"dup", "rule x: broken"})
+	if cond.Message != wantMsg {
+		t.Errorf("message = %q, want %q", cond.Message, wantMsg)
+	}
+}
+
+func TestReconcileAccessPolicyTranslationStatus_clearsInvalidViaLimitCheck(t *testing.T) {
+	ctx := context.Background()
+	ns := "default"
+	gwName := "gw1"
+	policy := testPolicyGatewayTarget("pol1", ns, gwName)
+	nsG := gwapiv1.Namespace(ns)
+	gwG := gwapiv1.Group(gwapiv1.GroupName)
+	gwK := gwapiv1.Kind("Gateway")
+	policy.Status = agenticv1alpha1.AccessPolicyStatus{
+		Ancestors: []gwapiv1.PolicyAncestorStatus{
+			{
+				AncestorRef: gwapiv1.ParentReference{
+					Group:     &gwG,
+					Kind:      &gwK,
+					Namespace: &nsG,
+					Name:      gwapiv1.ObjectName(gwName),
+				},
+				ControllerName: gwapiv1.GatewayController(constants.ControllerName),
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(agenticv1alpha1.PolicyConditionAccepted),
+						Status: metav1.ConditionFalse,
+						Reason: string(gwapiv1.PolicyReasonInvalid),
+					},
+				},
+			},
+		},
+	}
+
+	fakeAgentic := agenticclient.NewClientset(policy)
+	agenticFactory := agenticinformers.NewSharedInformerFactory(fakeAgentic, 0)
+	_ = agenticFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Add(policy)
+	apLister := agenticFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
+
+	gwClient := gatewayclientfake.NewClientset()
+	gwFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+	httprouteLister := gwFactory.Gateway().V1().HTTPRoutes().Lister()
+
+	tr := translator.New(
+		"cluster.local",
+		nil, nil, nil, nil, nil, nil, nil,
+		nil, httprouteLister, nil,
+		apLister,
+		nil,
+		nil,
+	)
+
+	c := &Controller{
+		agentic: agenticNetResources{
+			client:             fakeAgentic,
+			accessPolicyLister: apLister,
+		},
+		translator: tr,
+	}
+
+	gw := &gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
+	c.reconcileAccessPolicyTranslationStatus(ctx, gw, nil)
+
+	updated, err := fakeAgentic.AgenticV1alpha1().XAccessPolicies(ns).Get(ctx, "pol1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get policy: %v", err)
+	}
+	cond := meta.FindStatusCondition(updated.Status.Ancestors[0].Conditions, string(agenticv1alpha1.PolicyConditionAccepted))
+	if cond == nil {
+		t.Fatal("missing Accepted condition")
+	}
+	if cond.Status != metav1.ConditionTrue {
+		t.Fatalf("expected Accepted True after translation cleared, got %+v", cond)
 	}
 }
