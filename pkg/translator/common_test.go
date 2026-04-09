@@ -113,7 +113,7 @@ func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *ag
 						{
 							Type:               string(agenticv0alpha0.PolicyConditionAccepted),
 							Status:             metav1.ConditionTrue,
-							Reason:             "Accepted",
+							Reason:             string(agenticv0alpha0.PolicyReasonAccepted),
 							LastTransitionTime: metav1.Now(),
 						},
 					},
