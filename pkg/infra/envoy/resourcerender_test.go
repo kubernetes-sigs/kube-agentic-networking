@@ -267,3 +267,56 @@ func TestRenderServiceAccount(t *testing.T) {
 		t.Errorf("ServiceAccount missing gateway name label: got %s, want %s", sa.Labels[constants.GatewayNameLabel], gw.Name)
 	}
 }
+
+func TestRenderWithInfrastructureLabelsAndAnnotations(t *testing.T) {
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gw",
+			Namespace: "test-ns",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			Infrastructure: &gatewayv1.GatewayInfrastructure{
+				Labels: map[gatewayv1.LabelKey]gatewayv1.LabelValue{
+					"custom-label": "custom-value",
+				},
+				Annotations: map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue{
+					"custom-annotation": "custom-value",
+				},
+			},
+		},
+	}
+	rm := NewResourceManager(nil, gw, "envoy-image", "cluster.local")
+
+	// Test Deployment
+	dep := rm.renderDeployment()
+	if dep.Labels["custom-label"] != "custom-value" {
+		t.Errorf("Deployment missing custom label")
+	}
+	if dep.Annotations["custom-annotation"] != "custom-value" {
+		t.Errorf("Deployment missing custom annotation")
+	}
+	if dep.Spec.Template.Labels["custom-label"] != "custom-value" {
+		t.Errorf("Pod template missing custom label")
+	}
+	if dep.Spec.Template.Annotations["custom-annotation"] != "custom-value" {
+		t.Errorf("Pod template missing custom annotation")
+	}
+
+	// Test Service
+	svc := rm.renderService()
+	if svc.Labels["custom-label"] != "custom-value" {
+		t.Errorf("Service missing custom label")
+	}
+	if svc.Annotations["custom-annotation"] != "custom-value" {
+		t.Errorf("Service missing custom annotation")
+	}
+
+	// Test ServiceAccount
+	sa := rm.renderServiceAccount()
+	if sa.Labels["custom-label"] != "custom-value" {
+		t.Errorf("ServiceAccount missing custom label")
+	}
+	if sa.Annotations["custom-annotation"] != "custom-value" {
+		t.Errorf("ServiceAccount missing custom annotation")
+	}
+}

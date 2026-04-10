@@ -191,7 +191,6 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 	return svc.Spec.ClusterIP, nil
 }
 
-
 func DeleteProxy(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
 	nodeID := proxyName(namespace, name)
 	logger := klog.FromContext(ctx).WithValues("resourceName", klog.KRef(namespace, nodeID))

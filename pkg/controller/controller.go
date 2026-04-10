@@ -505,22 +505,6 @@ func (c *Controller) ensureGatewayFinalizer(ctx context.Context, namespace, name
 	return !hadFinalizer && nowHas, nil
 }
 
-func (c *Controller) updateGatewayStatus(ctx context.Context, namespace, name string, desired *gatewayv1.GatewayStatus) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
-		if err != nil {
-			return err
-		}
-		if reflect.DeepEqual(latest.Status, *desired) {
-			return nil
-		}
-		u := latest.DeepCopy()
-		u.Status = *desired.DeepCopy()
-		_, err = c.gateway.client.GatewayV1().Gateways(namespace).UpdateStatus(ctx, u, metav1.UpdateOptions{})
-		return err
-	})
-}
-
 // hasHTTPRoutesReferencingGateway returns true if any HTTPRoute has a ParentRef to the given Gateway.
 func hasHTTPRoutesReferencingGateway(c *Controller, gw *gatewayv1.Gateway) bool {
 	routes, err := c.gateway.httprouteLister.List(labels.Everything())
