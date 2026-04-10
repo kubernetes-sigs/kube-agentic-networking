@@ -21,10 +21,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,6 +34,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
@@ -40,6 +45,10 @@ const (
 	agentCertPath = "/run/agent-identity-mtls/credential-bundle.pem"
 	agentKeyPath  = "/run/agent-identity-mtls/credential-bundle.pem"
 	agentCAPath   = "/run/agent-identity-mtls/cluster.local.trust-bundle.pem"
+
+	testClientCertPath = "/tmp/mtls-client/tls.crt"
+	testClientKeyPath  = "/tmp/mtls-client/tls.key"
+	testClientCAPath   = "/tmp/mtls-client/ca.crt"
 
 	xdsUpdateWaitTime = 5 * time.Second
 )
@@ -259,7 +268,10 @@ func TestExternalAuthE2E(t *testing.T) {
 	applyToNamespace(t, "testdata/ext-authz-service.yaml", namespace)
 	runKubectl(t, "wait", "--for=condition=available", "deployment/authorino", "-n", namespace, "--timeout=2m")
 	err := retry(20, 2*time.Second, func() error {
-		out := runKubectlOutput(t, "get", "authconfig", "external-auth-config", "-n", namespace, "-o", "jsonpath={.status.summary.ready}")
+		out, err := runKubectlOutput(t, "get", "authconfig", "external-auth-config", "-n", namespace, "-o", "jsonpath={.status.summary.ready}")
+		if err != nil {
+			return err
+		}
 		if out != "true" {
 			return fmt.Errorf("authconfig not ready yet: %s", out)
 		}
@@ -487,7 +499,10 @@ func deployCommonTestResources(t *testing.T) (namespace, gatewayIP string, clean
 
 	var proxyPodName string
 	err := retry(20, 5*time.Second, func() error {
-		out := runKubectlOutput(t, "get", "pods", "-n", namespace, "-l", fmt.Sprintf("%s=e2e-gateway", constants.GatewayNameLabel), "-o", "jsonpath={.items[*].metadata.name}")
+		out, err := runKubectlOutput(t, "get", "pods", "-n", namespace, "-l", fmt.Sprintf("%s=e2e-gateway", constants.GatewayNameLabel), "-o", "jsonpath={.items[*].metadata.name}")
+		if err != nil {
+			return err
+		}
 		names := strings.Fields(strings.TrimSpace(out))
 		if len(names) == 0 {
 			return fmt.Errorf("envoy proxy pod not found")
@@ -503,7 +518,10 @@ func deployCommonTestResources(t *testing.T) (namespace, gatewayIP string, clean
 	// Return the Gateway IP
 	t.Log("Obtain Gateway Address from status")
 	err = retry(20, 2*time.Second, func() error {
-		out := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace, "-o", "jsonpath={.status.addresses[*].value}")
+		out, err := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace, "-o", "jsonpath={.status.addresses[*].value}")
+		if err != nil {
+			return err
+		}
 		values := strings.Fields(strings.TrimSpace(out))
 		if len(values) == 0 {
 			return fmt.Errorf("gateway status address not found")
@@ -567,20 +585,21 @@ func deleteFromNamespace(t *testing.T, manifestPath, namespace string) {
 	}
 }
 
-func runKubectlOutput(t *testing.T, args ...string) string {
+func runKubectlOutput(t *testing.T, args ...string) (string, error) {
 	cmd := exec.CommandContext(context.Background(), "kubectl", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Logf("kubectl %v failed: %v\nStderr: %s", args, err, stderr.String())
-		return ""
+		return stdout.String(), fmt.Errorf("kubectl %v failed: %w\nStderr: %s", args, err, stderr.String())
 	}
 	if stderr.Len() > 0 {
 		t.Logf("kubectl %v stderr: %s", args, stderr.String())
 	}
-	return strings.TrimSpace(stdout.String())
+	return strings.TrimSpace(stdout.String()), nil
 }
+
+
 
 func retry(attempts int, sleep time.Duration, f func() error) error {
 	for i := 0; i < attempts; i++ {
@@ -600,21 +619,19 @@ type mcpTestSession struct {
 }
 
 func initializeMCP(t *testing.T, gatewayIP string, pod types.NamespacedName) *mcpTestSession {
+	return initializeMCPWithCerts(t, gatewayIP, pod, agentCertPath, agentKeyPath, agentCAPath)
+}
+
+func initializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.NamespacedName, certPath, keyPath, caPath string) *mcpTestSession {
 	t.Logf("Initialize MCP session for pod %s", pod)
 	time.Sleep(xdsUpdateWaitTime)
 
 	mcpSessionID := ""
 	err := retry(5, 10*time.Second, func() error {
-		out := runKubectlOutput(t, "exec", pod.Name, "-n", pod.Namespace, "--",
-			"curl", "-ks", "-i",
-			"--cert", agentCertPath,
-			"--key", agentKeyPath,
-			"--cacert", agentCAPath,
-			"-H", "Content-Type: application/json",
-			"-H", "Accept: application/json, text/event-stream",
-			"-H", "mcp-protocol-version: 2025-11-25",
-			"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
-			fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
+		out, err := execMCPCurl(t, gatewayIP, pod, certPath, keyPath, caPath)
+		if err != nil {
+			return err
+		}
 
 		// Extract mcp-session-id from headers
 		lines := strings.Split(out, "\r\n")
@@ -633,6 +650,19 @@ func initializeMCP(t *testing.T, gatewayIP string, pod types.NamespacedName) *mc
 	t.Logf("Obtained MCP Session ID for %s: %s", pod, mcpSessionID)
 
 	return &mcpTestSession{t: t, gatewayIP: gatewayIP, sessionID: mcpSessionID, pod: pod}
+}
+
+func execMCPCurl(t *testing.T, gatewayIP string, pod types.NamespacedName, certPath, keyPath, caPath string) (string, error) {
+	return runKubectlOutput(t, "exec", pod.Name, "-n", pod.Namespace, "--",
+		"curl", "-ks", "-i",
+		"--cert", certPath,
+		"--key", keyPath,
+		"--cacert", caPath,
+		"-H", "Content-Type: application/json",
+		"-H", "Accept: application/json, text/event-stream",
+		"-H", "mcp-protocol-version: 2025-11-25",
+		"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
+		fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
 }
 
 type mcpResponse struct {
@@ -676,7 +706,7 @@ func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string,
 		t.Fatalf("invalid pod reference in MCP session: %v", m.pod)
 	}
 
-	out := runKubectlOutput(t, "exec", m.pod.Name, "-n", m.pod.Namespace, "--",
+	out, err := runKubectlOutput(t, "exec", m.pod.Name, "-n", m.pod.Namespace, "--",
 		"curl", "-ks", "-w", "\n%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -687,6 +717,9 @@ func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string,
 		"-H", fmt.Sprintf("mcp-session-id: %s", m.sessionID),
 		"--data-raw", data,
 		fmt.Sprintf("https://%s:10001/mcp", m.gatewayIP))
+	if err != nil {
+		t.Fatalf("failed to call tool: %v", err)
+	}
 
 	out = strings.TrimSpace(out)
 	lines := strings.Split(out, "\n")
@@ -757,3 +790,125 @@ func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string,
 	}
 	t.Logf("Tool call %q from pod %s: got expected response.", toolName, m.pod)
 }
+
+func TestGatewayTLS(t *testing.T) {
+	t.Parallel()
+
+	namespace, gatewayIP, cleanup := deployCommonTestResources(t)
+	defer cleanup()
+
+	// Generate certs
+	ca1, err := generateCA("test-ca-1")
+	if err != nil {
+		t.Fatalf("failed to generate CA 1: %v", err)
+	}
+
+	ca2, err := generateCA("test-ca-2")
+	if err != nil {
+		t.Fatalf("failed to generate CA 2: %v", err)
+	}
+
+	serverCert, serverKey, err := generateServerCert(ca1, []string{"agentic-net-gateway"})
+	if err != nil {
+		t.Fatalf("failed to generate server cert: %v", err)
+	}
+
+	clientCert1, clientKey1, err := generateClientCert(ca1)
+	if err != nil {
+		t.Fatalf("failed to generate client cert 1: %v", err)
+	}
+
+	clientCert2, clientKey2, err := generateClientCert(ca2)
+	if err != nil {
+		t.Fatalf("failed to generate client cert 2: %v", err)
+	}
+
+	kc := getClientset(t)
+
+	// Create secrets for Gateway
+	err = createTLSSecret(kc, namespace, "gateway-server-cert", serverCert, serverKey)
+	if err != nil {
+		t.Fatalf("failed to create server secret: %v", err)
+	}
+
+	caCertPEM1 := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca1.RootCertificate.Raw})
+	err = createCACertConfigMap(kc, namespace, "gateway-client-ca", caCertPEM1)
+	if err != nil {
+		t.Fatalf("failed to create CA configmap: %v", err)
+	}
+
+	// Apply gateway-tls.yaml to enable mTLS on the common gateway
+	applyToNamespace(t, "testdata/gateway-tls.yaml", namespace)
+
+	// Deploy tester pod
+	applyToNamespace(t, "testdata/tester-pod.yaml", namespace)
+	runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester", "-n", namespace, "--timeout=5m")
+
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+
+	podName := "e2e-tester"
+
+	// Write files to pod
+	runKubectl(t, "exec", podName, "-n", namespace, "--", "mkdir", "-p", "/tmp/mtls-client")
+	writePodFile(t, namespace, podName, testClientCertPath, clientCert1)
+	writePodFile(t, namespace, podName, testClientKeyPath, clientKey1)
+	writePodFile(t, namespace, podName, testClientCAPath, caCertPEM1)
+
+	// Test case 1: Client cert signed by trusted CA (should succeed)
+	initializeMCPWithCerts(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName},
+		testClientCertPath, testClientKeyPath, testClientCAPath)
+
+	// Test case 2: Client cert signed by different CA (should fail)
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Testing with client cert signed by different CA (should fail)")
+	
+	// Overwrite client certs with invalid ones
+	writePodFile(t, namespace, podName, testClientCertPath, clientCert2)
+	writePodFile(t, namespace, podName, testClientKeyPath, clientKey2)
+
+	err = retry(5, 5*time.Second, func() error {
+		stdout, err := execMCPCurl(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName},
+			testClientCertPath, testClientKeyPath, testClientCAPath)
+		if err == nil {
+			return fmt.Errorf("expected curl to fail but it succeeded with output: %s", stdout)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("mTLS negative test failed: %v", err)
+	}
+}
+
+func getClientset(t *testing.T) kubernetes.Interface {
+	kubeConfigDefault := ""
+	if home := homedir.HomeDir(); home != "" {
+		kubeConfigDefault = filepath.Join(home, ".kube", "config")
+	}
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		kubeconfig = kubeConfigDefault
+	}
+
+	kconfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		t.Fatalf("while reading kubeconfig: %v", err)
+	}
+
+	kc, err := kubernetes.NewForConfig(kconfig)
+	if err != nil {
+		t.Fatalf("while creating Kubernetes client: %v", err)
+	}
+	return kc
+}
+
+func writePodFile(t *testing.T, namespace, podName, filePath string, content []byte) {
+	cmd := exec.CommandContext(context.Background(), "kubectl", "exec", "-i", podName, "-n", namespace, "--", "sh", "-c", "cat > "+filePath)
+	cmd.Stdin = bytes.NewReader(content)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to write file %s to pod %s: %v\nStderr: %s", filePath, podName, err, stderr.String())
+	}
+}
+

@@ -36,34 +36,183 @@ import (
 )
 
 func TestBuildDownstreamTLSContext(t *testing.T) {
-	anyContext, err := buildDownstreamTLSContext()
-	if err != nil {
-		t.Fatalf("failed to build downstream TLS context: %v", err)
+	tests := []struct {
+		name                 string
+		listener             gatewayv1.Listener
+		gateway              *gatewayv1.Gateway
+		expectedCertSDSName  string
+		expectedTrustSDSName string
+	}{
+		{
+			name:                 "Default SPIFFE configs",
+			listener:             gatewayv1.Listener{},
+			gateway:              &gatewayv1.Gateway{},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: constants.SpiffeTrustSdsConfigName,
+		},
+		{
+			name: "Custom per-port CA trust not matching the Listener port",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							PerPort: []gatewayv1.TLSPortConfig{
+								{
+									Port: 8444,
+									TLS: gatewayv1.TLSConfig{
+										Validation: &gatewayv1.FrontendTLSValidation{
+											CACertificateRefs: []gatewayv1.ObjectReference{
+												{
+													Name: "my-port-ca",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: constants.SpiffeTrustSdsConfigName,
+		},
+		{
+			name: "Custom per-port CA trust matching Listener port",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							PerPort: []gatewayv1.TLSPortConfig{
+								{
+									Port: 8443,
+									TLS: gatewayv1.TLSConfig{
+										Validation: &gatewayv1.FrontendTLSValidation{
+											CACertificateRefs: []gatewayv1.ObjectReference{
+												{
+													Name: "my-port-ca",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: "test-ns-my-port-ca",
+		},
+		{
+			name: "Custom default CA client validation without cert",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							Default: gatewayv1.TLSConfig{
+								Validation: &gatewayv1.FrontendTLSValidation{
+									CACertificateRefs: []gatewayv1.ObjectReference{
+										{
+											Name: "my-port-ca",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: "test-ns-my-port-ca",
+		},
+		{
+			name: "Custom cert with default CA trust",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+				TLS: &gatewayv1.ListenerTLSConfig{
+					CertificateRefs: []gatewayv1.SecretObjectReference{
+						{
+							Name: "my-cert",
+						},
+					},
+				},
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							Default: gatewayv1.TLSConfig{
+								Validation: &gatewayv1.FrontendTLSValidation{
+									CACertificateRefs: []gatewayv1.ObjectReference{
+										{
+											Name: "my-port-ca",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  "test-ns-my-cert",
+			expectedTrustSDSName: "test-ns-my-port-ca",
+		},
 	}
 
-	if anyContext == nil {
-		t.Fatal("expected non-nil TLS context")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			anyContext, err := buildDownstreamTLSContext(tt.listener, tt.gateway)
+			if err != nil {
+				t.Fatalf("failed to build downstream TLS context: %v", err)
+			}
 
-	tlsContext := &tlsv3.DownstreamTlsContext{}
-	if err := anyContext.UnmarshalTo(tlsContext); err != nil {
-		t.Fatalf("failed to unmarshal any to DownstreamTlsContext: %v", err)
-	}
+			if anyContext == nil {
+				t.Fatal("expected non-nil TLS context")
+			}
 
-	// Verify mTLS requirement
-	if tlsContext.GetRequireClientCertificate() == nil || !tlsContext.GetRequireClientCertificate().GetValue() {
-		t.Errorf("RequireClientCertificate should be true for mTLS")
-	}
+			tlsContext := &tlsv3.DownstreamTlsContext{}
+			if err := anyContext.UnmarshalTo(tlsContext); err != nil {
+				t.Fatalf("failed to unmarshal any to DownstreamTlsContext: %v", err)
+			}
 
-	// Verify SDS Config Names
-	common := tlsContext.GetCommonTlsContext()
-	if len(common.GetTlsCertificateSdsSecretConfigs()) != 1 || common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != constants.SpiffeIdentitySdsConfigName {
-		t.Errorf("Identity SDS secret config name mismatch")
-	}
+			// Verify mTLS requirement
+			if tlsContext.GetRequireClientCertificate() == nil || !tlsContext.GetRequireClientCertificate().GetValue() {
+				t.Errorf("RequireClientCertificate should be true for mTLS")
+			}
 
-	validation := common.GetValidationContextSdsSecretConfig()
-	if validation == nil || validation.GetName() != constants.SpiffeTrustSdsConfigName {
-		t.Errorf("Trust SDS secret config name mismatch")
+			// Verify SDS Config Names
+			common := tlsContext.GetCommonTlsContext()
+			if len(common.GetTlsCertificateSdsSecretConfigs()) != 1 || common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != tt.expectedCertSDSName {
+				t.Errorf("Identity SDS secret config name mismatch: got %s, want %s", common.GetTlsCertificateSdsSecretConfigs()[0].GetName(), tt.expectedCertSDSName)
+			}
+
+			validation := common.GetValidationContextSdsSecretConfig()
+			if validation == nil || validation.GetName() != tt.expectedTrustSDSName {
+				t.Errorf("Trust SDS secret config name mismatch: got %s, want %s", validation.GetName(), tt.expectedTrustSDSName)
+			}
+		})
 	}
 }
 

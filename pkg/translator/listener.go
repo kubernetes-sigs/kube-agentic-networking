@@ -184,7 +184,7 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 			filterChain.FilterChainMatch.ServerNames = []string{string(*lis.Hostname)}
 		}
 
-		tlsContext, err := buildDownstreamTLSContext()
+		tlsContext, err := buildDownstreamTLSContext(lis, gateway)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS context for listener %s: %w", lis.Name, err)
 		}
@@ -606,39 +606,106 @@ func buildRouterFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-// TODO: We may want to optimize this in the future by supporting both listener's TLS config and the shared TLS context.
-// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/94
-func buildDownstreamTLSContext() (*anypb.Any, error) {
+// buildDownstreamTLSContext configures TLS for the downstream (client-to-gateway) connection.
+func buildDownstreamTLSContext(lis gatewayv1.Listener, gateway *gatewayv1.Gateway) (*anypb.Any, error) {
 	tlsContext := &tlsv3.DownstreamTlsContext{
-		CommonTlsContext: &tlsv3.CommonTlsContext{
-			TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{
-				{
-					Name: constants.SpiffeIdentitySdsConfigName,
-					SdsConfig: &corev3.ConfigSource{
-						ResourceApiVersion: corev3.ApiVersion_V3,
-						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
-							PathConfigSource: &corev3.PathConfigSource{
-								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeIdentitySdsFileName),
-							},
-						},
-					},
-				},
-			},
-			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
-				ValidationContextSdsSecretConfig: &tlsv3.SdsSecretConfig{
-					Name: constants.SpiffeTrustSdsConfigName,
-					SdsConfig: &corev3.ConfigSource{
-						ResourceApiVersion: corev3.ApiVersion_V3,
-						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
-							PathConfigSource: &corev3.PathConfigSource{
-								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeTrustSdsFileName),
-							},
-						},
-					},
-				},
-			},
-		},
+		CommonTlsContext:         &tlsv3.CommonTlsContext{},
 		RequireClientCertificate: wrapperspb.Bool(true),
+	}
+
+	commonTLS := tlsContext.GetCommonTlsContext()
+
+	// 1. Server Certificate
+	var serverSecretName string
+	if lis.TLS != nil && len(lis.TLS.CertificateRefs) > 0 {
+		// TODO: should we support mutiple certs?
+		ref := lis.TLS.CertificateRefs[0]
+		if ref.Namespace != nil {
+			serverSecretName = fmt.Sprintf("%s-%s", *ref.Namespace, ref.Name)
+		} else {
+			serverSecretName = fmt.Sprintf("%s-%s", gateway.Namespace, ref.Name)
+		}
+
+		commonTLS.TlsCertificateSdsSecretConfigs = []*tlsv3.SdsSecretConfig{
+			{
+				Name: serverSecretName,
+				SdsConfig: &corev3.ConfigSource{
+					ResourceApiVersion: corev3.ApiVersion_V3,
+					ConfigSourceSpecifier: &corev3.ConfigSource_Ads{
+						Ads: &corev3.AggregatedConfigSource{},
+					},
+				},
+			},
+		}
+	} else {
+		commonTLS.TlsCertificateSdsSecretConfigs = []*tlsv3.SdsSecretConfig{
+			{
+				Name: constants.SpiffeIdentitySdsConfigName,
+				SdsConfig: &corev3.ConfigSource{
+					ResourceApiVersion: corev3.ApiVersion_V3,
+					ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
+						PathConfigSource: &corev3.PathConfigSource{
+							Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeIdentitySdsFileName),
+						},
+					},
+				},
+			},
+		}
+	}
+
+	// 2. Client Validation
+	var clientValidationRef *gatewayv1.ObjectReference
+	if gateway.Spec.TLS != nil && gateway.Spec.TLS.Frontend != nil {
+		var matchedPort bool
+		for _, p := range gateway.Spec.TLS.Frontend.PerPort {
+			if p.Port == lis.Port {
+				if p.TLS.Validation != nil && len(p.TLS.Validation.CACertificateRefs) > 0 {
+					// TODO: should we support mutiple CAs?
+					clientValidationRef = &p.TLS.Validation.CACertificateRefs[0]
+				}
+				matchedPort = true
+				break
+			}
+		}
+		if !matchedPort && gateway.Spec.TLS.Frontend.Default.Validation != nil && len(gateway.Spec.TLS.Frontend.Default.Validation.CACertificateRefs) > 0 {
+			// TODO: should we support mutiple CAs?
+			clientValidationRef = &gateway.Spec.TLS.Frontend.Default.Validation.CACertificateRefs[0]
+		}
+	}
+
+	if clientValidationRef != nil {
+		var clientSecretName string
+		if clientValidationRef.Namespace != nil {
+			clientSecretName = fmt.Sprintf("%s-%s", *clientValidationRef.Namespace, clientValidationRef.Name)
+		} else {
+			clientSecretName = fmt.Sprintf("%s-%s", gateway.Namespace, clientValidationRef.Name)
+		}
+
+		commonTLS.ValidationContextType = &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
+			ValidationContextSdsSecretConfig: &tlsv3.SdsSecretConfig{
+				Name: clientSecretName,
+				SdsConfig: &corev3.ConfigSource{
+					ResourceApiVersion: corev3.ApiVersion_V3,
+					ConfigSourceSpecifier: &corev3.ConfigSource_Ads{
+						Ads: &corev3.AggregatedConfigSource{},
+					},
+				},
+			},
+		}
+	} else {
+		commonTLS.ValidationContextType = &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
+			ValidationContextSdsSecretConfig: &tlsv3.SdsSecretConfig{
+				Name: constants.SpiffeTrustSdsConfigName,
+				SdsConfig: &corev3.ConfigSource{
+					ResourceApiVersion: corev3.ApiVersion_V3,
+					ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
+						PathConfigSource: &corev3.PathConfigSource{
+							Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeTrustSdsFileName),
+						},
+					},
+				},
+			},
+		}
 	}
 
 	anyObj, err := anypb.New(tlsContext)

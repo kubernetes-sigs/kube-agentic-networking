@@ -125,6 +125,7 @@ func main() {
 		sharedKubeInformers.Core().V1().Namespaces(),
 		sharedKubeInformers.Core().V1().Services(),
 		sharedKubeInformers.Core().V1().Secrets(),
+		sharedKubeInformers.Core().V1().ConfigMaps(),
 		sharedGwInformers.Gateway().V1().GatewayClasses(),
 		sharedGwInformers.Gateway().V1().Gateways(),
 		sharedGwInformers.Gateway().V1().HTTPRoutes(),
