@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -330,4 +331,65 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 		_, err = c.agentic.client.AgenticV0alpha0().XAccessPolicies(policy.Namespace).UpdateStatus(ctx, policyCopy, metav1.UpdateOptions{})
 		return err
 	})
+}
+
+func dedupeStringsPreserveOrder(ss []string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, s := range ss {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func accessPolicyHasInvalidTranslationStatus(policy *agenticv0alpha0.XAccessPolicy) bool {
+	for _, anc := range policy.Status.Ancestors {
+		cond := meta.FindStatusCondition(anc.Conditions, string(agenticv0alpha0.PolicyConditionAccepted))
+		if cond != nil && cond.Status == metav1.ConditionFalse && cond.Reason == string(gwapiv1.PolicyReasonInvalid) {
+			return true
+		}
+	}
+	return false
+}
+
+// reconcileAccessPolicyTranslationStatus updates XAccessPolicy status when the translator skips or
+// partially applies rules (Gateway API PolicyReasonInvalid), and clears that reason by re-running
+// the per-target limit check when translation succeeds again.
+func (c *Controller) reconcileAccessPolicyTranslationStatus(ctx context.Context, gateway *gwapiv1.Gateway, issues map[types.NamespacedName][]string) {
+	attached, err := c.translator.ListAccessPoliciesAttachedToGateway(gateway)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("list AccessPolicies attached to gateway: %w", err))
+		return
+	}
+	for _, ap := range attached {
+		policy, err := c.agentic.accessPolicyLister.XAccessPolicies(ap.Namespace).Get(ap.Name)
+		if err != nil {
+			continue
+		}
+		nn := types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}
+		if msgs, hasErr := issues[nn]; hasErr {
+			msg := strings.Join(dedupeStringsPreserveOrder(msgs), "; ")
+			for _, tr := range policy.Spec.TargetRefs {
+				fresh, getErr := c.agentic.accessPolicyLister.XAccessPolicies(policy.Namespace).Get(policy.Name)
+				if getErr != nil {
+					runtime.HandleError(fmt.Errorf("get AccessPolicy %s for translation status update: %w", nn, getErr))
+					break
+				}
+				if err := c.updateAccessPolicyStatus(ctx, fresh, tr, false, gwapiv1.PolicyReasonInvalid, msg); err != nil {
+					runtime.HandleError(fmt.Errorf("update AccessPolicy %s status for translation failure: %w", nn, err))
+				}
+			}
+			continue
+		}
+		if accessPolicyHasInvalidTranslationStatus(policy) {
+			_ = c.isPolicyUnderTargetLimit(ctx, policy)
+		}
+	}
 }

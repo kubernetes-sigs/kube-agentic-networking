@@ -19,11 +19,13 @@ package translator
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
@@ -126,7 +128,7 @@ func TestTranslateListenerToFilterChain(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fc, err := translator.translateListenerToFilterChain(tc.listener, "route-config", gw)
+			fc, err := translator.translateListenerToFilterChain(tc.listener, "route-config", gw, nil)
 			if err != nil {
 				t.Fatalf("failed to translate listener: %v", err)
 			}
@@ -327,7 +329,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 			}
 			gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
 
-			filters, err := tr.buildHTTPFilters(gw)
+			filters, err := tr.buildHTTPFilters(gw, nil)
 			if err != nil {
 				t.Fatalf("Failed to build filters: %v", err)
 			}
@@ -342,5 +344,55 @@ func TestBuildHTTPFilters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildExtAuthzRecordsTranslationIssueForHTTPNonServiceBackend(t *testing.T) {
+	ns := "test-ns"
+	gwName := "test-gw"
+	kind := gatewayv1.Kind("XBackend")
+	p := newTestAccessPolicy("bad-http-ext", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+	p.Spec.Rules[0].Name = "ext-rule"
+	p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+		Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+		ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+			ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthHTTPProtocol,
+			HTTPAuthConfig:       &gatewayv1.HTTPAuthConfig{Path: "/check"},
+			BackendRef: gatewayv1.BackendObjectReference{
+				Name: "auth",
+				Kind: &kind,
+			},
+		},
+	}
+
+	agenticClient := agenticclient.NewSimpleClientset(p)
+	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
+	_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(p)
+	lister := agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister()
+
+	gwClient := gatewayclient.NewSimpleClientset()
+	gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+	tr := &Translator{
+		accessPolicyLister: lister,
+		httprouteLister:    gwInformerFactory.Gateway().V1().HTTPRoutes().Lister(),
+	}
+	gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
+
+	coll := newAccessPolicyTranslationCollector()
+	_, err := tr.buildExtAuthzFilters(gw, coll)
+	if err != nil {
+		t.Fatalf("buildExtAuthzFilters: %v", err)
+	}
+	snap := coll.snapshot()
+	nn := types.NamespacedName{Namespace: ns, Name: "bad-http-ext"}
+	msgs, ok := snap[nn]
+	if !ok || len(msgs) == 0 {
+		t.Fatalf("expected translation issue for policy %v, got %#v", nn, snap)
+	}
+	if !strings.Contains(msgs[0], "ext-rule") {
+		t.Errorf("expected rule name in message: %q", msgs[0])
+	}
+	if !strings.Contains(msgs[0], "XBackend") {
+		t.Errorf("expected unsupported backend kind in message: %q", msgs[0])
 	}
 }
