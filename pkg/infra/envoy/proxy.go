@@ -21,14 +21,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -141,10 +139,10 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 
 	deployment := r.renderDeployment()
-	_, err := r.client.AppsV1().Deployments(deployment.Namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
+	dep, err := r.client.AppsV1().Deployments(deployment.Namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			_, err = r.client.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
+			dep, err = r.client.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create envoy deployment: %w", err)
 			}
@@ -153,11 +151,14 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 		}
 	}
 
-	if err := waitForDeploymentAvailable(ctx, r.client, deployment.Namespace, deployment.Name); err != nil {
-		return err
+	for _, cond := range dep.Status.Conditions {
+		if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
+			logger.Info("Envoy proxy deployment is ready!")
+			return nil
+		}
 	}
-	logger.Info("Envoy proxy deployment is ready!")
-	return nil
+
+	return fmt.Errorf("envoy deployment %s is not available yet", deployment.Name)
 }
 
 func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
@@ -175,12 +176,6 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		}
 	}
 
-	if errWait := waitForServiceReady(ctx, r.client, service.Namespace, service.Name); errWait != nil {
-		return "", errWait
-	}
-	logger.Info("Envoy proxy service is ready!")
-
-	// Refresh the service object to get the assigned ClusterIP if it was just created.
 	if svc.Spec.ClusterIP == "" {
 		svc, err = r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
 		if err != nil {
@@ -188,47 +183,12 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		}
 	}
 
+	if svc.Spec.ClusterIP == "" {
+		return "", fmt.Errorf("envoy service %s is not ready yet", service.Name)
+	}
+
+	logger.Info("Envoy proxy service is ready!")
 	return svc.Spec.ClusterIP, nil
-}
-
-func waitForServiceReady(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
-	logger := klog.FromContext(ctx)
-	logger.Info("Waiting for envoy service to be ready...")
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		svc, err := client.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		if svc.Spec.ClusterIP != "" {
-			return true, nil
-		}
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("waiting for envoy service %s to be ready: %w", name, err)
-	}
-	return nil
-}
-
-func waitForDeploymentAvailable(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
-	logger := klog.FromContext(ctx)
-	logger.Info("Waiting for envoy deployment to be available...")
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		for _, cond := range dep.Status.Conditions {
-			if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("waiting for envoy deployment %s to be available: %w", name, err)
-	}
-	return nil
 }
 
 func DeleteProxy(ctx context.Context, client kubernetes.Interface, namespace, name string) error {

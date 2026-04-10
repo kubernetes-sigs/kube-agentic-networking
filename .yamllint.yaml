@@ -10,6 +10,7 @@ ignore: |
   cloudbuild.yaml
   k8s/crds
   pkg/infra/envoy/templates
+  vendor/
 
 rules:
   braces:
