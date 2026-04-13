@@ -166,9 +166,23 @@ const (
 
 const (
 	// PolicyConditionAccepted indicates whether the policy has been accepted by the controller.
+	//
+	// Possible reasons for this condition to be True are:
+	//
+	// * "Accepted"
+	//
+	// Possible reasons for this condition to be False are:
+	//
+	// * "LimitPerTargetExceeded"
+	//
 	PolicyConditionAccepted gwapiv1.PolicyConditionType = "Accepted"
 
-	// PolicyLimitPerTargetExceeded indicates that the policy was rejected because the maximum number of policies per target was exceeded.
+	// This reason is used with the "Accepted" condition when the policy
+	// has been accepted by the controller.
+	PolicyReasonAccepted gwapiv1.PolicyConditionReason = "Accepted"
+
+	// This reason is used with the "Accepted" condition when the policy
+	// was rejected because the maximum number of policies per target was exceeded.
 	PolicyLimitPerTargetExceeded gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
 )
 
