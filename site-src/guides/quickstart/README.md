@@ -57,7 +57,7 @@ Before you begin, ensure you have the following:
 - **[git](https://git-scm.com/downloads)**
 - **[kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)** (Kubernetes in Docker)
 - **[kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)**
-- **[Go](https://go.dev/doc/install)** (1.23+)
+- **[Go](https://go.dev/doc/install)** (1.25+)
 - **[envsubst](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html)** (typically included with `gettext`)
 
 **Choose one of the following LLM options:**
