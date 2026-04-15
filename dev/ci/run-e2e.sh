@@ -22,6 +22,7 @@ set -o pipefail
 CLUSTER_NAME="kan-e2e"
 E2E_NAMESPACE="e2e-test-ns"
 SYSTEM_NAMESPACE="agentic-net-system"
+MCP_LIFECYCLE_OPERATOR_VERSION="v0.1.0"
 
 # Find the repository root
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -52,6 +53,10 @@ main() {
 
   header "Installing Project CRDs"
   kubectl apply -f k8s/crds/
+
+  header "Installing MCP Lifecycle Operator"
+  kubectl apply --server-side -f "https://github.com/kubernetes-sigs/mcp-lifecycle-operator/releases/download/${MCP_LIFECYCLE_OPERATOR_VERSION}/install.yaml"
+  kubectl wait --for=condition=available --timeout=300s deployment/mcp-lifecycle-operator-controller-manager -n mcp-lifecycle-operator-system
 
   # Create namespace and CA secret before deploying the controller so the pod
   # can start immediately (it requires the CA pool secret as a volume).
@@ -125,7 +130,7 @@ cleanup() {
     kubectl get pod e2e-tester -n "${E2E_NAMESPACE}" -o yaml || true
 
     header "MCP Server Logs"
-    kubectl logs -n "${E2E_NAMESPACE}" -l app=mcp-everything --tail=100 || true
+    kubectl logs -n "${E2E_NAMESPACE}" -l mcp-server=mcp-everything --tail=100 || true
 
     header "Envoy Proxy Logs"
     kubectl logs -n "${E2E_NAMESPACE}" -l "kube-agentic-networking.sigs.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100 || true

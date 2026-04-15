@@ -31,6 +31,7 @@ CLUSTER_NAME="kan-quickstart"
 NAMESPACE="quickstart-ns"
 CONTROLLER_NAMESPACE="agentic-net-system"
 GATEWAY_API_VERSION="v1.5.0"
+MCP_LIFECYCLE_OPERATOR_VERSION="v0.1.0"
 AGENT_UI_PORT="8081"
 AGENT_UI_URL="http://localhost:${AGENT_UI_PORT}/dev-ui/?app=mcp_agent"
 
@@ -167,7 +168,7 @@ info "All prerequisites satisfied."
 # --- Step 1: Create Kind Cluster ---
 
 create_kind_cluster() {
-  info "Step 1/9: Creating kind cluster '${CLUSTER_NAME}'..."
+  info "Step 1/10: Creating kind cluster '${CLUSTER_NAME}'..."
   if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
     warn "Kind cluster '${CLUSTER_NAME}' already exists, skipping creation."
   else
@@ -181,38 +182,60 @@ create_kind_cluster() {
 # --- Step 2: Install Gateway API CRDs ---
 
 install_gateway_api_crds() {
-  info "Step 2/9: Installing Gateway API CRDs (${GATEWAY_API_VERSION})..."
+  info "Step 2/10: Installing Gateway API CRDs (${GATEWAY_API_VERSION})..."
   kubectl apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml"
 }
 
 # --- Step 3: Install Agentic Networking CRDs ---
 
 install_agentic_networking_crds() {
-  info "Step 3/9: Installing Agentic Networking CRDs..."
+  info "Step 3/10: Installing Agentic Networking CRDs..."
   kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.prototype.x-k8s.io_xbackends.yaml"
   kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.prototype.x-k8s.io_xaccesspolicies.yaml"
 }
 
-# --- Step 4: Create Namespaces ---
+# --- Step 4: Install MCP Lifecycle Operator ---
+
+install_mcp_lifecycle_operator() {
+  info "Step 4/10: Installing MCP Lifecycle Operator (${MCP_LIFECYCLE_OPERATOR_VERSION})..."
+  kubectl apply --server-side -f "https://github.com/kubernetes-sigs/mcp-lifecycle-operator/releases/download/${MCP_LIFECYCLE_OPERATOR_VERSION}/install.yaml"
+  info "Waiting for MCP Lifecycle Operator to be ready..."
+  kubectl wait --for=condition=available --timeout=300s deployment/mcp-lifecycle-operator-controller-manager -n mcp-lifecycle-operator-system
+}
+
+# --- Step 5: Create Namespaces ---
 
 create_namespaces() {
-  info "Step 4/9: Creating namespaces..."
+  info "Step 5/10: Creating namespaces..."
   kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
   kubectl create namespace "${CONTROLLER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 }
 
-# --- Step 5: Deploy MCP Server ---
+# --- Step 6: Deploy MCP Server ---
 
 deploy_mcp_server() {
-  info "Step 5/9: Deploying in-cluster MCP server..."
-  kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/mcpserver/deployment.yaml"
+  info "Step 6/10: Deploying in-cluster MCP server..."
+  kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/mcpserver/mcpserver.yaml"
+
+  info "Waiting for MCP server deployment to be created by the operator..."
+  local retries=0
+  local max_retries=30
+  while ! kubectl get deployment mcp-everything -n "${NAMESPACE}" &>/dev/null; do
+    retries=$((retries + 1))
+    if [[ ${retries} -ge ${max_retries} ]]; then
+      error "Timed out waiting for MCP server deployment to be created."
+      exit 1
+    fi
+    sleep 5
+  done
+
   wait_for_deployment "${NAMESPACE}" "mcp-everything"
 }
 
-# --- Step 6: Deploy Controller ---
+# --- Step 7: Deploy Controller ---
 
 deploy_controller() {
-  info "Step 6/9: Deploying Agentic Networking controller..."
+  info "Step 7/10: Deploying Agentic Networking controller..."
 
   # Create CA pool secret before deploying the controller so the pod can start
   # immediately (it requires the CA pool secret as a volume).
@@ -230,10 +253,10 @@ deploy_controller() {
   wait_for_deployment "${CONTROLLER_NAMESPACE}" "agentic-net-controller"
 }
 
-# --- Step 7: Apply Policies ---
+# --- Step 8: Apply Policies ---
 
 apply_policies() {
-  info "Step 7/9: Applying network policies (Gateway, HTTPRoutes, XBackends, XAccessPolicies)..."
+  info "Step 8/10: Applying network policies (Gateway, HTTPRoutes, XBackends, XAccessPolicies)..."
   kubectl apply -f "${SCRIPT_ROOT}/site-src/guides/quickstart/policy/e2e.yaml"
 
   info "Waiting for Envoy proxy deployment to be created..."
@@ -256,10 +279,10 @@ apply_policies() {
     --for=condition=Available
 }
 
-# --- Step 8: Deploy Agent ---
+# --- Step 9: Deploy Agent ---
 
 deploy_agent() {
-  info "Step 8/9: Deploying AI agent..."
+  info "Step 9/10: Deploying AI agent..."
 
   # Wait for the Gateway to have an address assigned.
   info "Waiting for Gateway address to be assigned..."
@@ -343,10 +366,10 @@ deploy_agent() {
   wait_for_deployment "${NAMESPACE}" "adk-agent"
 }
 
-# --- Step 9: Set Up Port Forward ---
+# --- Step 10: Set Up Port Forward ---
 
 setup_port_forward() {
-  info "Step 9/9: Setting up port-forward to agent UI on port ${AGENT_UI_PORT}..."
+  info "Step 10/10: Setting up port-forward to agent UI on port ${AGENT_UI_PORT}..."
 
   # Kill any existing port-forward on the agent UI port.
   local existing_pid
@@ -366,6 +389,7 @@ setup_port_forward() {
 create_kind_cluster
 install_gateway_api_crds
 install_agentic_networking_crds
+install_mcp_lifecycle_operator
 create_namespaces
 deploy_mcp_server
 deploy_controller

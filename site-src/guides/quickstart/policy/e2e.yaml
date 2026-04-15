@@ -21,7 +21,7 @@ metadata:
   namespace: quickstart-ns
 spec:
   mcp:
-    serviceName: mcp-everything-svc
+    serviceName: mcp-everything
     port: 3001
     path: /mcp
 ---

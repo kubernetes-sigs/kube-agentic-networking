@@ -2,7 +2,7 @@ apiVersion: mcp.x-k8s.io/v1alpha1
 kind: MCPServer
 metadata:
   name: mcp-everything
-  namespace: e2e-test-ns
+  namespace: quickstart-ns
 spec:
   source:
     type: ContainerImage

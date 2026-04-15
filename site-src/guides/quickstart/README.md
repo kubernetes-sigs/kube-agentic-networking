@@ -151,12 +151,13 @@ make quickstart-ollama
 1. **Creates a kind cluster** (`kan-quickstart`) with Kubernetes v1.35 and required feature gates enabled.
 2. **Installs Gateway API CRDs** (standard v1.4.0 install).
 3. **Installs Agentic Networking CRDs** (`XBackend` and `XAccessPolicy`).
-4. **Creates the `quickstart-ns` namespace**.
-5. **Deploys the in-cluster MCP server** (the `everything` reference server).
-6. **Deploys the Agentic Networking controller** and creates the CA pool secret for mTLS identity.
-7. **Applies network policies** (Gateway, HTTPRoutes, XBackends, XAccessPolicies) and waits for the Envoy proxy to be provisioned.
-8. **Deploys the AI agent** with an Envoy sidecar, configured with the discovered Gateway address and SPIFFE identity.
-9. **Sets up port-forwarding** to the agent UI on `localhost:8081`.
+4. **Installs the MCP Lifecycle Operator** for declarative `MCPServer` resource management.
+5. **Creates the `quickstart-ns` namespace**.
+6. **Deploys the in-cluster MCP server** (the `everything` reference server) via a `MCPServer` custom resource.
+7. **Deploys the Agentic Networking controller** and creates the CA pool secret for mTLS identity.
+8. **Applies network policies** (Gateway, HTTPRoutes, XBackends, XAccessPolicies) and waits for the Envoy proxy to be provisioned.
+9. **Deploys the AI agent** with an Envoy sidecar, configured with the discovered Gateway address and SPIFFE identity.
+10. **Sets up port-forwarding** to the agent UI on `localhost:8081`.
 
 ## Chat with the Agent
 
