@@ -20,11 +20,15 @@ import (
 	"fmt"
 	"testing"
 
+	"google.golang.org/protobuf/types/known/anypb"
+
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
+	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions"
@@ -81,6 +85,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 		name            string
 		policies        []runtime.Object
 		gatewaysToCheck map[string][]string // gateway name -> expected filter names in order
+		verify          func(t *testing.T, filters []*hcm.HttpFilter)
 	}{
 		{
 			name:     "no policies targeting gateway",
@@ -99,7 +104,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 		},
 		{
-			name: "multiple policies targeting the same gateway",
+			name: "multiple policies targeting the same gateway (merged)",
 			policies: []runtime.Object{
 				newTestAccessPolicy("gw-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 				newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2"),
@@ -107,7 +112,6 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			gatewaysToCheck: map[string][]string{
 				gwName: {
 					fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
-					fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2),
 				},
 			},
 		},
@@ -143,6 +147,122 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 				"other-gw": {fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1)},
 			},
 		},
+		{
+			name: "merged InLineTools across policies",
+			policies: []runtime.Object{
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("gw-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-1"},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-2"},
+					}
+					p.Spec.Rules[0].Name = "rule-1"
+					return p
+				}(),
+			},
+			gatewaysToCheck: map[string][]string{
+				gwName: {fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1)},
+			},
+			verify: func(t *testing.T, filters []*hcm.HttpFilter) {
+				expectedPrefixedName1 := fmt.Sprintf("%s.%s.%s", ns, "gw-policy-1", "rule-1")
+				expectedPrefixedName2 := fmt.Sprintf("%s.%s.%s", ns, "gw-policy-2", "rule-1")
+				verifyRBACConfig(t, filters, 1, nil, []string{expectedPrefixedName1, expectedPrefixedName2}, 5)
+			},
+		},
+		{
+			name: "mixed inline and external auth rules",
+			policies: []runtime.Object{
+				func() *agenticv0alpha0.XAccessPolicy {
+					mixedPolicy := newTestAccessPolicy("mixed-policy", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					mixedPolicy.Spec.Rules[0].Name = "inline-rule"
+					mixedPolicy.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-1"},
+					}
+					mixedPolicy.Spec.Rules = append(mixedPolicy.Spec.Rules, agenticv0alpha0.AccessRule{
+						Name: "ext-auth-rule",
+						Source: agenticv0alpha0.Source{
+							Type:   agenticv0alpha0.AuthorizationSourceTypeSPIFFE,
+							SPIFFE: (*agenticv0alpha0.AuthorizationSourceSPIFFE)(ptr.To("spiffe://cluster.local/ns/ns2/sa/sa2")),
+						},
+						Authorization: &agenticv0alpha0.AuthorizationRule{
+							Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+							ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+								ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+								BackendRef: gatewayv1.BackendObjectReference{
+									Name: "ext-auth-svc",
+								},
+							},
+						},
+					})
+					return mixedPolicy
+				}(),
+			},
+			gatewaysToCheck: map[string][]string{
+				gwName: {
+					fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
+				},
+			},
+			verify: func(t *testing.T, filters []*hcm.HttpFilter) {
+				expectedPrefixedName := fmt.Sprintf("%s.%s.%s", ns, "mixed-policy", "inline-rule")
+				verifyRBACConfig(t, filters, 1, []string{"ext-auth-rule"}, []string{expectedPrefixedName, "ext-auth-rule"}, 5)
+			},
+		},
+		{
+			name: "multiple mixed inline and external auth rules",
+			policies: []runtime.Object{
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("gw-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.Spec.Rules[0].Name = "inline-rule-1"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-1"},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.Spec.Rules[0].Name = "ext-auth-rule-1"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gatewayv1.BackendObjectReference{
+								Name: "ext-auth-svc-1",
+							},
+						},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("gw-policy-3", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns3/sa/sa3")
+					p.Spec.Rules[0].Name = "inline-rule-2"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-2"},
+					}
+					return p
+				}(),
+			},
+			gatewaysToCheck: map[string][]string{
+				gwName: {
+					fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
+				},
+			},
+			verify: func(t *testing.T, filters []*hcm.HttpFilter) {
+				expectedPrefixedName1 := fmt.Sprintf("%s.%s.%s", ns, "gw-policy-1", "inline-rule-1")
+				expectedPrefixedName3 := fmt.Sprintf("%s.%s.%s", ns, "gw-policy-3", "inline-rule-2")
+				verifyRBACConfig(t, filters, 1, []string{"ext-auth-rule-1"}, []string{expectedPrefixedName1, expectedPrefixedName3, "ext-auth-rule-1"}, 6)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -172,6 +292,11 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 					if f.GetName() != expectedNames[i] {
 						t.Errorf("Gateway %s, Filter %d: expected name %s, got %s", gwn, i, expectedNames[i], f.GetName())
 					}
+				}
+
+				// Call custom verify if specified
+				if tt.verify != nil {
+					tt.verify(t, filters)
 				}
 			}
 		})
@@ -234,8 +359,9 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 				newTestAccessPolicy("policy-1", ns, "backend-1", "XBackend", "principal-1"),
 				newTestAccessPolicy("policy-2", ns, "backend-1", "XBackend", "principal-2"),
 			},
-			want: 2,
+			want: 1,
 		},
+
 		{
 			name: "two routes, multiple backends, max policies is 3",
 			routes: []*gatewayv1.HTTPRoute{
@@ -249,8 +375,9 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 				newTestAccessPolicy("p4", ns, "backend-2", "XBackend", "pr4"),
 				newTestAccessPolicy("p5", ns, "backend-2", "XBackend", "pr5"),
 			},
-			want: 3,
+			want: 1,
 		},
+
 		{
 			name: "policies targeting multiple backends",
 			routes: []*gatewayv1.HTTPRoute{
@@ -283,7 +410,7 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 				},
 				newTestAccessPolicy("p1", ns, "backend-1", "XBackend", "pr1"),
 			},
-			want: 2, // backend-1 has 2 policies, backend-2 has 1 policy
+			want: 1, // policies are merged
 		},
 	}
 
@@ -337,6 +464,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 		name            string
 		policies        []runtime.Object
 		backendsToCheck map[string][]string // backend name -> expected filter names in order
+		verify          func(t *testing.T, configs map[string]*anypb.Any)
 	}{
 		{
 			name:     "no policies targeting backend",
@@ -363,7 +491,6 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			backendsToCheck: map[string][]string{
 				beName: {
 					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
-					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2),
 				},
 			},
 		},
@@ -399,6 +526,139 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 				"other-backend": {fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1)},
 			},
 		},
+		{
+			name: "merged policies",
+			policies: []runtime.Object{
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-1", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-1"},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-2", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-2"},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-3", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns3/sa/sa3")
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gatewayv1.BackendObjectReference{
+								Name: "ext-auth-svc",
+							},
+						},
+					}
+					return p
+				}(),
+			},
+			backendsToCheck: map[string][]string{
+				beName: {
+					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
+				},
+			},
+			verify: func(t *testing.T, configs map[string]*anypb.Any) {
+				f1Name := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1)
+				expectedPrefixedName1 := fmt.Sprintf("%s.%s.%s", ns, "be-policy-1", "rule-1")
+				expectedPrefixedName2 := fmt.Sprintf("%s.%s.%s", ns, "be-policy-2", "rule-1")
+				verifyRBACPerRouteConfig(t, configs, 1, f1Name, nil, []string{expectedPrefixedName1, expectedPrefixedName2, "rule-1"}, 6)
+			},
+		},
+		{
+			name: "mixed inline and external auth rules",
+			policies: []runtime.Object{
+				func() *agenticv0alpha0.XAccessPolicy {
+					mixedPolicy := newTestAccessPolicy("mixed-policy", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					mixedPolicy.Spec.Rules[0].Name = "inline-rule"
+					mixedPolicy.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-1"},
+					}
+					mixedPolicy.Spec.Rules = append(mixedPolicy.Spec.Rules, agenticv0alpha0.AccessRule{
+						Name: "ext-auth-rule",
+						Source: agenticv0alpha0.Source{
+							Type:   agenticv0alpha0.AuthorizationSourceTypeSPIFFE,
+							SPIFFE: (*agenticv0alpha0.AuthorizationSourceSPIFFE)(ptr.To("spiffe://cluster.local/ns/ns2/sa/sa2")),
+						},
+						Authorization: &agenticv0alpha0.AuthorizationRule{
+							Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+							ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+								ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+								BackendRef: gatewayv1.BackendObjectReference{
+									Name: "ext-auth-svc",
+								},
+							},
+						},
+					})
+					return mixedPolicy
+				}(),
+			},
+			backendsToCheck: map[string][]string{
+				beName: {
+					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
+				},
+			},
+			verify: func(t *testing.T, configs map[string]*anypb.Any) {
+				f1Name := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1)
+				expectedPrefixedName := fmt.Sprintf("%s.%s.%s", ns, "mixed-policy", "inline-rule")
+				verifyRBACPerRouteConfig(t, configs, 1, f1Name, []string{"ext-auth-rule"}, []string{expectedPrefixedName, "ext-auth-rule"}, 5)
+			},
+		},
+		{
+			name: "multiple mixed inline and external auth rules",
+			policies: []runtime.Object{
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-1", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.Spec.Rules[0].Name = "inline-rule-1"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-1"},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-2", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.Spec.Rules[0].Name = "ext-auth-rule-1"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gatewayv1.BackendObjectReference{
+								Name: "ext-auth-svc-1",
+							},
+						},
+					}
+					return p
+				}(),
+				func() *agenticv0alpha0.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-3", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns3/sa/sa3")
+					p.Spec.Rules[0].Name = "inline-rule-2"
+					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+						Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
+						Tools: []string{"tool-2"},
+					}
+					return p
+				}(),
+			},
+			backendsToCheck: map[string][]string{
+				beName: {
+					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
+				},
+			},
+			verify: func(t *testing.T, configs map[string]*anypb.Any) {
+				f1Name := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1)
+				expectedPrefixedName1 := fmt.Sprintf("%s.%s.%s", ns, "be-policy-1", "inline-rule-1")
+				expectedPrefixedName3 := fmt.Sprintf("%s.%s.%s", ns, "be-policy-3", "inline-rule-2")
+				verifyRBACPerRouteConfig(t, configs, 1, f1Name, []string{"ext-auth-rule-1"}, []string{expectedPrefixedName1, expectedPrefixedName3, "ext-auth-rule-1"}, 6)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -429,6 +689,11 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 					if _, ok := configs[expectedName]; !ok {
 						t.Errorf("Backend %s: Expected config for filter %s not found", ben, expectedName)
 					}
+				}
+
+				// Call custom verify if specified
+				if tt.verify != nil {
+					tt.verify(t, configs)
 				}
 			}
 		})
@@ -973,6 +1238,88 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 			if !actualTools[expectedTool] {
 				t.Errorf("expected tool %q not found in OrMatch", expectedTool)
 			}
+		}
+	}
+}
+
+func verifyRBACConfig(t *testing.T, filters []*hcm.HttpFilter, expectedFiltersCount int, expectedShadowRules []string, expectedRules []string, expectedRulesCount int) {
+	t.Helper()
+	if len(filters) != expectedFiltersCount {
+		t.Fatalf("Expected %d filters, got %d", expectedFiltersCount, len(filters))
+	}
+	if expectedFiltersCount == 0 {
+		return
+	}
+	f := filters[0]
+	rbac := &rbacv3.RBAC{}
+	if err := f.GetTypedConfig().UnmarshalTo(rbac); err != nil {
+		t.Fatalf("Failed to unmarshal to RBAC: %v", err)
+	}
+
+	if len(expectedShadowRules) > 0 {
+		if rbac.GetShadowRules() == nil {
+			t.Errorf("Expected shadow rules, got nil")
+		} else {
+			shadowPolicies := rbac.GetShadowRules().GetPolicies()
+			for _, name := range expectedShadowRules {
+				if _, ok := shadowPolicies[name]; !ok {
+					t.Errorf("Expected shadow rule %s not found", name)
+				}
+			}
+		}
+	}
+
+	policies := rbac.GetRules().GetPolicies()
+	if expectedRulesCount >= 0 && len(policies) != expectedRulesCount {
+		t.Errorf("Expected %d policies in Rules, got %d", expectedRulesCount, len(policies))
+	}
+
+	for _, name := range expectedRules {
+		if _, ok := policies[name]; !ok {
+			t.Errorf("Expected policy %s not found in Rules", name)
+		}
+	}
+}
+
+func verifyRBACPerRouteConfig(t *testing.T, configs map[string]*anypb.Any, expectedConfigsCount int, filterName string, expectedShadowRules []string, expectedRules []string, expectedRulesCount int) {
+	t.Helper()
+	if len(configs) != expectedConfigsCount {
+		t.Fatalf("Expected %d configs, got %d", expectedConfigsCount, len(configs))
+	}
+	if expectedConfigsCount == 0 {
+		return
+	}
+	rbacPerRoute := &rbacv3.RBACPerRoute{}
+	if err := configs[filterName].UnmarshalTo(rbacPerRoute); err != nil {
+		t.Fatalf("Failed to unmarshal to RBACPerRoute: %v", err)
+	}
+
+	rbac := rbacPerRoute.GetRbac()
+	if rbac == nil {
+		t.Fatalf("RBAC in RBACPerRoute is nil")
+	}
+
+	if len(expectedShadowRules) > 0 {
+		if rbac.GetShadowRules() == nil {
+			t.Errorf("Expected shadow rules, got nil")
+		} else {
+			shadowPolicies := rbac.GetShadowRules().GetPolicies()
+			for _, name := range expectedShadowRules {
+				if _, ok := shadowPolicies[name]; !ok {
+					t.Errorf("Expected shadow rule %s not found", name)
+				}
+			}
+		}
+	}
+
+	policies := rbac.GetRules().GetPolicies()
+	if expectedRulesCount >= 0 && len(policies) != expectedRulesCount {
+		t.Errorf("Expected %d policies in Rules, got %d", expectedRulesCount, len(policies))
+	}
+
+	for _, name := range expectedRules {
+		if _, ok := policies[name]; !ok {
+			t.Errorf("Expected policy %s not found in Rules", name)
 		}
 	}
 }

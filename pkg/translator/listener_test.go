@@ -172,10 +172,10 @@ func TestBuildHTTPFilters(t *testing.T) {
 			expected: []string{
 				"envoy.filters.http.mcp",
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2),
 				"envoy.filters.http.router",
 			},
 		},
+
 		{
 			name: "0 Gateway-level Policies, 2 Backend-level policies, 0 external auth policies",
 			routes: []*gatewayv1.HTTPRoute{
@@ -188,7 +188,6 @@ func TestBuildHTTPFilters(t *testing.T) {
 			expected: []string{
 				"envoy.filters.http.mcp",
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2),
 				"envoy.filters.http.router",
 			},
 		},
@@ -286,13 +285,9 @@ func TestBuildHTTPFilters(t *testing.T) {
 			},
 			expected: []string{
 				"envoy.filters.http.mcp",
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2),
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 3), // ext-auth-policy-1
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 4), // ext-auth-policy-2
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2),
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 3), // ext-auth-policy-3
+				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1), // ext-auth-policy-1
+				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2), // ext-auth-policy-2
+				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1), // ext-auth-policy-3
 				"envoy.filters.http.ext_authz",                                // ext-auth-policy-1, ext-auth-policy-3
 				"envoy.filters.http.ext_authz",                                // ext-auth-policy-2
 				"envoy.filters.http.router",
