@@ -24,6 +24,8 @@ import (
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/ext"
 	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -275,6 +277,24 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
 					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 				}
+			case agenticv0alpha0.AuthorizationRuleTypeCEL:
+				if rule.Authorization.CEL != nil {
+					env, err := cel.NewEnv(
+						cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
+						ext.Strings(),
+					)
+					if err != nil {
+						klog.Errorf("Failed to create CEL environment: %v", err)
+						continue
+					}
+					ast, issues := env.Compile(rule.Authorization.CEL.Expression)
+					if issues != nil && issues.Err() != nil {
+						klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, issues.Err())
+						continue
+					}
+					rbacPolicy.Condition = ast.Expr()
+				}
+
 			}
 		}
 

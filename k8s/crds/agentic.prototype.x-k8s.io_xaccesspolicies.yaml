@@ -52,6 +52,19 @@ spec:
                       description: Authorization specifies the authorization rule
                         to be applied to requests from the source.
                       properties:
+                        cel:
+                          description: CEL specifies a CEL expression for authorization.
+                          properties:
+                            expression:
+                              description: Expression is the CEL expression to evaluate.
+                              type: string
+                            message:
+                              description: Message is the custom error message to
+                                return if the expression evaluates to false.
+                              type: string
+                          required:
+                          - expression
+                          type: object
                         externalAuth:
                           description: |-
                             ExternalAuth specifies an external auth filter to be used for authorization.
@@ -303,6 +316,7 @@ spec:
                           enum:
                           - InlineTools
                           - ExternalAuth
+                          - CEL
                           type: string
                       required:
                       - type
@@ -314,8 +328,11 @@ spec:
                           'ExternalAuth'
                         rule: 'self.type == ''ExternalAuth'' ? has(self.externalAuth)
                           : true'
-                      - message: only one of tools or externalAuth can be specified
-                        rule: '!(has(self.tools) && has(self.externalAuth))'
+                      - message: cel must be specified when type is set to 'CEL'
+                        rule: 'self.type == ''CEL'' ? has(self.cel) : true'
+                      - message: only one of tools, externalAuth or cel can be specified
+                        rule: '[has(self.tools), has(self.externalAuth), has(self.cel)].filter(x,
+                          x).size() <= 1'
                     name:
                       description: Name specifies the name of the rule.
                       maxLength: 63
