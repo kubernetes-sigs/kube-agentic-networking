@@ -18,42 +18,49 @@ package translator
 
 import (
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/klog/v2"
 
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
 )
 
-// AllowedByReferenceGrant returns true if an HTTPRoute in routeNamespace is allowed
-// to reference a Service in backendNamespace per the Gateway API ReferenceGrant spec.
+// AllowedByReferenceGrant returns true if a resource of fromGroup/fromKind in fromNamespace is allowed
+// to reference a resource of toGroup/toKind in toNamespace per the Gateway API ReferenceGrant spec.
 // See https://gateway-api.sigs.k8s.io/api-types/referencegrant/
 func AllowedByReferenceGrant(
-	routeNamespace, backendNamespace string,
+	fromNamespace, fromGroup, fromKind string,
+	toNamespace, toGroup, toKind, toName string,
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister,
 ) bool {
-	if routeNamespace == backendNamespace {
+	if fromNamespace == toNamespace {
 		return true
 	}
-	grants, err := referenceGrantLister.ReferenceGrants(backendNamespace).List(labels.Everything())
+
+	grants, err := referenceGrantLister.ReferenceGrants(toNamespace).List(labels.Everything())
 	if err != nil {
+		klog.V(4).ErrorS(err, "Failed to list ReferenceGrants", "toNamespace", toNamespace)
 		return false
 	}
+
 	for _, g := range grants {
 		for _, from := range g.Spec.From {
-			if string(from.Namespace) != routeNamespace {
+			if string(from.Namespace) != fromNamespace {
 				continue
 			}
-			if string(from.Group) != gatewayv1.GroupName {
+			if string(from.Group) != fromGroup {
 				continue
 			}
-			if string(from.Kind) != "HTTPRoute" {
+			if string(from.Kind) != fromKind {
 				continue
 			}
+
 			for _, to := range g.Spec.To {
-				// Core Services: empty group
-				if string(to.Group) != "" {
+				if string(to.Group) != toGroup {
 					continue
 				}
-				if string(to.Kind) != "Service" {
+				if string(to.Kind) != toKind {
+					continue
+				}
+				if to.Name != nil && string(*to.Name) != toName {
 					continue
 				}
 				return true
