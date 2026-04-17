@@ -110,13 +110,13 @@ func TestEnsureService(t *testing.T) {
 	}
 	nodeID := proxyName(gw.Namespace, gw.Name)
 
-	t.Run("service not found, creates and returns error (no ClusterIP)", func(t *testing.T) {
+	t.Run("service not found, creates and returns error (no LoadBalancer address)", func(t *testing.T) {
 		client := fake.NewClientset()
 		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
 
 		_, err := rm.ensureService(context.Background())
 		if err == nil {
-			t.Fatal("expected error as service has no ClusterIP")
+			t.Fatal("expected error as service has no LoadBalancer address")
 		}
 
 		// Verify service was created
@@ -126,14 +126,14 @@ func TestEnsureService(t *testing.T) {
 		}
 	})
 
-	t.Run("service exists but no ClusterIP, returns error", func(t *testing.T) {
+	t.Run("service exists but no LoadBalancer address, returns error", func(t *testing.T) {
 		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      nodeID,
 				Namespace: "test-ns",
 			},
 			Spec: corev1.ServiceSpec{
-				ClusterIP: "",
+				Type: corev1.ServiceTypeLoadBalancer,
 			},
 		}
 		client := fake.NewClientset(svc)
@@ -141,18 +141,25 @@ func TestEnsureService(t *testing.T) {
 
 		_, err := rm.ensureService(context.Background())
 		if err == nil {
-			t.Fatal("expected error as service has no ClusterIP")
+			t.Fatal("expected error as service has no LoadBalancer address")
 		}
 	})
 
-	t.Run("service exists and has ClusterIP, returns IP", func(t *testing.T) {
+	t.Run("service exists and has LoadBalancer IP, returns IP", func(t *testing.T) {
 		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      nodeID,
 				Namespace: "test-ns",
 			},
 			Spec: corev1.ServiceSpec{
-				ClusterIP: "10.0.0.1",
+				Type: corev1.ServiceTypeLoadBalancer,
+			},
+			Status: corev1.ServiceStatus{
+				LoadBalancer: corev1.LoadBalancerStatus{
+					Ingress: []corev1.LoadBalancerIngress{
+						{IP: "10.0.0.1"},
+					},
+				},
 			},
 		}
 		client := fake.NewClientset(svc)
@@ -164,6 +171,35 @@ func TestEnsureService(t *testing.T) {
 		}
 		if ip != "10.0.0.1" {
 			t.Errorf("ensureService() = %s, want %s", ip, "10.0.0.1")
+		}
+	})
+
+	t.Run("service exists and has LoadBalancer Hostname, returns Hostname", func(t *testing.T) {
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      nodeID,
+				Namespace: "test-ns",
+			},
+			Spec: corev1.ServiceSpec{
+				Type: corev1.ServiceTypeLoadBalancer,
+			},
+			Status: corev1.ServiceStatus{
+				LoadBalancer: corev1.LoadBalancerStatus{
+					Ingress: []corev1.LoadBalancerIngress{
+						{Hostname: "envoy.example.com"},
+					},
+				},
+			},
+		}
+		client := fake.NewClientset(svc)
+		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
+
+		address, err := rm.ensureService(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if address != "envoy.example.com" {
+			t.Errorf("ensureService() = %s, want %s", address, "envoy.example.com")
 		}
 	})
 }
