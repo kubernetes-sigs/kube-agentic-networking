@@ -22,8 +22,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -68,8 +68,8 @@ func proxyName(namespace, name string) string {
 	return fmt.Sprintf(constants.ProxyNameFormat, hex.EncodeToString(hash[:6]))
 }
 
-// EnsureProxyExist ensures that the Envoy proxy deployment, service, and other resources exist and are ready.
-// It returns the LoadBalancer address (IP or Hostname) of the proxy service.
+// EnsureProxyExist ensures that the Envoy proxy deployment, service, and other resources exist and match desired state.
+// It returns the LoadBalancer address (IP or Hostname) of the proxy service when assigned.
 func (r *ResourceManager) EnsureProxyExist(ctx context.Context) (string, error) {
 	logger := klog.FromContext(ctx).WithValues("resourceName", klog.KRef(r.namespace, r.nodeID))
 	ctx = klog.NewContext(ctx, logger)
@@ -101,116 +101,118 @@ func (r *ResourceManager) NodeID() string {
 	return r.nodeID
 }
 
-// ensureSA ensures that the ServiceAccount for the Envoy proxy exists.
+// ensureSA applies the ServiceAccount for the Envoy proxy (server-side apply).
+//
+// When the object already exists, we compare desired vs live and skip Apply if there is no drift
+// on the fields listed under serviceAccountDesiredMatchesExisting (see that function's doc for
+// managed vs unmanaged fields and review tradeoffs).
 func (r *ResourceManager) ensureSA(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
+	want := r.renderServiceAccount()
 
-	sa := r.renderServiceAccount()
-	_, err := r.client.CoreV1().ServiceAccounts(sa.Namespace).Get(ctx, sa.Name, metav1.GetOptions{})
+	got, err := r.client.CoreV1().ServiceAccounts(want.Namespace).Get(ctx, want.Name, metav1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Creating Envoy proxy serviceaccount", "name", sa.Name, "namespace", sa.Namespace)
-			_, err = r.client.CoreV1().ServiceAccounts(sa.Namespace).Create(ctx, sa, metav1.CreateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to create envoy serviceaccount: %w", err)
-			}
-		} else {
+		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get envoy serviceaccount: %w", err)
 		}
+	} else if serviceAccountDesiredMatchesExisting(want, got) {
+		logger.V(4).Info("Envoy proxy serviceaccount unchanged, skipping apply", "name", want.Name, "namespace", want.Namespace)
+		return nil
 	}
-	logger.Info("Envoy proxy serviceaccount is ready!")
+
+	if _, err := r.client.CoreV1().ServiceAccounts(want.Namespace).Apply(ctx, serviceAccountApply(want), envoyInfraApplyOptions()); err != nil {
+		return fmt.Errorf("failed to apply envoy serviceaccount: %w", err)
+	}
+	logger.Info("Envoy proxy serviceaccount applied", "name", want.Name, "namespace", want.Namespace)
 	return nil
 }
 
-// ensureConfigMap ensures that the ConfigMap for the Envoy proxy exists.
+// serviceAccountDesiredMatchesExisting reports whether the live ServiceAccount already matches
+// what we would send on server-side apply (serviceAccountApply), so we can skip a redundant Apply.
+//
+// Managed fields (must match want for this function to return true):
+//   - metadata.labels: from getLabels (Gateway name label plus Gateway infrastructure labels).
+//   - metadata.annotations: from getAnnotations (Gateway infrastructure annotations only).
+//   - metadata.ownerReferences: controller ref to the owning Gateway.
+//
+// Unmanaged / intentionally ignored (not compared; live values may differ without triggering Apply):
+//   - metadata.name, metadata.namespace: fixed by the request path; not semantic drift.
+//   - metadata.uid, resourceVersion, creationTimestamp, managedFields, etc.: apiserver-owned.
+//   - secrets, imagePullSecrets, automountServiceAccountToken: not set by serviceAccountApply;
+//     secrets in particular are filled by controllers after creation.
+//   - Any extra labels or annotations added by admission, defaults, or other actors: if present
+//     on the live object but absent from want, we treat that as drift and re-Apply (may fight
+//     mutating webhooks that always inject metadata; narrow the comparison if that becomes an issue).
+func serviceAccountDesiredMatchesExisting(want, got *corev1.ServiceAccount) bool {
+	return apiequality.Semantic.DeepEqual(want.Labels, got.Labels) &&
+		apiequality.Semantic.DeepEqual(want.Annotations, got.Annotations) &&
+		apiequality.Semantic.DeepEqual(want.OwnerReferences, got.OwnerReferences)
+}
+
+// ensureConfigMap applies the ConfigMap for the Envoy proxy (server-side apply).
 func (r *ResourceManager) ensureConfigMap(ctx context.Context) error {
+	logger := klog.FromContext(ctx)
+	want, err := r.renderConfigMap()
+	if err != nil {
+		return err
+	}
+	if _, err = r.client.CoreV1().ConfigMaps(want.Namespace).Apply(ctx, configMapApply(want), envoyInfraApplyOptions()); err != nil {
+		return fmt.Errorf("failed to apply envoy configmap: %w", err)
+	}
+	logger.Info("Envoy bootstrap configmap applied", "name", want.Name, "namespace", want.Namespace)
+	return nil
+}
+
+// ensureDeployment applies the Envoy Deployment (server-side apply). It does not wait for the
+// Deployment Available condition so the controller is not blocked from reconciling other Gateways
+// while a rollout is in progress.
+func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 	cm, err := r.renderConfigMap()
 	if err != nil {
 		return err
 	}
-
-	_, err = r.client.CoreV1().ConfigMaps(cm.Namespace).Get(ctx, cm.Name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Creating Envoy bootstrap configmap", "name", cm.Name, "namespace", cm.Namespace)
-			_, err = r.client.CoreV1().ConfigMaps(cm.Namespace).Create(ctx, cm, metav1.CreateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to create envoy configmap: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to get envoy configmap: %w", err)
-		}
+	want := r.renderDeployment()
+	if want.Spec.Template.Annotations == nil {
+		want.Spec.Template.Annotations = map[string]string{}
 	}
+	want.Spec.Template.Annotations[constants.EnvoyInfraConfigChecksumAnnotation] = configMapDataChecksum(cm)
 
-	logger.Info("Envoy bootstrap configmap is ready!")
+	if _, err = r.client.AppsV1().Deployments(want.Namespace).Apply(ctx, deploymentApply(want), envoyInfraApplyOptions()); err != nil {
+		return fmt.Errorf("failed to apply envoy deployment: %w", err)
+	}
+	logger.Info("Envoy proxy deployment applied (rollout may still be in progress)", "name", want.Name, "namespace", want.Namespace)
 	return nil
 }
 
-// ensureDeployment ensures that the Envoy deployment exists and is available.
-func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
-	logger := klog.FromContext(ctx)
-
-	deployment := r.renderDeployment()
-	dep, err := r.client.AppsV1().Deployments(deployment.Namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Creating Envoy proxy deployment", "name", deployment.Name, "namespace", deployment.Namespace)
-			dep, err = r.client.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to create envoy deployment: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to get envoy deployment: %w", err)
-		}
-	}
-
-	// If the Deployment was just created, we will highly likely immediately fail
-	// here and return.
-	for _, cond := range dep.Status.Conditions {
-		if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
-			logger.Info("Envoy proxy deployment is ready!")
-			return nil
-		}
-	}
-
-	return fmt.Errorf("envoy deployment %s is not available yet", deployment.Name)
-}
-
-// ensureServiceExists ensures that the Service for the Envoy proxy exists.
+// ensureServiceExists applies the Service for the Envoy proxy (server-side apply) so LoadBalancer
+// provisioning can start before the Deployment is ready. Callers should use ensureService to wait
+// until an address is assigned.
 func (r *ResourceManager) ensureServiceExists(ctx context.Context) (*corev1.Service, error) {
 	logger := klog.FromContext(ctx)
-	service := r.renderService()
-
-	svc, err := r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Creating Envoy proxy service", "name", service.Name, "namespace", service.Namespace)
-			svc, err = r.client.CoreV1().Services(service.Namespace).Create(ctx, service, metav1.CreateOptions{})
-			if err != nil {
-				return nil, fmt.Errorf("failed to create envoy service: %w", err)
-			}
-			return svc, nil
-		}
-		return nil, fmt.Errorf("failed to get envoy service: %w", err)
+	want := r.renderService()
+	if _, err := r.client.CoreV1().Services(want.Namespace).Apply(ctx, serviceApply(want), envoyInfraApplyOptions()); err != nil {
+		return nil, fmt.Errorf("failed to apply envoy service: %w", err)
 	}
-	return svc, nil
+	logger.Info("Envoy proxy service applied", "name", want.Name, "namespace", want.Namespace)
+	return r.client.CoreV1().Services(want.Namespace).Get(ctx, want.Name, metav1.GetOptions{})
 }
 
-// ensureService ensures that the Service for the Envoy proxy exists and has a LoadBalancer address (IP or Hostname) assigned.
+// ensureService reads Service status until a LoadBalancer address (IP or Hostname) is assigned.
 func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 	logger := klog.FromContext(ctx)
-	svc, err := r.ensureServiceExists(ctx)
+	want := r.renderService()
+	svc, err := r.client.CoreV1().Services(want.Namespace).Get(ctx, want.Name, metav1.GetOptions{})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to refresh envoy service: %w", err)
 	}
 
 	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
-		return "", fmt.Errorf("envoy service %s type is %s, expected %s", svc.Name, svc.Spec.Type, corev1.ServiceTypeLoadBalancer)
+		return "", fmt.Errorf("envoy service %s type is %s, expected %s", want.Name, svc.Spec.Type, corev1.ServiceTypeLoadBalancer)
 	}
 
 	if len(svc.Status.LoadBalancer.Ingress) == 0 {
-		return "", fmt.Errorf("loadbalancer address is not assigned yet for service %s", svc.Name)
+		return "", fmt.Errorf("loadbalancer address is not assigned yet for service %s", want.Name)
 	}
 
 	ingress := svc.Status.LoadBalancer.Ingress[0]
@@ -219,7 +221,7 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		address = ingress.Hostname
 	}
 	if address == "" {
-		return "", fmt.Errorf("loadbalancer IP or Hostname is not assigned yet for service %s", svc.Name)
+		return "", fmt.Errorf("loadbalancer IP or Hostname is not assigned yet for service %s", want.Name)
 	}
 
 	logger.Info("Envoy proxy service is ready with LoadBalancer address!", "address", address)
