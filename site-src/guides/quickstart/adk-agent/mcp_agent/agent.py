@@ -60,6 +60,7 @@ else:
         api_base=f"{base_url}/v1",
     )
 
+# Initialize mcp connections
 try:
     local_mcp = McpToolset(
         connection_params=StreamableHTTPConnectionParams(
