@@ -124,7 +124,7 @@ func (t *Translator) fetchServiceBackend(routeNamespace string, backendRef gatew
 		ns = string(*backendRef.Namespace)
 	}
 	if t.referenceGrantLister != nil && ns != routeNamespace {
-		if !AllowedByReferenceGrant(routeNamespace, ns, t.referenceGrantLister) {
+		if !AllowedByReferenceGrant(routeNamespace, gatewayv1.GroupName, "HTTPRoute", ns, "", "Service", string(backendRef.Name), t.referenceGrantLister) {
 			return nil, &ControllerError{
 				Reason:  string(gatewayv1.RouteReasonRefNotPermitted),
 				Message: fmt.Sprintf("cross-namespace reference to Service %s/%s not permitted by ReferenceGrant", ns, backendRef.Name),

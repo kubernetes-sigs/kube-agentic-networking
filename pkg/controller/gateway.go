@@ -34,6 +34,34 @@ import (
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
 )
 
+// GatewaySecretRefNamespaceIndex is the name of the index that maps target namespaces to Gateways
+// that reference Secrets in those namespaces in their TLS configuration.
+const GatewaySecretRefNamespaceIndex = "gatewaySecretRefNamespace"
+
+// GatewaySecretRefNamespaceIndexFunc returns the target namespaces for each secret reference
+// in a Gateway's listeners.
+func GatewaySecretRefNamespaceIndexFunc(obj interface{}) ([]string, error) {
+	gw, ok := obj.(*gatewayv1.Gateway)
+	if !ok {
+		return nil, nil
+	}
+	var keys []string
+	for _, listener := range gw.Spec.Listeners {
+		if listener.TLS != nil {
+			for _, ref := range listener.TLS.CertificateRefs {
+				ns := gw.Namespace
+				if ref.Namespace != nil {
+					ns = string(*ref.Namespace)
+				}
+				keys = append(keys, ns)
+			}
+		}
+	}
+	// Deduplicate namespaces
+	keys = deduplicateStrings(keys)
+	return keys, nil
+}
+
 var semanticIgnoreLastTransitionTime = conversion.EqualitiesOrDie(
 	func(a, b metav1.Condition) bool {
 		a.LastTransitionTime = metav1.Time{}

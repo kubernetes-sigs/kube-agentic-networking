@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -113,4 +114,95 @@ func TestSetGatewayConditions(t *testing.T) {
 			t.Errorf("expected programmed condition to be false")
 		}
 	})
+}
+
+func TestGatewaySecretRefNamespaceIndexFunc(t *testing.T) {
+	ns1 := "ns1"
+	ns2 := "ns2"
+	gwNS := "gw-ns"
+
+	tests := []struct {
+		name     string
+		obj      interface{}
+		expected []string
+	}{
+		{
+			name:     "not a Gateway",
+			obj:      "not a gateway",
+			expected: nil,
+		},
+		{
+			name: "gateway with no listeners",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Namespace: gwNS},
+				Spec:       gatewayv1.GatewaySpec{},
+			},
+			expected: []string{},
+		},
+		{
+			name: "gateway with listeners but no TLS",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Namespace: gwNS},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{{}},
+				},
+			},
+			expected: []string{},
+		},
+		{
+			name: "gateway with certificateRefs (same and cross namespace)",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Namespace: gwNS},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							TLS: &gatewayv1.ListenerTLSConfig{
+								CertificateRefs: []gatewayv1.SecretObjectReference{
+									{
+										Name: "secret1",
+									},
+									{
+										Name:      "secret2",
+										Namespace: ptr.To(gatewayv1.Namespace(ns1)),
+									},
+								},
+							},
+						},
+						{
+							TLS: &gatewayv1.ListenerTLSConfig{
+								CertificateRefs: []gatewayv1.SecretObjectReference{
+									{
+										Name:      "secret3",
+										Namespace: ptr.To(gatewayv1.Namespace(ns2)),
+									},
+									{
+										Name:      "secret4",
+										Namespace: ptr.To(gatewayv1.Namespace(ns1)), // Duplicate ns1
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: []string{gwNS, ns1, ns2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keys, err := GatewaySecretRefNamespaceIndexFunc(tt.obj)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(keys) != len(tt.expected) {
+				t.Fatalf("expected len %d, got %d. keys: %v", len(tt.expected), len(keys), keys)
+			}
+			for i, v := range keys {
+				if v != tt.expected[i] {
+					t.Errorf("expected key at index %d to be %q, got %q", i, tt.expected[i], v)
+				}
+			}
+		})
+	}
 }

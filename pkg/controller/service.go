@@ -59,6 +59,44 @@ func HTTPRouteServiceRefIndexFunc(obj interface{}) ([]string, error) {
 	return keys, nil
 }
 
+// HTTPRouteBackendRefNamespaceIndex is the name of the index that maps target namespaces to HTTPRoutes
+// that reference resources in those namespaces in their backendRefs.
+const HTTPRouteBackendRefNamespaceIndex = "httpRouteBackendRefNamespace"
+
+// HTTPRouteBackendRefNamespaceIndexFunc returns the target namespaces for each backend reference
+// in an HTTPRoute's rules.
+func HTTPRouteBackendRefNamespaceIndexFunc(obj interface{}) ([]string, error) {
+	route, ok := obj.(*gatewayv1.HTTPRoute)
+	if !ok {
+		return nil, nil
+	}
+	var keys []string
+	for _, rule := range route.Spec.Rules {
+		for _, backend := range rule.BackendRefs {
+			backendNS := route.Namespace
+			if backend.Namespace != nil {
+				backendNS = string(*backend.Namespace)
+			}
+			keys = append(keys, backendNS)
+		}
+	}
+	// Deduplicate namespaces
+	keys = deduplicateStrings(keys)
+	return keys, nil
+}
+
+func deduplicateStrings(input []string) []string {
+	keys := make(map[string]bool)
+	list := []string{}
+	for _, entry := range input {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	return list
+}
+
 func (c *Controller) setupServiceEventHandlers(informer corev1informers.ServiceInformer) error {
 	_, err := informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onServiceAdd,
@@ -131,7 +169,7 @@ func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefs(svc *corev1.Se
 	for _, obj := range objs {
 		route := obj.(*gatewayv1.HTTPRoute)
 		// Cross-namespace refs require a ReferenceGrant in the backend namespace.
-		if !translator.AllowedByReferenceGrant(route.Namespace, svc.Namespace, c.gateway.referenceGrantLister) {
+		if !translator.AllowedByReferenceGrant(route.Namespace, gatewayv1.GroupName, "HTTPRoute", svc.Namespace, "", "Service", svc.Name, c.gateway.referenceGrantLister) {
 			continue
 		}
 		klog.V(4).InfoS(
@@ -163,7 +201,7 @@ func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefsList(svc *corev
 					backendNS = string(*backend.Namespace)
 				}
 				if backendNS == svc.Namespace && string(backend.Name) == svc.Name {
-					if !translator.AllowedByReferenceGrant(route.Namespace, backendNS, c.gateway.referenceGrantLister) {
+					if !translator.AllowedByReferenceGrant(route.Namespace, gatewayv1.GroupName, "HTTPRoute", backendNS, "", "Service", string(backend.Name), c.gateway.referenceGrantLister) {
 						continue
 					}
 					matched = true

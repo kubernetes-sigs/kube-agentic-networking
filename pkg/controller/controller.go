@@ -84,8 +84,9 @@ type gatewayResources struct {
 	gatewayClassLister gatewaylisters.GatewayClassLister
 	gatewayClassSynced cache.InformerSynced
 
-	gatewayLister gatewaylisters.GatewayLister
-	gatewaySynced cache.InformerSynced
+	gatewayLister  gatewaylisters.GatewayLister
+	gatewayIndexer cache.Indexer
+	gatewaySynced  cache.InformerSynced
 
 	httprouteLister      gatewaylisters.HTTPRouteLister
 	httprouteIndexer     cache.Indexer
@@ -143,6 +144,14 @@ func New(
 		return nil, fmt.Errorf("add AccessPolicy targetRef index: %w", err)
 	}
 
+	if err := httprouteInformer.Informer().AddIndexers(cache.Indexers{HTTPRouteBackendRefNamespaceIndex: HTTPRouteBackendRefNamespaceIndexFunc}); err != nil {
+		return nil, fmt.Errorf("add HTTPRoute backend reference namespace index: %w", err)
+	}
+
+	if err := gatewayInformer.Informer().AddIndexers(cache.Indexers{GatewaySecretRefNamespaceIndex: GatewaySecretRefNamespaceIndexFunc}); err != nil {
+		return nil, fmt.Errorf("add Gateway secret reference namespace index: %w", err)
+	}
+
 	c := &Controller{
 		core: coreResources{
 			client:       kubeClientSet,
@@ -158,6 +167,7 @@ func New(
 			gatewayClassLister:   gatewayClassInformer.Lister(),
 			gatewayClassSynced:   gatewayClassInformer.Informer().HasSynced,
 			gatewayLister:        gatewayInformer.Lister(),
+			gatewayIndexer:       gatewayInformer.Informer().GetIndexer(),
 			gatewaySynced:        gatewayInformer.Informer().HasSynced,
 			httprouteLister:      httprouteInformer.Lister(),
 			httprouteIndexer:     httprouteInformer.Informer().GetIndexer(),
@@ -208,6 +218,9 @@ func New(
 		return nil, err
 	}
 	if err := c.setupHTTPRouteEventHandlers(httprouteInformer); err != nil {
+		return nil, err
+	}
+	if err := c.setupReferenceGrantEventHandlers(referenceGrantInformer); err != nil {
 		return nil, err
 	}
 	if err := c.setupBackendEventHandlers(backendInformer); err != nil {
