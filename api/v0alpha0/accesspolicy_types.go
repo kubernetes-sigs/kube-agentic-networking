@@ -129,7 +129,7 @@ type AuthorizationSourceServiceAccount struct {
 	Name string `json:"name"`
 }
 
-// +kubebuilder:validation:XValidation:message="tools must be specified when type is set to 'InlineTools'",rule="self.type == 'InlineTools' ? has(self.tools) : true"
+// +kubebuilder:validation:XValidation:message="tools must be specified when type is set to 'Inline'",rule="self.type == 'Inline' ? has(self.tools) : true"
 // +kubebuilder:validation:XValidation:message="externalAuth must be specified when type is set to 'ExternalAuth'",rule="self.type == 'ExternalAuth' ? has(self.externalAuth) : true"
 // +kubebuilder:validation:XValidation:message="only one of tools or externalAuth can be specified",rule="!(has(self.tools) && has(self.externalAuth))"
 type AuthorizationRule struct {
@@ -137,10 +137,9 @@ type AuthorizationRule struct {
 	// +required
 	Type AuthorizationRuleType `json:"type"`
 
-	// Tools specifies a list of tools inline.
-	// +listType=set
+	// MCP defines MCP-specific matching criteria.
 	// +optional
-	Tools []string `json:"tools,omitempty"`
+	MCP MCPAttributes `json:"mcp,omitempty"`
 
 	// ExternalAuth specifies an external auth filter to be used for authorization.
 	//
@@ -150,18 +149,55 @@ type AuthorizationRule struct {
 	ExternalAuth *gwapiv1.HTTPExternalAuthFilter `json:"externalAuth,omitempty"`
 }
 
+// MCPAttributes defines the protocol-specific attributes for MCP authorization.
+type MCPAttributes struct {
+	// Methods is a list of specific MCP functional methods to match.
+	// +kubebuilder:validation:MaxItems=10
+	// +optional
+	Methods []MCPMethod `json: "methods,omitempty"`
+} 
+
+// MCPMethod defines a specific MCP method and its associated parameters.
+type MCPMethod struct {
+	// Name is the MCP method to match against (e.g., 'tools/call').
+	// Allowed values:
+	// 1. 'tools', 'prompts', 'resources': Matches all sub-methods under these categories.
+	// 2. 'prompts/list', 'tools/list', 'resources/list', 'resources/templates/list'.
+	// 3. 'prompts/get', 'tools/call', 'resources/subscribe', 'resources/unsubscribe', 'resources/read'.
+	// Parameters cannot be specified for categories 1 and 2.
+	// +required
+	Name MCPMethodName `json: "name"`
+
+	// Params allows matching against specific arguments in the MCP request.
+	// Only valid for 'get', 'call', 'subscribe', 'unsubscribe', and 'read' methods.
+	// +kubebuilder:validation:MaxItems=10
+	// +optional
+	Params []MCPMethodParam `json: "params,omitempty"`
+}
+
+// +kubebuilder:validation:MaxLength=20
+type MCPMethodParam string
+
+// MCPMethodName defines the allowed MCP methods for matching.
+// +kubebuilder:validation:Enum=tools;prompts;resources;prompts/list;tools/list;resources/list;resources/templates/list;prompts/get;tools/call;resources/subscribe;resources/unsubscribe;resources/read
+type MCPMethodName string
+
+
+
 // AuthorizationRuleType identifies a type of authorization rule.
-// +kubebuilder:validation:Enum=InlineTools;ExternalAuth
+// +kubebuilder:validation:Enum=Inline;ExternalAuth
 type AuthorizationRuleType string
 
 const (
-	// AuthorizationRuleTypeInlineTools is used to identify authorization rules
-	// declared as an inline list of authorized tools.
-	AuthorizationRuleTypeInlineTools AuthorizationRuleType = "InlineTools"
+	// AuthorizationRuleTypeInline is used to identify authorization rules
+	// declared as attributes inside the policy (inline)
+	AuthorizationRuleTypeInline AuthorizationRuleType = "Inline"
 
 	// AuthorizationRuleTypeExternalAuth is used to identify authorization rules
 	// evaluated by an external auth service.
 	AuthorizationRuleTypeExternalAuth AuthorizationRuleType = "ExternalAuth"
+
+	// TODO: Add CEL support
 )
 
 const (
