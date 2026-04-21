@@ -59,44 +59,6 @@ func HTTPRouteServiceRefIndexFunc(obj interface{}) ([]string, error) {
 	return keys, nil
 }
 
-// HTTPRouteBackendRefNamespaceIndex is the name of the index that maps target namespaces to HTTPRoutes
-// that reference resources in those namespaces in their backendRefs.
-const HTTPRouteBackendRefNamespaceIndex = "httpRouteBackendRefNamespace"
-
-// HTTPRouteBackendRefNamespaceIndexFunc returns the target namespaces for each backend reference
-// in an HTTPRoute's rules.
-func HTTPRouteBackendRefNamespaceIndexFunc(obj interface{}) ([]string, error) {
-	route, ok := obj.(*gatewayv1.HTTPRoute)
-	if !ok {
-		return nil, nil
-	}
-	var keys []string
-	for _, rule := range route.Spec.Rules {
-		for _, backend := range rule.BackendRefs {
-			backendNS := route.Namespace
-			if backend.Namespace != nil {
-				backendNS = string(*backend.Namespace)
-			}
-			keys = append(keys, backendNS)
-		}
-	}
-	// Deduplicate namespaces
-	keys = deduplicateStrings(keys)
-	return keys, nil
-}
-
-func deduplicateStrings(input []string) []string {
-	keys := make(map[string]bool)
-	list := []string{}
-	for _, entry := range input {
-		if _, value := keys[entry]; !value {
-			keys[entry] = true
-			list = append(list, entry)
-		}
-	}
-	return list
-}
-
 func (c *Controller) setupServiceEventHandlers(informer corev1informers.ServiceInformer) error {
 	_, err := informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onServiceAdd,
