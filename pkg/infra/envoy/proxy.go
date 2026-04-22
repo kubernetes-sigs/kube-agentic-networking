@@ -21,14 +21,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -95,6 +93,7 @@ func (r *ResourceManager) NodeID() string {
 	return r.nodeID
 }
 
+// ensureSA ensures that the ServiceAccount for the Envoy proxy exists.
 func (r *ResourceManager) ensureSA(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 
@@ -102,6 +101,7 @@ func (r *ResourceManager) ensureSA(ctx context.Context) error {
 	_, err := r.client.CoreV1().ServiceAccounts(sa.Namespace).Get(ctx, sa.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			logger.Info("Creating Envoy proxy serviceaccount", "name", sa.Name, "namespace", sa.Namespace)
 			_, err = r.client.CoreV1().ServiceAccounts(sa.Namespace).Create(ctx, sa, metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create envoy serviceaccount: %w", err)
@@ -114,6 +114,7 @@ func (r *ResourceManager) ensureSA(ctx context.Context) error {
 	return nil
 }
 
+// ensureConfigMap ensures that the ConfigMap for the Envoy proxy exists.
 func (r *ResourceManager) ensureConfigMap(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 	cm, err := r.renderConfigMap()
@@ -124,6 +125,7 @@ func (r *ResourceManager) ensureConfigMap(ctx context.Context) error {
 	_, err = r.client.CoreV1().ConfigMaps(cm.Namespace).Get(ctx, cm.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			logger.Info("Creating Envoy bootstrap configmap", "name", cm.Name, "namespace", cm.Namespace)
 			_, err = r.client.CoreV1().ConfigMaps(cm.Namespace).Create(ctx, cm, metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create envoy configmap: %w", err)
@@ -137,14 +139,16 @@ func (r *ResourceManager) ensureConfigMap(ctx context.Context) error {
 	return nil
 }
 
+// ensureDeployment ensures that the Envoy deployment exists and is available.
 func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 
 	deployment := r.renderDeployment()
-	_, err := r.client.AppsV1().Deployments(deployment.Namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
+	dep, err := r.client.AppsV1().Deployments(deployment.Namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			_, err = r.client.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
+			logger.Info("Creating Envoy proxy deployment", "name", deployment.Name, "namespace", deployment.Namespace)
+			dep, err = r.client.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create envoy deployment: %w", err)
 			}
@@ -153,19 +157,26 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 		}
 	}
 
-	if err := waitForDeploymentAvailable(ctx, r.client, deployment.Namespace, deployment.Name); err != nil {
-		return err
+	// If the Deployment was just created, we will highly likely immediately fail
+	// here and return.
+	for _, cond := range dep.Status.Conditions {
+		if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
+			logger.Info("Envoy proxy deployment is ready!")
+			return nil
+		}
 	}
-	logger.Info("Envoy proxy deployment is ready!")
-	return nil
+
+	return fmt.Errorf("envoy deployment %s is not available yet", deployment.Name)
 }
 
+// ensureService ensures that the Service for the Envoy proxy exists and has a ClusterIP assigned.
 func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 	logger := klog.FromContext(ctx)
 	service := r.renderService()
 	svc, err := r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			logger.Info("Creating Envoy proxy service", "name", service.Name, "namespace", service.Namespace)
 			svc, err = r.client.CoreV1().Services(service.Namespace).Create(ctx, service, metav1.CreateOptions{})
 			if err != nil {
 				return "", fmt.Errorf("failed to create envoy service: %w", err)
@@ -175,12 +186,6 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		}
 	}
 
-	if errWait := waitForServiceReady(ctx, r.client, service.Namespace, service.Name); errWait != nil {
-		return "", errWait
-	}
-	logger.Info("Envoy proxy service is ready!")
-
-	// Refresh the service object to get the assigned ClusterIP if it was just created.
 	if svc.Spec.ClusterIP == "" {
 		svc, err = r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
 		if err != nil {
@@ -188,47 +193,12 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		}
 	}
 
+	if svc.Spec.ClusterIP == "" {
+		return "", fmt.Errorf("envoy service %s is not ready yet", service.Name)
+	}
+
+	logger.Info("Envoy proxy service is ready!")
 	return svc.Spec.ClusterIP, nil
-}
-
-func waitForServiceReady(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
-	logger := klog.FromContext(ctx)
-	logger.Info("Waiting for envoy service to be ready...")
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		svc, err := client.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		if svc.Spec.ClusterIP != "" {
-			return true, nil
-		}
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("waiting for envoy service %s to be ready: %w", name, err)
-	}
-	return nil
-}
-
-func waitForDeploymentAvailable(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
-	logger := klog.FromContext(ctx)
-	logger.Info("Waiting for envoy deployment to be available...")
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		for _, cond := range dep.Status.Conditions {
-			if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("waiting for envoy deployment %s to be available: %w", name, err)
-	}
-	return nil
 }
 
 func DeleteProxy(ctx context.Context, client kubernetes.Interface, namespace, name string) error {

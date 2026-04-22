@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,16 +17,25 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayfake "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 func TestHasHTTPRoutesReferencingGateway(t *testing.T) {
@@ -341,4 +350,92 @@ func ptrGatewayNamespace(ns string) *gatewayv1.Namespace {
 func ptrGatewayKind(kind string) *gatewayv1.Kind {
 	k := gatewayv1.Kind(kind)
 	return &k
+}
+
+type fakeQueue struct {
+	workqueue.TypedRateLimitingInterface[string]
+	addedAfter string
+	delay      time.Duration
+}
+
+func (q *fakeQueue) AddAfter(item string, duration time.Duration) {
+	q.addedAfter = item
+	q.delay = duration
+}
+
+func (q *fakeQueue) Len() int {
+	if q.addedAfter != "" {
+		return 1
+	}
+	return 0
+}
+
+func TestSyncGateway_EnsureProxyExistError(t *testing.T) {
+	gwNamespace := "default"
+	gwName := "my-gateway"
+	gwcName := "my-class"
+
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: gwName, Finalizers: []string{constants.GatewayFinalizer}},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gwcName),
+		},
+	}
+
+	gwc := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: gwcName},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: constants.ControllerName,
+		},
+	}
+
+	gwIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	if err := gwIndexer.Add(gw); err != nil {
+		t.Fatalf("gwIndexer.Add() = %v, want nil", err)
+	}
+
+	gwcIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	if err := gwcIndexer.Add(gwc); err != nil {
+		t.Fatalf("gwcIndexer.Add() = %v, want nil", err)
+	}
+
+	fakeK8sClient := fake.NewClientset()
+	// Force error on SA creation
+	fakeK8sClient.PrependReactor("create", "serviceaccounts", func(_ k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, nil, fmt.Errorf("forced error")
+	})
+
+	fakeGwClient := gatewayfake.NewClientset(gw)
+
+	queue := &fakeQueue{}
+
+	c := &Controller{
+		gateway: gatewayResources{
+			gatewayLister:      gatewaylisters.NewGatewayLister(gwIndexer),
+			gatewayClassLister: gatewaylisters.NewGatewayClassLister(gwcIndexer),
+			client:             fakeGwClient,
+		},
+		core: coreResources{
+			client: fakeK8sClient,
+		},
+		gatewayqueue: queue,
+	}
+
+	err := c.syncGateway(context.Background(), gwNamespace+"/"+gwName)
+	if err == nil {
+		t.Fatal("syncGateway() = nil, want error")
+	}
+
+	// Verify status was updated with error!
+	actions := fakeGwClient.Actions()
+	foundUpdateStatus := false
+	for _, action := range actions {
+		if action.GetVerb() == "update" && action.GetSubresource() == "status" {
+			foundUpdateStatus = true
+			break
+		}
+	}
+	if !foundUpdateStatus {
+		t.Error("foundUpdateStatus = false, want true")
+	}
 }
