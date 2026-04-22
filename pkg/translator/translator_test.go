@@ -69,6 +69,8 @@ type expectedListener struct {
 	maxBackendPolicies int
 	// conditions are the expected status conditions for this listener.
 	conditions []metav1.Condition
+	// attachedRoutes is the expected number of attached routes.
+	attachedRoutes int32
 }
 
 type expectedRoute struct {
@@ -92,7 +94,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 		name     string
 		gw       *gatewayv1.Gateway
 		backend  *agenticv0alpha0.XBackend
-		route    *gatewayv1.HTTPRoute
+		routes   []*gatewayv1.HTTPRoute
 		policies []*agenticv0alpha0.XAccessPolicy
 		mcpSvc   *corev1.Service
 		expected expectedResult
@@ -101,7 +103,9 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			name:    "Basic mTLS and RBAC Translation",
 			gw:      newTestGateway("agentic-net-gateway", ns),
 			backend: newTestBackend("local-mcp-backend", ns),
-			route:   newTestHTTPRoute("httproute-local-mcp", ns, "agentic-net-gateway", "local-mcp-backend"),
+			routes: []*gatewayv1.HTTPRoute{
+				newTestHTTPRoute("httproute-local-mcp", ns, "agentic-net-gateway", "local-mcp-backend"),
+			},
 			policies: []*agenticv0alpha0.XAccessPolicy{
 				newTestAccessPolicy("auth-policy-local-mcp", ns, "local-mcp-backend", "XBackend", "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa"),
 			},
@@ -159,7 +163,9 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			name:    "Multiple Policies Targeting Gateway and Backend",
 			gw:      newTestGateway("multi-policy-gw", ns),
 			backend: newTestBackend("multi-policy-backend", ns),
-			route:   newTestHTTPRoute("multi-policy-route", ns, "multi-policy-gw", "multi-policy-backend"),
+			routes: []*gatewayv1.HTTPRoute{
+				newTestHTTPRoute("multi-policy-route", ns, "multi-policy-gw", "multi-policy-backend"),
+			},
 			policies: []*agenticv0alpha0.XAccessPolicy{
 				newTestAccessPolicy("gw-policy", ns, "multi-policy-gw", "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 				newTestAccessPolicy("backend-policy", ns, "multi-policy-backend", "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2"),
@@ -218,17 +224,135 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				clusters: []string{"quickstart-ns-multi-policy-backend"},
 			},
 		},
+		{
+			name:    "Multiple Routes Attached to Same Listener",
+			gw:      newTestGateway("multi-route-gw", ns),
+			backend: newTestBackend("multi-route-backend", ns),
+			routes: []*gatewayv1.HTTPRoute{
+				newTestHTTPRoute("route-1", ns, "multi-route-gw", "multi-route-backend"),
+				newTestHTTPRoute("route-2", ns, "multi-route-gw", "multi-route-backend"),
+			},
+			policies: nil,
+			mcpSvc:   newTestService("multi-route-backend-svc", ns, 3001),
+			expected: expectedResult{
+				listeners: []expectedListener{
+					{
+						envoyName:          "listener-10001",
+						k8sName:            "https-listener",
+						maxBackendPolicies: 0,
+						conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.ListenerConditionProgrammed),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonProgrammed),
+							},
+						},
+						attachedRoutes: 2,
+					},
+				},
+				routes: []expectedRoute{
+					{
+						envoyName:    "route-10001",
+						k8sName:      "route-1",
+						k8sNamespace: ns,
+						parentStatuses: []gatewayv1.RouteParentStatus{
+							{
+								ParentRef:      gatewayv1.ParentReference{Name: "multi-route-gw"},
+								ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+								Conditions: []metav1.Condition{
+									{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue},
+								},
+							},
+						},
+					},
+					{
+						envoyName:    "route-10001",
+						k8sName:      "route-2",
+						k8sNamespace: ns,
+						parentStatuses: []gatewayv1.RouteParentStatus{
+							{
+								ParentRef:      gatewayv1.ParentReference{Name: "multi-route-gw"},
+								ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+								Conditions: []metav1.Condition{
+									{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue},
+								},
+							},
+						},
+					},
+				},
+				clusters: []string{"quickstart-ns-multi-route-backend"},
+			},
+		},
+		{
+			name: "Listener with Unresolved References (Invalid Route Kind)",
+			gw: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "invalid-gw"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "agentic-net-gateway-class",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "https-listener",
+							Port:     10001,
+							Protocol: gatewayv1.HTTPSProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Kinds: []gatewayv1.RouteGroupKind{
+									{Kind: "TCPRoute"}, // Invalid/Unsupported
+								},
+							},
+						},
+					},
+				},
+			},
+			backend:  nil,
+			routes:   nil,
+			policies: nil,
+			mcpSvc:   nil,
+			expected: expectedResult{
+				listeners: []expectedListener{
+					{
+						envoyName:          "", // No Envoy listener expected
+						k8sName:            "https-listener",
+						maxBackendPolicies: 0,
+						conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.ListenerConditionResolvedRefs),
+								Status: metav1.ConditionFalse,
+								Reason: string(gatewayv1.ListenerReasonInvalidRouteKinds),
+							},
+						},
+					},
+				},
+				routes: []expectedRoute{
+					{
+						envoyName: "route-10001",
+						k8sName:   "", // No HTTPRoute status to check
+					},
+				},
+				clusters: nil,
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup Fake Clients and Informers
 			ctx := context.Background()
-			k8sClient := fake.NewClientset(tc.mcpSvc)
-			gwClient := gatewayclient.NewClientset(tc.gw, tc.route)
+			var k8sObjs []runtime.Object
+			if tc.mcpSvc != nil {
+				k8sObjs = append(k8sObjs, tc.mcpSvc)
+			}
+			k8sClient := fake.NewClientset(k8sObjs...)
+			var gwObjs []runtime.Object
+			gwObjs = append(gwObjs, tc.gw)
+			for _, r := range tc.routes {
+				gwObjs = append(gwObjs, r)
+			}
+			gwClient := gatewayclient.NewClientset(gwObjs...)
 
 			var agenticObjs []runtime.Object
-			agenticObjs = append(agenticObjs, tc.backend)
+			if tc.backend != nil {
+				agenticObjs = append(agenticObjs, tc.backend)
+			}
 			for _, p := range tc.policies {
 				agenticObjs = append(agenticObjs, p)
 			}
@@ -254,10 +378,16 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			)
 
 			// Populate Informer caches
-			_ = coreInformerFactory.Core().V1().Services().Informer().GetIndexer().Add(tc.mcpSvc)
+			if tc.mcpSvc != nil {
+				_ = coreInformerFactory.Core().V1().Services().Informer().GetIndexer().Add(tc.mcpSvc)
+			}
 			_ = gwInformerFactory.Gateway().V1().Gateways().Informer().GetIndexer().Add(tc.gw)
-			_ = gwInformerFactory.Gateway().V1().HTTPRoutes().Informer().GetIndexer().Add(tc.route)
-			_ = agenticInformerFactory.Agentic().V0alpha0().XBackends().Informer().GetIndexer().Add(tc.backend)
+			for _, r := range tc.routes {
+				_ = gwInformerFactory.Gateway().V1().HTTPRoutes().Informer().GetIndexer().Add(r)
+			}
+			if tc.backend != nil {
+				_ = agenticInformerFactory.Agentic().V0alpha0().XBackends().Informer().GetIndexer().Add(tc.backend)
+			}
 			for _, p := range tc.policies {
 				_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(p)
 			}
@@ -277,22 +407,30 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 }
 
 func verifyListeners(t *testing.T, got []envoyproxytypes.Resource, gotStatuses []gatewayv1.ListenerStatus, expected []expectedListener) {
-	if len(got) != len(expected) {
-		t.Errorf("expected %d listeners, got %d", len(expected), len(got))
+	expectedEnvoyListeners := 0
+	for _, exp := range expected {
+		if exp.envoyName != "" {
+			expectedEnvoyListeners++
+		}
+	}
+	if len(got) != expectedEnvoyListeners {
+		t.Errorf("expected %d envoy listeners, got %d", expectedEnvoyListeners, len(got))
 	}
 	for _, exp := range expected {
 		// Verify Envoy Listener
-		found := false
-		for _, res := range got {
-			lis := res.(*listenerv3.Listener)
-			if lis.GetName() == exp.envoyName {
-				found = true
-				checkListenerMTLS(t, lis)
-				checkListenerRBAC(t, lis, exp.gatewayPrincipals, exp.maxBackendPolicies)
+		if exp.envoyName != "" {
+			found := false
+			for _, res := range got {
+				lis := res.(*listenerv3.Listener)
+				if lis.GetName() == exp.envoyName {
+					found = true
+					checkListenerMTLS(t, lis)
+					checkListenerRBAC(t, lis, exp.gatewayPrincipals, exp.maxBackendPolicies)
+				}
 			}
-		}
-		if !found {
-			t.Errorf("expected listener %s not found", exp.envoyName)
+			if !found {
+				t.Errorf("expected listener %s not found", exp.envoyName)
+			}
 		}
 
 		// Verify Listener Status
@@ -307,17 +445,34 @@ func verifyListeners(t *testing.T, got []envoyproxytypes.Resource, gotStatuses [
 			t.Errorf("expected listener status %s not found", exp.k8sName)
 			continue
 		}
-		for _, cond := range exp.conditions {
-			if !meta.IsStatusConditionTrue(ls.Conditions, cond.Type) {
-				t.Errorf("expected listener %s condition %s to be True", exp.k8sName, cond.Type)
+		for _, expCond := range exp.conditions {
+			actualCond := meta.FindStatusCondition(ls.Conditions, expCond.Type)
+			if actualCond == nil {
+				t.Errorf("expected condition %s not found", expCond.Type)
+				continue
+			}
+			if actualCond.Status != expCond.Status {
+				t.Errorf("expected condition %s status %v, got %v", expCond.Type, expCond.Status, actualCond.Status)
+			}
+			if expCond.Reason != "" && actualCond.Reason != expCond.Reason {
+				t.Errorf("expected condition %s reason %s, got %s", expCond.Type, expCond.Reason, actualCond.Reason)
+			}
+		}
+		if exp.attachedRoutes != 0 {
+			if ls.AttachedRoutes != exp.attachedRoutes {
+				t.Errorf("expected listener %s to have %d attached routes, got %d", exp.k8sName, exp.attachedRoutes, ls.AttachedRoutes)
 			}
 		}
 	}
 }
 
 func verifyRoutes(t *testing.T, got []envoyproxytypes.Resource, gotStatuses map[types.NamespacedName][]gatewayv1.RouteParentStatus, expected []expectedRoute) {
-	if len(got) != len(expected) {
-		t.Errorf("expected %d route configurations, got %d", len(expected), len(got))
+	uniqueEnvoyNames := make(map[string]bool)
+	for _, exp := range expected {
+		uniqueEnvoyNames[exp.envoyName] = true
+	}
+	if len(got) != len(uniqueEnvoyNames) {
+		t.Errorf("expected %d route configurations, got %d", len(uniqueEnvoyNames), len(got))
 	}
 	for _, exp := range expected {
 		// Verify Envoy Route Configuration
@@ -355,9 +510,17 @@ func verifyRoutes(t *testing.T, got []envoyproxytypes.Resource, gotStatuses map[
 			if got.ControllerName != expStatus.ControllerName {
 				t.Errorf("expected controller name %s for %s, got %s", expStatus.ControllerName, key, got.ControllerName)
 			}
-			for _, cond := range expStatus.Conditions {
-				if !meta.IsStatusConditionTrue(got.Conditions, cond.Type) {
-					t.Errorf("expected route %s condition %s to be True", key, cond.Type)
+			for _, expCond := range expStatus.Conditions {
+				actualCond := meta.FindStatusCondition(got.Conditions, expCond.Type)
+				if actualCond == nil {
+					t.Errorf("expected condition %s not found on route %s", expCond.Type, key)
+					continue
+				}
+				if actualCond.Status != expCond.Status {
+					t.Errorf("expected route %s condition %s status %v, got %v", key, expCond.Type, expCond.Status, actualCond.Status)
+				}
+				if expCond.Reason != "" && actualCond.Reason != expCond.Reason {
+					t.Errorf("expected route %s condition %s reason %s, got %s", key, expCond.Type, expCond.Reason, actualCond.Reason)
 				}
 			}
 		}

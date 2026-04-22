@@ -186,7 +186,6 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 		// All these listeners have the same port
 		for _, listener := range listeners {
-			var attachedRoutes int32
 			listenerStatus := gatewayv1.ListenerStatus{
 				Name:           listener.Name,
 				SupportedKinds: []gatewayv1.RouteGroupKind{},
@@ -256,7 +255,6 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 					// Aggregate Envoy routes into VirtualHosts.
 					if routes != nil {
-						attachedRoutes++
 						// 7. Put routes into virtual hosts for each intersecting hostname
 						// Get the domain for this listener's VirtualHost.
 						vhostDomains := getIntersectingHostnames(listener, httpRoute.Spec.Hostnames)
@@ -288,7 +286,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
 			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway)
-			if err != nil {
+			switch {
+			case err != nil:
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
 					Status:             metav1.ConditionFalse,
@@ -296,7 +295,15 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 					Message:            fmt.Sprintf("Failed to program listener: %v", err),
 					ObservedGeneration: gateway.Generation,
 				})
-			} else {
+			case meta.IsStatusConditionFalse(listenerStatus.Conditions, string(gatewayv1.ListenerConditionResolvedRefs)):
+				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+					Type:               string(gatewayv1.ListenerConditionProgrammed),
+					Status:             metav1.ConditionFalse,
+					Reason:             string(gatewayv1.ListenerReasonInvalid),
+					Message:            "Listener has unresolved references",
+					ObservedGeneration: gateway.Generation,
+				})
+			default:
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
 					Status:             metav1.ConditionTrue,
@@ -308,7 +315,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				filterChains = append(filterChains, filterChain)
 			}
 
-			listenerStatus.AttachedRoutes = attachedRoutes
+			//nolint:gosec // G115: Number of routes on a listener is well within int32 range.
+			listenerStatus.AttachedRoutes = int32(len(routesByListener[listener.Name]))
 			meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 				Type:               string(gatewayv1.ListenerConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -446,6 +454,9 @@ func (t *Translator) validateHTTPRoute(
 	// This is a property of the route itself, independent of any parent.
 	resolvedRefsCondition := metav1.Condition{
 		Type:               string(gatewayv1.RouteConditionResolvedRefs),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(gatewayv1.RouteReasonResolvedRefs),
+		Message:            "All references resolved",
 		ObservedGeneration: httpRoute.Generation,
 		LastTransitionTime: metav1.Now(),
 	}
