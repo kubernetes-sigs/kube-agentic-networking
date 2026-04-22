@@ -60,7 +60,7 @@ import (
 
 // maxGatewaySyncRetries is the maximum number of rate-limited requeues for a
 // single Gateway key before the worker drops it (avoids infinite hot loops).
-const maxGatewaySyncRetries = 15
+const maxGatewaySyncRetries = 30
 
 // maxBackendFinalizerRetries is the same cap for the XBackend finalizer queue.
 const maxBackendFinalizerRetries = 15
@@ -411,7 +411,7 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 
 	// Ensure Envoy proxy deployment and service exist.
 	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
-	proxyIP, err := rm.EnsureProxyExist(ctx)
+	proxyAddress, err := rm.EnsureProxyExist(ctx)
 	if err != nil {
 		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, err)
 		return errors.Join(err, updateErr)
@@ -419,15 +419,23 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 
 	// TODO: Add support for IPv6?
 	newGW.Status.Addresses = []gatewayv1.GatewayStatusAddress{}
-	if net.ParseIP(proxyIP) != nil {
+	if net.ParseIP(proxyAddress) != nil {
+		// proxyAddress is an IP address
 		newGW.Status.Addresses = append(newGW.Status.Addresses,
 			gatewayv1.GatewayStatusAddress{
 				Type:  ptr.To(gatewayv1.IPAddressType),
-				Value: proxyIP,
+				Value: proxyAddress,
+			})
+	} else {
+		// proxyAddress is a hostname
+		newGW.Status.Addresses = append(newGW.Status.Addresses,
+			gatewayv1.GatewayStatusAddress{
+				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Value: proxyAddress,
 			})
 	}
 
-	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
+	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyAddress", proxyAddress)
 
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
 	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)

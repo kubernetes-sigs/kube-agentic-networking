@@ -69,7 +69,7 @@ func proxyName(namespace, name string) string {
 }
 
 // EnsureProxyExist ensures that the Envoy proxy deployment, service, and other resources exist and are ready.
-// It returns the ClusterIP of the proxy service.
+// It returns the LoadBalancer address (IP or Hostname) of the proxy service.
 func (r *ResourceManager) EnsureProxyExist(ctx context.Context) (string, error) {
 	logger := klog.FromContext(ctx).WithValues("resourceName", klog.KRef(r.namespace, r.nodeID))
 	ctx = klog.NewContext(ctx, logger)
@@ -169,10 +169,11 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	return fmt.Errorf("envoy deployment %s is not available yet", deployment.Name)
 }
 
-// ensureService ensures that the Service for the Envoy proxy exists and has a ClusterIP assigned.
+// ensureService ensures that the Service for the Envoy proxy exists and has a LoadBalancer address (IP or Hostname) assigned.
 func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 	logger := klog.FromContext(ctx)
 	service := r.renderService()
+
 	svc, err := r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -186,19 +187,30 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		}
 	}
 
-	if svc.Spec.ClusterIP == "" {
-		svc, err = r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("failed to refresh envoy service: %w", err)
-		}
+	svc, err = r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to refresh envoy service: %w", err)
 	}
 
-	if svc.Spec.ClusterIP == "" {
-		return "", fmt.Errorf("envoy service %s is not ready yet", service.Name)
+	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		return "", fmt.Errorf("envoy service %s type is %s, expected %s", service.Name, svc.Spec.Type, corev1.ServiceTypeLoadBalancer)
 	}
 
-	logger.Info("Envoy proxy service is ready!")
-	return svc.Spec.ClusterIP, nil
+	if len(svc.Status.LoadBalancer.Ingress) == 0 {
+		return "", fmt.Errorf("loadbalancer address is not assigned yet for service %s", service.Name)
+	}
+
+	ingress := svc.Status.LoadBalancer.Ingress[0]
+	address := ingress.IP
+	if address == "" {
+		address = ingress.Hostname
+	}
+	if address == "" {
+		return "", fmt.Errorf("loadbalancer IP or Hostname is not assigned yet for service %s", service.Name)
+	}
+
+	logger.Info("Envoy proxy service is ready with LoadBalancer address!", "address", address)
+	return address, nil
 }
 
 func DeleteProxy(ctx context.Context, client kubernetes.Interface, namespace, name string) error {

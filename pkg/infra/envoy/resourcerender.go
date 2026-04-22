@@ -340,7 +340,7 @@ func (r *ResourceManager) renderService() *corev1.Service {
 			OwnerReferences: ownerRef(r.gw),
 		},
 		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeClusterIP,
+			Type: corev1.ServiceTypeLoadBalancer,
 			Selector: map[string]string{
 				"app": r.nodeID,
 			},

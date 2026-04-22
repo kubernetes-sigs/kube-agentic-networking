@@ -178,6 +178,9 @@ create_kind_cluster() {
   kubectl config use-context "kind-${CLUSTER_NAME}"
 }
 
+# TODO: install MetalLB after us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main
+# includes the changes in https://github.com/kubernetes-sigs/kube-agentic-networking/pull/244
+
 # --- Step 2: Install Gateway API CRDs ---
 
 install_gateway_api_crds() {

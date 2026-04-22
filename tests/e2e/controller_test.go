@@ -502,7 +502,7 @@ func deployCommonTestResources(t *testing.T) (namespace, gatewayIP string, clean
 
 	// Return the Gateway IP
 	t.Log("Obtain Gateway Address from status")
-	err = retry(20, 2*time.Second, func() error {
+	err = retry(50, 10*time.Second, func() error {
 		out := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace, "-o", "jsonpath={.status.addresses[*].value}")
 		values := strings.Fields(strings.TrimSpace(out))
 		if len(values) == 0 {
