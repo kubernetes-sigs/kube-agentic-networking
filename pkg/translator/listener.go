@@ -40,6 +40,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -146,16 +147,90 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 			continue
 		}
 
-		setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
-			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-			Status:             metav1.ConditionTrue,
-			Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
-			Message:            "All references resolved",
-			ObservedGeneration: gateway.Generation,
-		})
+		if condition := t.validateCertificateRefs(gateway, listener); condition != nil {
+			setListenerCondition(listenerConditions, listener.Name, *condition)
+		} else {
+			setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
+				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+				Status:             metav1.ConditionTrue,
+				Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
+				Message:            "All references resolved",
+				ObservedGeneration: gateway.Generation,
+			})
+		}
 	}
 
 	return listenerConditions
+}
+
+func (t *Translator) validateCertificateRefs(gateway *gatewayv1.Gateway, listener gatewayv1.Listener) *metav1.Condition {
+	if listener.TLS == nil {
+		return nil
+	}
+
+	for _, ref := range listener.TLS.CertificateRefs {
+		group := ""
+		if ref.Group != nil {
+			group = string(*ref.Group)
+		}
+		kind := "Secret"
+		if ref.Kind != nil {
+			kind = string(*ref.Kind)
+		}
+
+		if (group != "" && group != "core") || kind != "Secret" {
+			return &metav1.Condition{
+				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+				Status:             metav1.ConditionFalse,
+				Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+				Message:            fmt.Sprintf("Unsupported certificate reference group %q kind %q. Only core/Secret is supported.", group, kind),
+				ObservedGeneration: gateway.Generation,
+			}
+		}
+
+		ns := gateway.Namespace
+		if ref.Namespace != nil {
+			ns = string(*ref.Namespace)
+		}
+
+		// Check if secret exists
+		_, err := t.secretLister.Secrets(ns).Get(string(ref.Name))
+		if err != nil {
+			reason := string(gatewayv1.ListenerReasonInvalidCertificateRef)
+			message := fmt.Sprintf("Failed to get Secret %s/%s: %v", ns, ref.Name, err)
+			if apierrors.IsNotFound(err) {
+				message = fmt.Sprintf("Secret %s/%s not found", ns, ref.Name)
+			}
+			return &metav1.Condition{
+				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+				Status:             metav1.ConditionFalse,
+				Reason:             reason,
+				Message:            message,
+				ObservedGeneration: gateway.Generation,
+			}
+		}
+
+		// Check if cross-namespace reference is allowed by ReferenceGrant
+		if ns == gateway.Namespace {
+			continue
+		}
+
+		if !AllowedByReferenceGrant(
+			gateway.Namespace, "gateway.networking.k8s.io", "Gateway",
+			ns, "", "Secret", string(ref.Name),
+			t.referenceGrantLister,
+		) {
+			return &metav1.Condition{
+				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+				Status:             metav1.ConditionFalse,
+				Reason:             string(gatewayv1.ListenerReasonRefNotPermitted),
+				Message:            fmt.Sprintf("Reference to Secret %s/%s not permitted by ReferenceGrant", ns, ref.Name),
+				ObservedGeneration: gateway.Generation,
+			}
+		}
+	}
+
+	return nil
 }
 
 func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
