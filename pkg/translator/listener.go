@@ -58,30 +58,28 @@ const (
 	wellknownJWTAuthnFilter = "envoy.filters.http.jwt_authn"
 )
 
-// setListenerCondition is a helper to safely set a condition on a listener's status
-// in a map of conditions.
-func setListenerCondition(
-	conditionsMap map[gatewayv1.SectionName][]metav1.Condition,
-	listenerName gatewayv1.SectionName,
-	condition metav1.Condition,
-) {
-	// This "get, modify, set" pattern is the standard way to
-	// work around the Go constraint that map values are not addressable.
-	conditions := conditionsMap[listenerName]
+type listenerConditions map[gatewayv1.SectionName][]metav1.Condition
+
+func (lc listenerConditions) setCondition(listenerName gatewayv1.SectionName, condition metav1.Condition) {
+	conditions := lc[listenerName]
 	if conditions == nil {
 		conditions = []metav1.Condition{}
 	}
 	meta.SetStatusCondition(&conditions, condition)
-	conditionsMap[listenerName] = conditions
+	lc[listenerName] = conditions
+}
+
+func (lc listenerConditions) isConditionTrue(listenerName gatewayv1.SectionName, conditionType string) bool {
+	return meta.IsStatusConditionTrue(lc[listenerName], conditionType)
 }
 
 // validateListeners checks for conflicts among all listeners on a Gateway as per the spec.
 // It returns a map of conflicted listener conditions and a Gateway-level condition if any conflicts exist.
-func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1.SectionName][]metav1.Condition {
-	listenerConditions := make(map[gatewayv1.SectionName][]metav1.Condition)
+func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) listenerConditions {
+	conds := make(listenerConditions)
 	for _, listener := range gateway.Spec.Listeners {
 		// Initialize with a fresh slice.
-		listenerConditions[listener.Name] = []metav1.Condition{}
+		conds[listener.Name] = []metav1.Condition{}
 	}
 
 	// Check for Port and Hostname Conflicts
@@ -105,7 +103,7 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 
 		if hasTCP && hasHTTPTLS {
 			for _, listener := range listenersOnPort {
-				setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
+				conds.setCondition(listener.Name, metav1.Condition{
 					Type:    string(gatewayv1.ListenerConditionConflicted),
 					Status:  metav1.ConditionTrue,
 					Reason:  string(gatewayv1.ListenerReasonProtocolConflict),
@@ -132,8 +130,8 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 						Reason:  string(gatewayv1.ListenerReasonHostnameConflict),
 						Message: fmt.Sprintf("Hostname '%s' conflicts with another listener on the same port.", hostname),
 					}
-					setListenerCondition(listenerConditions, listener.Name, conflictedCondition)
-					setListenerCondition(listenerConditions, conflictingListenerName, conflictedCondition)
+					conds.setCondition(listener.Name, conflictedCondition)
+					conds.setCondition(conflictingListenerName, conflictedCondition)
 				} else {
 					seenHostnames[hostname] = listener.Name
 				}
@@ -143,14 +141,14 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 
 	for _, listener := range gateway.Spec.Listeners {
 		// If a listener is already conflicted, we don't need to check its secrets.
-		if meta.IsStatusConditionTrue(listenerConditions[listener.Name], string(gatewayv1.ListenerConditionConflicted)) {
+		if conds.isConditionTrue(listener.Name, string(gatewayv1.ListenerConditionConflicted)) {
 			continue
 		}
 
 		if condition := t.validateCertificateRefs(gateway, listener); condition != nil {
-			setListenerCondition(listenerConditions, listener.Name, *condition)
+			conds.setCondition(listener.Name, *condition)
 		} else {
-			setListenerCondition(listenerConditions, listener.Name, metav1.Condition{
+			conds.setCondition(listener.Name, metav1.Condition{
 				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
 				Status:             metav1.ConditionTrue,
 				Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
@@ -160,7 +158,7 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) map[gatewayv1
 		}
 	}
 
-	return listenerConditions
+	return conds
 }
 
 func (t *Translator) validateCertificateRefs(gateway *gatewayv1.Gateway, listener gatewayv1.Listener) *metav1.Condition {
