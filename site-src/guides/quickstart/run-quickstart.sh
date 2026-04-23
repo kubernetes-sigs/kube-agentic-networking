@@ -178,8 +178,14 @@ create_kind_cluster() {
   kubectl config use-context "kind-${CLUSTER_NAME}"
 }
 
-# TODO: install MetalLB after us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main
-# includes the changes in https://github.com/kubernetes-sigs/kube-agentic-networking/pull/244
+# --- Step 1.5: Install MetalLB ---
+
+install_metallb_step() {
+  info "Step 1.5/9: Installing MetalLB..."
+  source dev/ci/lib.sh
+  install_metallb
+}
+
 
 # --- Step 2: Install Gateway API CRDs ---
 
@@ -243,7 +249,7 @@ apply_policies() {
   local retries=0
   local max_retries=30
   while ! kubectl get deployment -n "${NAMESPACE}" \
-    -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" \
+    -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" \
     -o name 2>/dev/null | grep -q .; do
     retries=$((retries + 1))
     if [[ ${retries} -ge ${max_retries} ]]; then
@@ -255,7 +261,7 @@ apply_policies() {
 
   info "Waiting for Envoy proxy to be ready..."
   kubectl wait --timeout=5m -n "${NAMESPACE}" deployment \
-    -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" \
+    -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" \
     --for=condition=Available
 }
 
@@ -268,7 +274,7 @@ deploy_agent() {
   info "Waiting for Gateway address to be assigned..."
   local gateway_address=""
   local retries=0
-  local max_retries=30
+  local max_retries=60
   while [[ -z "${gateway_address}" ]]; do
     gateway_address=$(kubectl get gateway agentic-net-gateway -n "${NAMESPACE}" -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
     if [[ -n "${gateway_address}" ]]; then
@@ -284,7 +290,7 @@ deploy_agent() {
 
   # Discover service account for the gateway.
   local gateway_sa
-  gateway_sa=$(kubectl get sa -n "${NAMESPACE}" -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" -o jsonpath='{.items[0].metadata.name}')
+  gateway_sa=$(kubectl get sa -n "${NAMESPACE}" -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" -o jsonpath='{.items[0].metadata.name}')
   if [[ -z "${gateway_sa}" ]]; then
     error "Could not find service account for the gateway."
     exit 1
@@ -367,6 +373,7 @@ setup_port_forward() {
 # --- Main ---
 
 create_kind_cluster
+install_metallb_step
 install_gateway_api_crds
 install_agentic_networking_crds
 create_namespaces
