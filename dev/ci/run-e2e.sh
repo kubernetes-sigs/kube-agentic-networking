@@ -40,47 +40,8 @@ main() {
   # is typically used to expose the Gateway) would remain in a <pending> state forever, and
   # the tests would fail.
   header "Installing MetalLB"
-  local metallb_version="v0.13.10"
-  kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/"${metallb_version}"/config/manifests/metallb-native.yaml
-
-  needCreate="$(kubectl get secret -n metallb-system memberlist --no-headers --ignore-not-found -o custom-columns=NAME:.metadata.name)"
-  if [ -z "$needCreate" ]; then
-      kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)"
-  fi
-
-  # Wait for MetalLB to become available
-  kubectl rollout status -n metallb-system deployment/controller --timeout 5m
-  kubectl rollout status -n metallb-system daemonset/speaker --timeout 5m
-
-  # Configure MetalLB with an IP address pool derived from the Docker network used by Kind.
-  # We inspect the 'kind' network to find the subnet, and take the range .200 to .250.
-  # This range is safe to use because it is at the high end of the subnet, well outside
-  # the range Docker typically uses when dynamically assigning IPs to containers (Kind nodes).
-  # For example, if the subnet is 192.168.8.0/24, address_first_three_octets will
-  # be 192.168.8 and the range will be 192.168.8.200-192.168.8.250.
-  subnet=$(docker network inspect kind | jq -r '.[].IPAM.Config[].Subnet | select(contains(":") | not)')
-  address_first_three_octets=$(echo "${subnet}" | awk -F. '{printf "%s.%s.%s",$1,$2,$3}')
-  address_range="${address_first_three_octets}.200-${address_first_three_octets}.250"
-
-  kubectl apply -f - <<EOF
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  namespace: metallb-system
-  name: kube-services
-spec:
-  addresses:
-  - ${address_range}
----
-apiVersion: metallb.io/v1beta1
-kind: L2Advertisement
-metadata:
-  name: kube-services
-  namespace: metallb-system
-spec:
-  ipAddressPools:
-  - kube-services
-EOF
+  source dev/ci/lib.sh
+  install_metallb
 
   header "Building controller image"
   # These must match the image used in k8s/deploy/deployment.yaml
@@ -176,7 +137,7 @@ cleanup() {
     kubectl logs -n "${E2E_NAMESPACE}" -l app=mcp-everything --tail=100 || true
 
     header "Envoy Proxy Logs"
-    kubectl logs -n "${E2E_NAMESPACE}" -l "kube-agentic-networking.sigs.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100 || true
+    kubectl logs -n "${E2E_NAMESPACE}" -l "gateway.networking.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100 || true
   fi
   exit "${status}"
 }
