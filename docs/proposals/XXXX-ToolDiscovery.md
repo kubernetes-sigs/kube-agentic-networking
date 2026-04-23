@@ -32,6 +32,10 @@ without discovery enabled continue to work exactly as they do today.
 - **Full tool schema storage in CRD status.** Storing `inputSchema` and
   `outputSchema` in `XBackend.status` risks etcd bloat. Discovery validates
   schemas but does not persist them.
+- **Agent capability discovery.** Backends that are AI agents (e.g.,
+  exposing capabilities via A2A or similar protocols) use different discovery
+  mechanisms than MCP `tools/list`. This proposal is scoped to MCP tool
+  discovery only; agent capability discovery is a parallel concern.
 
 ## Motivation
 
