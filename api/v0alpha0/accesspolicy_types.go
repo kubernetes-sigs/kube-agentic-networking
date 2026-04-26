@@ -203,6 +203,10 @@ const (
 	// This reason is used with the "Accepted" condition when the policy
 	// was rejected because the maximum number of policies per target was exceeded.
 	PolicyLimitPerTargetExceeded gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
+
+	// This reason is used with the "Accepted" condition when the policy
+	// was rejected because it contains an invalid CEL expression.
+	PolicyReasonInvalidCEL gwapiv1.PolicyConditionReason = "InvalidCEL"
 )
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.
