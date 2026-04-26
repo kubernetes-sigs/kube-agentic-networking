@@ -270,38 +270,34 @@ func (c *Controller) validateCELSpec(ctx context.Context, policy *agenticv0alpha
 		return true
 	}
 
-	var failureMessage string
-	shouldAccept := true
+	env, err := cel.NewEnv(
+		cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
+		ext.Strings(),
+	)
+	if err != nil {
+		c.rejectPolicyForAllTargets(ctx, policy, fmt.Sprintf("Failed to create CEL environment: %v", err))
+		return false
+	}
 
 	for _, rule := range policy.Spec.Rules {
 		if rule.Authorization != nil && rule.Authorization.Type == agenticv0alpha0.AuthorizationRuleTypeCEL && rule.Authorization.CEL != nil {
-			env, err := cel.NewEnv(
-				cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
-				ext.Strings(),
-			)
-			if err != nil {
-				shouldAccept = false
-				failureMessage = fmt.Sprintf("Failed to create CEL environment: %v", err)
-				break
-			}
-			_, issues := env.Compile(rule.Authorization.CEL.Expression)
-			if issues != nil && issues.Err() != nil {
-				shouldAccept = false
-				failureMessage = fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, issues.Err())
-				break
+			if _, issues := env.Compile(rule.Authorization.CEL.Expression); issues != nil && issues.Err() != nil {
+				msg := fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, issues.Err())
+				c.rejectPolicyForAllTargets(ctx, policy, msg)
+				return false
 			}
 		}
 	}
 
-	if !shouldAccept {
-		for _, targetRef := range policy.Spec.TargetRefs {
-			if err := c.updateAccessPolicyStatus(ctx, policy, targetRef, false, agenticv0alpha0.PolicyReasonInvalidCEL, failureMessage); err != nil {
-				runtime.HandleError(fmt.Errorf("failed to update AccessPolicy status: %w", err))
-			}
+	return true
+}
+
+func (c *Controller) rejectPolicyForAllTargets(ctx context.Context, policy *agenticv0alpha0.XAccessPolicy, message string) {
+	for _, targetRef := range policy.Spec.TargetRefs {
+		if err := c.updateAccessPolicyStatus(ctx, policy, targetRef, false, agenticv0alpha0.PolicyReasonInvalidCEL, message); err != nil {
+			runtime.HandleError(fmt.Errorf("failed to update AccessPolicy status: %w", err))
 		}
 	}
-
-	return shouldAccept
 }
 
 // seniorPoliciesAtLimit returns true if the number of policies with higher seniority
