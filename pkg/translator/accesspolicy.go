@@ -294,7 +294,6 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 					}
 					rbacPolicy.Condition = ast.Expr()
 				}
-
 			}
 		}
 

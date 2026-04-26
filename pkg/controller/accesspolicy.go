@@ -32,6 +32,8 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/ext"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -78,6 +80,11 @@ func (c *Controller) onAccessPolicyAdd(obj interface{}) {
 		return
 	}
 
+	// Validate CEL expressions.
+	if !c.validateCELSpec(context.Background(), policy) {
+		return
+	}
+
 	c.enqueueGatewaysForAccessPolicy(policy)
 }
 
@@ -93,6 +100,11 @@ func (c *Controller) onAccessPolicyUpdate(old, newObj interface{}) {
 			if !c.isPolicyUnderTargetLimit(context.Background(), newPolicy) {
 				return
 			}
+		}
+
+		// Validate CEL expressions.
+		if !c.validateCELSpec(context.Background(), newPolicy) {
+			return
 		}
 
 		c.enqueueGatewaysForAccessPolicy(newPolicy)
@@ -244,6 +256,48 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 
 		if err := c.updateAccessPolicyStatus(ctx, policy, targetRef, shouldAccept, reason, message); err != nil {
 			runtime.HandleError(fmt.Errorf("failed to update AccessPolicy status: %w", err))
+		}
+	}
+
+	return shouldAccept
+}
+
+// validateCELSpec validates that all CEL expressions in the policy are syntactically valid.
+// It returns true if all expressions are valid, false otherwise.
+// It also updates the policy status accordingly.
+func (c *Controller) validateCELSpec(ctx context.Context, policy *agenticv0alpha0.XAccessPolicy) bool {
+	if policy.Spec.Rules == nil {
+		return true
+	}
+
+	var failureMessage string
+	shouldAccept := true
+
+	for _, rule := range policy.Spec.Rules {
+		if rule.Authorization != nil && rule.Authorization.Type == agenticv0alpha0.AuthorizationRuleTypeCEL && rule.Authorization.CEL != nil {
+			env, err := cel.NewEnv(
+				cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
+				ext.Strings(),
+			)
+			if err != nil {
+				shouldAccept = false
+				failureMessage = fmt.Sprintf("Failed to create CEL environment: %v", err)
+				break
+			}
+			_, issues := env.Compile(rule.Authorization.CEL.Expression)
+			if issues != nil && issues.Err() != nil {
+				shouldAccept = false
+				failureMessage = fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, issues.Err())
+				break
+			}
+		}
+	}
+
+	if !shouldAccept {
+		for _, targetRef := range policy.Spec.TargetRefs {
+			if err := c.updateAccessPolicyStatus(ctx, policy, targetRef, false, agenticv0alpha0.PolicyReasonInvalidCEL, failureMessage); err != nil {
+				runtime.HandleError(fmt.Errorf("failed to update AccessPolicy status: %w", err))
+			}
 		}
 	}
 
