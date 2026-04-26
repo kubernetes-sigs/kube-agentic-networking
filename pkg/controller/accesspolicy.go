@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -33,14 +32,13 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/ext"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0/helpers"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
 
 // AccessPolicyTargetRefIndex is the index name for looking up AccessPolicies by target ref (namespace/name of XBackend).
@@ -271,21 +269,10 @@ func (c *Controller) validateCELSpec(ctx context.Context, policy *agenticv0alpha
 		return true
 	}
 
-	env, err := cel.NewEnv(
-		cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
-		cel.Variable("metadata", cel.MapType(cel.StringType, cel.AnyType)),
-		ext.Strings(),
-	)
-	if err != nil {
-		c.rejectPolicyForAllTargets(ctx, policy, fmt.Sprintf("Failed to create CEL environment: %v", err))
-		return false
-	}
-
 	for _, rule := range policy.Spec.Rules {
 		if rule.Authorization != nil && rule.Authorization.Type == agenticv0alpha0.AuthorizationRuleTypeCEL && rule.Authorization.CEL != nil {
-			expression := strings.ReplaceAll(rule.Authorization.CEL.Expression, "request.mcp.tool_name", "metadata.filter_metadata['mcp_proxy'].params.name")
-			if _, issues := env.Compile(expression); issues != nil && issues.Err() != nil {
-				msg := fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, issues.Err())
+			if _, err := translator.CompileCelExpression(rule.Authorization.CEL.Expression); err != nil {
+				msg := fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
 				c.rejectPolicyForAllTargets(ctx, policy, msg)
 				return false
 			}
