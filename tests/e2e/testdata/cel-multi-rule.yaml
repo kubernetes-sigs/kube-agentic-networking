@@ -1,0 +1,29 @@
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: e2e-cel-mix
+  namespace: e2e-test-ns
+spec:
+  targetRefs:
+  - group: agentic.prototype.x-k8s.io
+    kind: XBackend
+    name: e2e-mcp-backend
+  rules:
+  - name: allow-get-sum
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: e2e-tester-sa
+    authorization:
+      type: CEL
+      cel:
+        expression: "request.mcp.tool_name == 'get-sum'"
+  - name: allow-non-existent
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: e2e-tester-sa
+    authorization:
+      type: CEL
+      cel:
+        expression: "request.mcp.tool_name == 'non-existent'"

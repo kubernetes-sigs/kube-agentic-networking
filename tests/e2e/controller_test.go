@@ -267,6 +267,78 @@ func TestControllerE2E(t *testing.T) {
 			},
 		)
 	})
+
+	t.Run("Case 7: CEL policy - All failures (allows nothing)", func(t *testing.T) {
+		deleteFromNamespace(t, "testdata/cel-policy.yaml", namespace)
+		applyToNamespace(t, "testdata/cel-all-failures.yaml", namespace)
+		// Wait for xDS propagation
+		time.Sleep(xdsUpdateWaitTime)
+
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
+
+	t.Run("Case 8: CEL policy - Mix of failure and success (allows get-sum)", func(t *testing.T) {
+		deleteFromNamespace(t, "testdata/cel-all-failures.yaml", namespace)
+		applyToNamespace(t, "testdata/cel-multi-rule.yaml", namespace)
+		// Wait for xDS propagation
+		time.Sleep(xdsUpdateWaitTime)
+
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
+						},
+					},
+				},
+			},
+		)
+
+
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
 }
 
 // TestExternalAuthE2E verifies the ExternalAuth authorization feature including:
