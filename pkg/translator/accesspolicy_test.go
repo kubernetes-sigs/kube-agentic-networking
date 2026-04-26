@@ -68,9 +68,9 @@ var (
 )
 
 type expectedRule struct {
-	principal      string
-	permissions    []string
-	isExternalAuth bool
+	principal       string
+	permissions     []string
+	isExternalAuth  bool
 	hasCelCondition bool
 }
 
@@ -738,7 +738,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: func() *agenticv0alpha0.XAccessPolicy {
 				p := newTestAccessPolicy("policy-cel", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
 				p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-					Type:  agenticv0alpha0.AuthorizationRuleTypeCEL,
+					Type: agenticv0alpha0.AuthorizationRuleTypeCEL,
 					CEL: &agenticv0alpha0.CELRule{
 						Expression: "request.mcp.tool_name.startsWith('verify_')",
 						Message:    "Agent is restricted to verification tools.",
@@ -750,6 +750,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				"rule-1": {
 					principal:       "spiffe://example.com/ns/default/sa/caller",
 					hasCelCondition: true,
+					permissions:     []string{toolsCallMethod},
 				},
 			},
 		},
@@ -758,7 +759,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: func() *agenticv0alpha0.XAccessPolicy {
 				p := newTestAccessPolicy("policy-cel-invalid", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
 				p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-					Type:  agenticv0alpha0.AuthorizationRuleTypeCEL,
+					Type: agenticv0alpha0.AuthorizationRuleTypeCEL,
 					CEL: &agenticv0alpha0.CELRule{
 						Expression: "request.mcp.tool_name.startsWith(",
 					},
@@ -945,14 +946,14 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 		return
 	}
 
-	if expected.isExternalAuth {
+	if expected.isExternalAuth || expected.hasCelCondition {
 		if len(rbacPolicy.GetPermissions()) != 1 {
-			t.Errorf("expected 1 permission for external auth, got %d", len(rbacPolicy.GetPermissions()))
+			t.Errorf("expected 1 permission for external auth or CEL, got %d", len(rbacPolicy.GetPermissions()))
 			return
 		}
 		methodRule := rbacPolicy.GetPermissions()[0].GetSourcedMetadata()
 		if methodRule == nil || methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != toolsCallMethod {
-			t.Errorf("expected tools/call method permission for external auth")
+			t.Errorf("expected tools/call method permission for external auth or CEL")
 		}
 		return
 	}

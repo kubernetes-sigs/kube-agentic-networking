@@ -293,6 +293,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 						continue
 					}
 					rbacPolicy.Condition = ast.Expr()
+					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
 				}
 			}
 		}

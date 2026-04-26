@@ -238,11 +238,11 @@ func TestControllerE2E(t *testing.T) {
 	// Clean up previous policies first to avoid interference
 	runKubectl(t, "delete", "xaccesspolicy", "e2e-gateway-level-policy", "-n", namespace, "--ignore-not-found")
 	deleteFromNamespace(t, "testdata/backend-policy.yaml", namespace)
-	
+
 	applyToNamespace(t, "testdata/cel-policy.yaml", namespace)
 	// Wait for xDS propagation
 	time.Sleep(xdsUpdateWaitTime)
-	
+
 	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
 		mcpResponse{
 			StatusCode: 200,
@@ -280,7 +280,7 @@ func TestControllerE2E(t *testing.T) {
 	applyToNamespace(t, "testdata/cel-all-failures.yaml", namespace)
 	// Wait for xDS propagation
 	time.Sleep(xdsUpdateWaitTime)
-	
+
 	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
 		mcpResponse{
 			StatusCode: 200,
@@ -314,7 +314,7 @@ func TestControllerE2E(t *testing.T) {
 	applyToNamespace(t, "testdata/cel-multi-rule.yaml", namespace)
 	// Wait for xDS propagation
 	time.Sleep(xdsUpdateWaitTime)
-	
+
 	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
 		mcpResponse{
 			StatusCode: 200,
