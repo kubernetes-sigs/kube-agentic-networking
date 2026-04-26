@@ -272,6 +272,7 @@ func (c *Controller) validateCELSpec(ctx context.Context, policy *agenticv0alpha
 
 	env, err := cel.NewEnv(
 		cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
+		cel.Variable("metadata", cel.MapType(cel.StringType, cel.AnyType)),
 		ext.Strings(),
 	)
 	if err != nil {

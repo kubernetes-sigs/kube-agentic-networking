@@ -17,7 +17,7 @@ spec:
     authorization:
       type: CEL
       cel:
-        expression: "request.mcp.tool_name == 'get-sum'"
+        expression: "metadata.filter_metadata['mcp_proxy'].params.name == 'get-sum'"
   - name: allow-non-existent
     source:
       type: ServiceAccount
@@ -26,4 +26,4 @@ spec:
     authorization:
       type: CEL
       cel:
-        expression: "request.mcp.tool_name == 'non-existent'"
+        expression: "metadata.filter_metadata['mcp_proxy'].params.name == 'non-existent'"

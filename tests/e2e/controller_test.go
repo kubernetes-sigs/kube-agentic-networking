@@ -323,6 +323,7 @@ func TestControllerE2E(t *testing.T) {
 					},
 				},
 			},
+
 		)
 
 
@@ -339,6 +340,7 @@ func TestControllerE2E(t *testing.T) {
 			},
 		)
 	})
+
 }
 
 // TestExternalAuthE2E verifies the ExternalAuth authorization feature including:
