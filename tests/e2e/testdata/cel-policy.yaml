@@ -17,4 +17,4 @@ spec:
     authorization:
       type: CEL
       cel:
-        expression: "metadata.filter_metadata['mcp_proxy'].params.name == 'get-sum'"
+        expression: "request.mcp.tool_name == 'get-sum'"

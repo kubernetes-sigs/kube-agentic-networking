@@ -18,6 +18,7 @@ package translator
 
 import (
 	"fmt"
+	"strings"
 
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -281,13 +282,15 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 				if rule.Authorization.CEL != nil {
 					env, err := cel.NewEnv(
 						cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
+						cel.Variable("metadata", cel.MapType(cel.StringType, cel.AnyType)),
 						ext.Strings(),
 					)
 					if err != nil {
 						klog.Errorf("Failed to create CEL environment: %v", err)
 						continue
 					}
-					ast, issues := env.Compile(rule.Authorization.CEL.Expression)
+					expression := strings.ReplaceAll(rule.Authorization.CEL.Expression, "request.mcp.tool_name", "metadata.filter_metadata['mcp_proxy'].params.name")
+					ast, issues := env.Compile(expression)
 					if issues != nil && issues.Err() != nil {
 						klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, issues.Err())
 						continue

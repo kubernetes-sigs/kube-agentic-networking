@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -282,7 +283,8 @@ func (c *Controller) validateCELSpec(ctx context.Context, policy *agenticv0alpha
 
 	for _, rule := range policy.Spec.Rules {
 		if rule.Authorization != nil && rule.Authorization.Type == agenticv0alpha0.AuthorizationRuleTypeCEL && rule.Authorization.CEL != nil {
-			if _, issues := env.Compile(rule.Authorization.CEL.Expression); issues != nil && issues.Err() != nil {
+			expression := strings.ReplaceAll(rule.Authorization.CEL.Expression, "request.mcp.tool_name", "metadata.filter_metadata['mcp_proxy'].params.name")
+			if _, issues := env.Compile(expression); issues != nil && issues.Err() != nil {
 				msg := fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, issues.Err())
 				c.rejectPolicyForAllTargets(ctx, policy, msg)
 				return false
