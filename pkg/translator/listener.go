@@ -42,7 +42,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -423,40 +423,70 @@ func buildMCPFilter() (*hcm.HttpFilter, error) {
 }
 
 func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
-	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
-	if err != nil {
-		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
-	}
-
 	var filters []*hcm.HttpFilter
-	uniqueExtAuthzConfigs := make(map[string]struct{}) // To track unique externalAuth configs and avoid duplicate filters
-	for _, ap := range accessPolicies {
-		// We only care about AccessPolicies that are directly or indirectly attached to this Gateway.
-		if !t.isAccessPolicyAttachedToGateway(ap, gateway) {
-			continue
+	uniqueExtAuthzConfigs := make(map[string]struct{})
+
+	// Helper to process policies for a target and collect unique configs
+	processPoliciesForTarget := func(group, kind, ns, name string) error {
+		policies, err := t.findAccessPoliciesForTarget(group, kind, ns, name)
+		if err != nil {
+			return err
 		}
-		for _, rule := range ap.Spec.Rules {
-			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
-				continue
+
+		// findAccessPoliciesForTarget returns sorted policies (oldest first).
+		// We only keep the oldest ExternalAuth policy.
+		var extAuthPolicy *v0alpha0.XAccessPolicy
+		for _, ap := range policies {
+			if ap.Spec.Action == v0alpha0.ActionTypeExternalAuth && ap.Spec.ExternalAuth != nil {
+				extAuthPolicy = ap
+				break // Found the oldest one, stop.
 			}
-			extAuthz := rule.Authorization.ExternalAuth
+		}
+
+		if extAuthPolicy != nil {
+			extAuthz := extAuthPolicy.Spec.ExternalAuth
 			uniqueID, err := externalAuthUniqueID(extAuthz)
 			if err != nil {
-				klog.Error(err)
-				continue
+				return err
 			}
-			if _, exists := uniqueExtAuthzConfigs[uniqueID]; exists {
-				continue // Skip if we've already built an ext_authz filter for this config
+			if _, exists := uniqueExtAuthzConfigs[uniqueID]; !exists {
+				uniqueExtAuthzConfigs[uniqueID] = struct{}{}
+				extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, extAuthPolicy.GetNamespace())
+				if err != nil {
+					return err
+				}
+				filters = append(filters, extAuthzFilter)
 			}
-			uniqueExtAuthzConfigs[uniqueID] = struct{}{}
+		}
+		return nil
+	}
 
-			// Build the ext_authz filter for this RBAC filter and ext_authz config combination
-			extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, ap.GetNamespace())
-			if err != nil {
-				klog.Error(err)
-				continue
+	// 1. Process Gateway target
+	if err := processPoliciesForTarget(gatewayv1.GroupName, "Gateway", gateway.Namespace, gateway.Name); err != nil {
+		return nil, err
+	}
+
+	// 2. Process Reachable XBackend targets
+	routes := t.getHTTPRoutesForGateway(gateway)
+	backendNames := make(map[types.NamespacedName]struct{})
+	for _, route := range routes {
+		for _, rule := range route.Spec.Rules {
+			for _, beRef := range rule.BackendRefs {
+				if beRef.Group != nil && *beRef.Group == v0alpha0.GroupName &&
+					beRef.Kind != nil && *beRef.Kind == "XBackend" {
+					ns := route.Namespace
+					if beRef.Namespace != nil {
+						ns = string(*beRef.Namespace)
+					}
+					backendNames[types.NamespacedName{Namespace: ns, Name: string(beRef.Name)}] = struct{}{}
+				}
 			}
-			filters = append(filters, extAuthzFilter)
+		}
+	}
+
+	for beKey := range backendNames {
+		if err := processPoliciesForTarget(v0alpha0.GroupName, "XBackend", beKey.Namespace, beKey.Name); err != nil {
+			return nil, err
 		}
 	}
 
