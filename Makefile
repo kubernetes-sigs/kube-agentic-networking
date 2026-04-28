@@ -212,6 +212,25 @@ dev-reload-agent: ## Build, load and restart ADK agent in Kind with safety check
 	@echo "Restarting adk-agent pods..."
 	kubectl rollout restart deployment/adk-agent -n $(NAMESPACE)
 
+.PHONY: dev-reload-controller
+dev-reload-controller: build ## Build and reload controller image into Kind cluster
+	@if [[ "$(CONTEXT)" != kind-* ]]; then \
+		echo "Error: Current context is '$(CONTEXT)', not a Kind cluster."; \
+		exit 1; \
+	fi
+	@CLUSTER_NAME=$$(echo $(CONTEXT) | sed 's/kind-//'); \
+	echo "Loading image into Kind cluster: $$CLUSTER_NAME..."; \
+	kind load docker-image $(REGISTRY)/$(IMAGE_NAME):$(TAG) --name $$CLUSTER_NAME
+
+	@echo "Updating Deployment in namespace: agentic-net-system..."
+	kubectl patch deployment agentic-net-controller -n agentic-net-system --type=json \
+		-p='[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "IfNotPresent"}]'
+	
+	kubectl set image deployment/agentic-net-controller manager=$(REGISTRY)/$(IMAGE_NAME):$(TAG) -n agentic-net-system
+	
+	@echo "Restarting agentic-net-controller pods..."
+	kubectl rollout restart deployment/agentic-net-controller -n agentic-net-system
+
 ##@Docs
 
 .PHONY: build-docs
