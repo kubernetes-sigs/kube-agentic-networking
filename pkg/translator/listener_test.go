@@ -22,10 +22,14 @@ import (
 	"testing"
 
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions"
 
@@ -339,6 +343,254 @@ func TestBuildHTTPFilters(t *testing.T) {
 			for i, f := range filters {
 				if f.GetName() != tt.expected[i] {
 					t.Errorf("Filter %d: expected %s, got %s", i, tt.expected[i], f.GetName())
+				}
+			}
+		})
+	}
+}
+
+func TestValidateListeners(t *testing.T) {
+	ns := "test-ns"
+	gwName := "test-gw"
+
+	tests := []struct {
+		name               string
+		gateway            *gatewayv1.Gateway
+		secrets            []runtime.Object
+		referenceGrants    []runtime.Object
+		expectedConditions map[gatewayv1.SectionName][]metav1.Condition
+	}{
+		{
+			name: "Valid Secret in same namespace",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns, Generation: 1},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "https",
+							Protocol: gatewayv1.HTTPSProtocolType,
+							TLS: &gatewayv1.ListenerTLSConfig{
+								CertificateRefs: []gatewayv1.SecretObjectReference{
+									{
+										Name: "my-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-secret", Namespace: ns},
+				},
+			},
+			expectedConditions: map[gatewayv1.SectionName][]metav1.Condition{
+				"https": {
+					{
+						Type:   string(gatewayv1.ListenerConditionResolvedRefs),
+						Status: metav1.ConditionTrue,
+						Reason: string(gatewayv1.ListenerReasonResolvedRefs),
+					},
+				},
+			},
+		},
+		{
+			name: "Missing Secret in same namespace",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns, Generation: 1},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "https",
+							Protocol: gatewayv1.HTTPSProtocolType,
+							TLS: &gatewayv1.ListenerTLSConfig{
+								CertificateRefs: []gatewayv1.SecretObjectReference{
+									{
+										Name: "missing-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedConditions: map[gatewayv1.SectionName][]metav1.Condition{
+				"https": {
+					{
+						Type:   string(gatewayv1.ListenerConditionResolvedRefs),
+						Status: metav1.ConditionFalse,
+						Reason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+					},
+				},
+			},
+		},
+		{
+			name: "Unsupported reference type",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns, Generation: 1},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "https",
+							Protocol: gatewayv1.HTTPSProtocolType,
+							TLS: &gatewayv1.ListenerTLSConfig{
+								CertificateRefs: []gatewayv1.SecretObjectReference{
+									{
+										Group: ptr.To(gatewayv1.Group("custom.group")),
+										Kind:  ptr.To(gatewayv1.Kind("CustomCert")),
+										Name:  "custom-cert",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedConditions: map[gatewayv1.SectionName][]metav1.Condition{
+				"https": {
+					{
+						Type:   string(gatewayv1.ListenerConditionResolvedRefs),
+						Status: metav1.ConditionFalse,
+						Reason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+					},
+				},
+			},
+		},
+		{
+			name: "Cross-Namespace allowed by ReferenceGrant",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns, Generation: 1},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "https",
+							Protocol: gatewayv1.HTTPSProtocolType,
+							TLS: &gatewayv1.ListenerTLSConfig{
+								CertificateRefs: []gatewayv1.SecretObjectReference{
+									{
+										Namespace: ptr.To(gatewayv1.Namespace("other-ns")),
+										Name:      "other-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "other-secret", Namespace: "other-ns"},
+				},
+			},
+			referenceGrants: []runtime.Object{
+				&gatewayv1beta1.ReferenceGrant{
+					ObjectMeta: metav1.ObjectMeta{Name: "grant", Namespace: "other-ns"},
+					Spec: gatewayv1beta1.ReferenceGrantSpec{
+						From: []gatewayv1beta1.ReferenceGrantFrom{
+							{
+								Group:     gatewayv1.GroupName,
+								Kind:      "Gateway",
+								Namespace: gatewayv1.Namespace(ns),
+							},
+						},
+						To: []gatewayv1beta1.ReferenceGrantTo{
+							{
+								Group: "",
+								Kind:  "Secret",
+								Name:  ptr.To(gatewayv1.ObjectName("other-secret")),
+							},
+						},
+					},
+				},
+			},
+			expectedConditions: map[gatewayv1.SectionName][]metav1.Condition{
+				"https": {
+					{
+						Type:   string(gatewayv1.ListenerConditionResolvedRefs),
+						Status: metav1.ConditionTrue,
+						Reason: string(gatewayv1.ListenerReasonResolvedRefs),
+					},
+				},
+			},
+		},
+		{
+			name: "Cross-Namespace denied by missing ReferenceGrant",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns, Generation: 1},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "https",
+							Protocol: gatewayv1.HTTPSProtocolType,
+							TLS: &gatewayv1.ListenerTLSConfig{
+								CertificateRefs: []gatewayv1.SecretObjectReference{
+									{
+										Namespace: ptr.To(gatewayv1.Namespace("other-ns")),
+										Name:      "other-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "other-secret", Namespace: "other-ns"},
+				},
+			},
+			expectedConditions: map[gatewayv1.SectionName][]metav1.Condition{
+				"https": {
+					{
+						Type:   string(gatewayv1.ListenerConditionResolvedRefs),
+						Status: metav1.ConditionFalse,
+						Reason: string(gatewayv1.ListenerReasonRefNotPermitted),
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8sClient := k8sfake.NewClientset(tt.secrets...)
+			k8sInformerFactory := informers.NewSharedInformerFactory(k8sClient, 0)
+			for _, s := range tt.secrets {
+				_ = k8sInformerFactory.Core().V1().Secrets().Informer().GetIndexer().Add(s)
+			}
+
+			gwClient := gatewayclient.NewClientset(tt.referenceGrants...)
+			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+			for _, rg := range tt.referenceGrants {
+				_ = gwInformerFactory.Gateway().V1beta1().ReferenceGrants().Informer().GetIndexer().Add(rg)
+			}
+
+			translator := &Translator{
+				secretLister:         k8sInformerFactory.Core().V1().Secrets().Lister(),
+				referenceGrantLister: gwInformerFactory.Gateway().V1beta1().ReferenceGrants().Lister(),
+			}
+
+			conditions := translator.validateListeners(tt.gateway)
+
+			for listenerName, expectedConds := range tt.expectedConditions {
+				actualConds := conditions[listenerName]
+				for _, expCond := range expectedConds {
+					found := false
+					for _, actCond := range actualConds {
+						if actCond.Type == expCond.Type {
+							found = true
+							if actCond.Status != expCond.Status {
+								t.Errorf("Listener %s, condition %s: expected status %v, got %v", listenerName, expCond.Type, expCond.Status, actCond.Status)
+							}
+							if actCond.Reason != expCond.Reason {
+								t.Errorf("Listener %s, condition %s: expected reason %v, got %v", listenerName, expCond.Type, expCond.Reason, actCond.Reason)
+							}
+						}
+					}
+					if !found {
+						t.Errorf("Listener %s: expected condition %s not found", listenerName, expCond.Type)
+					}
 				}
 			}
 		})
