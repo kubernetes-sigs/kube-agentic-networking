@@ -69,10 +69,6 @@ func (lc listenerConditions) setCondition(listenerName gatewayv1.SectionName, co
 	lc[listenerName] = conditions
 }
 
-func (lc listenerConditions) isConditionTrue(listenerName gatewayv1.SectionName, conditionType string) bool {
-	return meta.IsStatusConditionTrue(lc[listenerName], conditionType)
-}
-
 // validateListeners checks for conflicts among all listeners on a Gateway as per the spec.
 // It returns a map of conflicted listener conditions and a Gateway-level condition if any conflicts exist.
 func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) listenerConditions {
@@ -141,7 +137,7 @@ func (t *Translator) validateListeners(gateway *gatewayv1.Gateway) listenerCondi
 
 	for _, listener := range gateway.Spec.Listeners {
 		// If a listener is already conflicted, we don't need to check its secrets.
-		if conds.isConditionTrue(listener.Name, string(gatewayv1.ListenerConditionConflicted)) {
+		if meta.IsStatusConditionTrue(conds[listener.Name], string(gatewayv1.ListenerConditionConflicted)) {
 			continue
 		}
 
