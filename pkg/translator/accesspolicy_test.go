@@ -19,6 +19,7 @@ package translator
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
@@ -529,6 +530,91 @@ func TestFindAccessPoliciesForTarget(t *testing.T) {
 	}
 }
 
+func TestFindAccessPoliciesForTargetSorting(t *testing.T) {
+	ns := "test-ns"
+	now := metav1.Now()
+	past := metav1.NewTime(now.Add(-1 * time.Hour))
+	future := metav1.NewTime(now.Add(1 * time.Hour))
+
+	policies := []runtime.Object{
+		&agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-future", Namespace: ns, CreationTimestamp: future},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
+					LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+						Group: gatewayv1.Group(agenticv0alpha0.GroupName),
+						Kind:  gatewayv1.Kind("XBackend"),
+						Name:  "my-backend",
+					},
+				}},
+				Action: agenticv0alpha0.ActionTypeAllow,
+				Rules:  []agenticv0alpha0.AccessRule{{Name: "rule-1"}},
+			},
+			Status: acceptedStatus,
+		},
+		&agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-past", Namespace: ns, CreationTimestamp: past},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
+					LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+						Group: gatewayv1.Group(agenticv0alpha0.GroupName),
+						Kind:  gatewayv1.Kind("XBackend"),
+						Name:  "my-backend",
+					},
+				}},
+				Action: agenticv0alpha0.ActionTypeAllow,
+				Rules:  []agenticv0alpha0.AccessRule{{Name: "rule-1"}},
+			},
+			Status: acceptedStatus,
+		},
+		&agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-now", Namespace: ns, CreationTimestamp: now},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
+					LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+						Group: gatewayv1.Group(agenticv0alpha0.GroupName),
+						Kind:  gatewayv1.Kind("XBackend"),
+						Name:  "my-backend",
+					},
+				}},
+				Action: agenticv0alpha0.ActionTypeAllow,
+				Rules:  []agenticv0alpha0.AccessRule{{Name: "rule-1"}},
+			},
+			Status: acceptedStatus,
+		},
+	}
+
+	agenticClient := agenticclient.NewSimpleClientset(policies...)
+	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
+	lister := agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister()
+
+	for _, p := range policies {
+		_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(p)
+	}
+
+	tr := &Translator{accessPolicyLister: lister}
+
+	found, err := tr.findAccessPoliciesForTarget(agenticv0alpha0.GroupName, "XBackend", ns, "my-backend")
+	if err != nil {
+		t.Fatalf("Failed to find policies: %v", err)
+	}
+
+	if len(found) != 3 {
+		t.Errorf("Expected 3 policies, got %d", len(found))
+	}
+
+	// Expected order: past, now, future
+	if found[0].Name != "policy-past" {
+		t.Errorf("Expected policy-past, got %s", found[0].Name)
+	}
+	if found[1].Name != "policy-now" {
+		t.Errorf("Expected policy-now, got %s", found[1].Name)
+	}
+	if found[2].Name != "policy-future" {
+		t.Errorf("Expected policy-future, got %s", found[2].Name)
+	}
+}
+
 func TestConvertSAtoSPIFFEID(t *testing.T) {
 	tests := []struct {
 		trustDomain string
@@ -571,8 +657,15 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: func() *agenticv0alpha0.XAccessPolicy {
 				p := newTestAccessPolicy("policy-1", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
 				p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-					Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
-					Tools: []string{"tool-1"},
+					Type: agenticv0alpha0.AuthorizationRuleTypeInline,
+					MCP: agenticv0alpha0.MCPAttributes{
+						Methods: []agenticv0alpha0.MCPMethod{
+							{
+								Name:   "tools/call",
+								Params: []agenticv0alpha0.MCPMethodParam{"tool-1"},
+							},
+						},
+					},
 				}
 				return p
 			}(),
@@ -588,8 +681,10 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: func() *agenticv0alpha0.XAccessPolicy {
 				p := newTestAccessPolicy("policy-2", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
 				p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-					Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
-					Tools: []string{},
+					Type: agenticv0alpha0.AuthorizationRuleTypeInline,
+					MCP: agenticv0alpha0.MCPAttributes{
+						Methods: []agenticv0alpha0.MCPMethod{},
+					},
 				}
 				return p
 			}(),
@@ -626,8 +721,15 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 								},
 							},
 							Authorization: &agenticv0alpha0.AuthorizationRule{
-								Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
-								Tools: []string{"tool-a"},
+								Type: agenticv0alpha0.AuthorizationRuleTypeInline,
+								MCP: agenticv0alpha0.MCPAttributes{
+									Methods: []agenticv0alpha0.MCPMethod{
+										{
+											Name:   "tools/call",
+											Params: []agenticv0alpha0.MCPMethodParam{"tool-a"},
+										},
+									},
+								},
 							},
 						},
 						{
@@ -640,8 +742,15 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 								}(),
 							},
 							Authorization: &agenticv0alpha0.AuthorizationRule{
-								Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
-								Tools: []string{"tool-b", "tool-c"},
+								Type: agenticv0alpha0.AuthorizationRuleTypeInline,
+								MCP: agenticv0alpha0.MCPAttributes{
+									Methods: []agenticv0alpha0.MCPMethod{
+										{
+											Name:   "tools/call",
+											Params: []agenticv0alpha0.MCPMethodParam{"tool-b", "tool-c"},
+										},
+									},
+								},
 							},
 						},
 					},
@@ -674,8 +783,15 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 								},
 							},
 							Authorization: &agenticv0alpha0.AuthorizationRule{
-								Type:  agenticv0alpha0.AuthorizationRuleTypeInlineTools,
-								Tools: []string{"tool-1"},
+								Type: agenticv0alpha0.AuthorizationRuleTypeInline,
+								MCP: agenticv0alpha0.MCPAttributes{
+									Methods: []agenticv0alpha0.MCPMethod{
+										{
+											Name:   "tools/call",
+											Params: []agenticv0alpha0.MCPMethodParam{"tool-1"},
+										},
+									},
+								},
 							},
 						},
 					},
@@ -693,6 +809,13 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: &agenticv0alpha0.XAccessPolicy{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "policy-ext-auth"},
 				Spec: agenticv0alpha0.AccessPolicySpec{
+					Action: agenticv0alpha0.ActionTypeExternalAuth,
+					ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc",
+						},
+					},
 					Rules: []agenticv0alpha0.AccessRule{
 						{
 							Name: "rule-ext-auth",
@@ -704,11 +827,12 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 								}(),
 							},
 							Authorization: &agenticv0alpha0.AuthorizationRule{
-								Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-								ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
-									ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-									BackendRef: gatewayv1.BackendObjectReference{
-										Name: "ext-auth-svc",
+								Type: agenticv0alpha0.AuthorizationRuleTypeInline,
+								MCP: agenticv0alpha0.MCPAttributes{
+									Methods: []agenticv0alpha0.MCPMethod{
+										{
+											Name: "tools/call",
+										},
 									},
 								},
 							},
@@ -774,7 +898,24 @@ func TestTranslateInlineToolsToRBACPermission(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := translateInlineToolsToRBACPermission(tt.tools)
+			var mcp *agenticv0alpha0.MCPAttributes
+			if len(tt.tools) == 0 {
+				mcp = &agenticv0alpha0.MCPAttributes{}
+			} else {
+				var params []agenticv0alpha0.MCPMethodParam
+				for _, t := range tt.tools {
+					params = append(params, agenticv0alpha0.MCPMethodParam(t))
+				}
+				mcp = &agenticv0alpha0.MCPAttributes{
+					Methods: []agenticv0alpha0.MCPMethod{
+						{
+							Name:   "tools/call",
+							Params: params,
+						},
+					},
+				}
+			}
+			p := translateMCPToRBACPermission(mcp)
 			// Create a dummy policy to use verifyPolicy helper
 			policy := &rbacconfigv3.Policy{
 				Permissions: []*rbacconfigv3.Permission{p},
@@ -889,14 +1030,14 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 	}
 
 	if len(expected.permissions) == 0 {
-		// Verify it's a "Disallow tool call" permission (NotRule of toolsCallMethod)
+		// Verify it's a "Disallow all MCP traffic" permission (NotRule of SourcedMetadata)
 		notRule := rbacPolicy.GetPermissions()[0].GetNotRule()
 		if notRule == nil {
 			t.Fatal("expected NotRule for empty tools list")
 		}
 		methodRule := notRule.GetSourcedMetadata()
-		if methodRule == nil || methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != toolsCallMethod {
-			t.Errorf("expected 'disallow tools/call' permission for empty tools list")
+		if methodRule == nil || methodRule.GetMetadataMatcher().GetFilter() != mcpProxyFilterName {
+			t.Errorf("expected sourced metadata matcher for mcp_proxy in NotRule")
 		}
 		return
 	}

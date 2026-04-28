@@ -40,6 +40,7 @@ import (
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
@@ -538,53 +539,51 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 	}
 
 	for _, ap := range accessPolicies {
-		for _, rule := range ap.Spec.Rules {
-			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
-				continue
-			}
-			extAuth := rule.Authorization.ExternalAuth
-			backendRef := extAuth.BackendRef
-			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuth.ExternalAuthProtocol))
-			if _, ok := clusters[clusterName]; ok {
-				continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
-			}
-			serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
-			servicePort := uint32(defaultExternalAuthPort)
-			if backendRef.Port != nil {
-				//nolint:gosec // G115: port values are within valid uint32 bounds
-				servicePort = uint32(*backendRef.Port)
-			}
-			cluster := &clusterv3.Cluster{
-				Name:                 clusterName,
-				ConnectTimeout:       durationpb.New(defaultConnectTimeout),
-				ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
-				LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
-				LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
-			}
-			switch extAuth.ExternalAuthProtocol {
-			case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
-				opts := &httpv3.HttpProtocolOptions{
-					UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
-						ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
-							ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
-								Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
-							},
+		if ap.Spec.Action != agenticv0alpha0.ActionTypeExternalAuth || ap.Spec.ExternalAuth == nil {
+			continue
+		}
+		extAuth := ap.Spec.ExternalAuth
+		backendRef := extAuth.BackendRef
+		clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuth.ExternalAuthProtocol))
+		if _, ok := clusters[clusterName]; ok {
+			continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
+		}
+		serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
+		servicePort := uint32(defaultExternalAuthPort)
+		if backendRef.Port != nil {
+			//nolint:gosec // G115: port values are within valid uint32 bounds
+			servicePort = uint32(*backendRef.Port)
+		}
+		cluster := &clusterv3.Cluster{
+			Name:                 clusterName,
+			ConnectTimeout:       durationpb.New(defaultConnectTimeout),
+			ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
+			LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
+			LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
+		}
+		switch extAuth.ExternalAuthProtocol {
+		case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
+			opts := &httpv3.HttpProtocolOptions{
+				UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
+					ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
+						ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+							Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
 						},
 					},
-				}
-				optsAny, err := anypb.New(opts)
-				if err != nil {
-					klog.Errorf("failed to marshal typed extension config for cluster %s: %v", clusterName, err)
-					continue
-				}
-				cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
-					string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
-				}
-			case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
-				// HTTP/1.1 is the default protocol, no special configuration needed
+				},
 			}
-			clusters[clusterName] = cluster
+			optsAny, err := anypb.New(opts)
+			if err != nil {
+				klog.Errorf("failed to marshal typed extension config for cluster %s: %v", clusterName, err)
+				continue
+			}
+			cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+				string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
+			}
+		case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
+			// HTTP/1.1 is the default protocol, no special configuration needed
 		}
+		clusters[clusterName] = cluster
 	}
 	return clusters
 }

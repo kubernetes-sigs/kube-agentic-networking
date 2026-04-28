@@ -19,8 +19,12 @@ package translator
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
+	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -196,31 +200,29 @@ func TestBuildHTTPFilters(t *testing.T) {
 			name: "0 Gateway-level Policies, 0 Backend-level policies, 2 external auth policies",
 			policies: []runtime.Object{
 				func() *agenticv0alpha0.XAccessPolicy {
-					p := newTestAccessPolicy("ext-auth-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1") // gateway we check the expected filters for
-					p.Spec.Rules[0].Name = "ext-rule-1"
-					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
-							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-							BackendRef: gatewayv1.BackendObjectReference{
-								Name: "ext-auth-svc-1",
-							},
+					p := newTestAccessPolicy("ext-auth-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.Spec.Action = agenticv0alpha0.ActionTypeExternalAuth
+					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc-1",
 						},
 					}
+					p.Spec.Rules[0].Name = "ext-rule-1"
+					p.Spec.Rules[0].Authorization = nil
 					return p
 				}(),
 				func() *agenticv0alpha0.XAccessPolicy {
-					p := newTestAccessPolicy("ext-auth-policy-2", ns, "dummy", "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2") // NOT the gateway we check the expected filters for
-					p.Spec.Rules[0].Name = "ext-rule-2"
-					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
-							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-							BackendRef: gatewayv1.BackendObjectReference{
-								Name: "ext-auth-svc-2",
-							},
+					p := newTestAccessPolicy("ext-auth-policy-2", ns, "dummy", "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.Spec.Action = agenticv0alpha0.ActionTypeExternalAuth
+					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc-2",
 						},
 					}
+					p.Spec.Rules[0].Name = "ext-rule-2"
+					p.Spec.Rules[0].Authorization = nil
 					return p
 				}(),
 			},
@@ -243,44 +245,41 @@ func TestBuildHTTPFilters(t *testing.T) {
 				newTestAccessPolicy("be-policy-2", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns4/sa/sa4"),
 				func() *agenticv0alpha0.XAccessPolicy {
 					p := newTestAccessPolicy("ext-auth-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
-					p.Spec.Rules[0].Name = "ext-rule-1"
-					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
-							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-							BackendRef: gatewayv1.BackendObjectReference{
-								Name: "ext-auth-svc-1",
-							},
+					p.Spec.Action = agenticv0alpha0.ActionTypeExternalAuth
+					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc-1",
 						},
 					}
+					p.Spec.Rules[0].Name = "ext-rule-1"
+					p.Spec.Rules[0].Authorization = nil
 					return p
 				}(),
 				func() *agenticv0alpha0.XAccessPolicy {
 					p := newTestAccessPolicy("ext-auth-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
-					p.Spec.Rules[0].Name = "ext-rule-2"
-					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
-							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-							BackendRef: gatewayv1.BackendObjectReference{
-								Name: "ext-auth-svc-2",
-							},
+					p.Spec.Action = agenticv0alpha0.ActionTypeExternalAuth
+					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc-2",
 						},
 					}
+					p.Spec.Rules[0].Name = "ext-rule-2"
+					p.Spec.Rules[0].Authorization = nil
 					return p
 				}(),
 				func() *agenticv0alpha0.XAccessPolicy {
 					p := newTestAccessPolicy("ext-auth-policy-3", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2")
-					p.Spec.Rules[0].Name = "ext-rule-1"
-					p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
-						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
-						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{ // same ExternalAuth values as ext-auth-policy-2
-							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
-							BackendRef: gatewayv1.BackendObjectReference{
-								Name: "ext-auth-svc-1",
-							},
+					p.Spec.Action = agenticv0alpha0.ActionTypeExternalAuth
+					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc-1",
 						},
 					}
+					p.Spec.Rules[0].Name = "ext-rule-1"
+					p.Spec.Rules[0].Authorization = nil
 					return p
 				}(),
 			},
@@ -289,12 +288,10 @@ func TestBuildHTTPFilters(t *testing.T) {
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2),
 				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 3), // ext-auth-policy-1
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 4), // ext-auth-policy-2
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2),
 				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 3), // ext-auth-policy-3
 				"envoy.filters.http.ext_authz",                                // ext-auth-policy-1, ext-auth-policy-3
-				"envoy.filters.http.ext_authz",                                // ext-auth-policy-2
 				"envoy.filters.http.router",
 			},
 		},
@@ -342,5 +339,100 @@ func TestBuildHTTPFilters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildExtAuthzFiltersOldestFirst(t *testing.T) {
+	ns := "test-ns"
+	gwName := "test-gw"
+	now := metav1.Now()
+	past := metav1.NewTime(now.Add(-1 * time.Hour))
+
+	policies := []runtime.Object{
+		&agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-future", Namespace: ns, CreationTimestamp: now},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
+					LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+						Group: gatewayv1.Group(gatewayv1.GroupName),
+						Kind:  gatewayv1.Kind("Gateway"),
+						Name:  gatewayv1.ObjectName(gwName),
+					},
+				}},
+				Action: agenticv0alpha0.ActionTypeExternalAuth,
+				ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+					ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+					BackendRef: gatewayv1.BackendObjectReference{
+						Name: "ext-auth-svc-future",
+					},
+				},
+				Rules: []agenticv0alpha0.AccessRule{{Name: "rule-1"}},
+			},
+			Status: acceptedStatus,
+		},
+		&agenticv0alpha0.XAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-past", Namespace: ns, CreationTimestamp: past},
+			Spec: agenticv0alpha0.AccessPolicySpec{
+				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
+					LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
+						Group: gatewayv1.Group(gatewayv1.GroupName),
+						Kind:  gatewayv1.Kind("Gateway"),
+						Name:  gatewayv1.ObjectName(gwName),
+					},
+				}},
+				Action: agenticv0alpha0.ActionTypeExternalAuth,
+				ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+					ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+					BackendRef: gatewayv1.BackendObjectReference{
+						Name: "ext-auth-svc-past",
+					},
+				},
+				Rules: []agenticv0alpha0.AccessRule{{Name: "rule-1"}},
+			},
+			Status: acceptedStatus,
+		},
+	}
+
+	agenticClient := agenticclient.NewSimpleClientset(policies...)
+	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
+	lister := agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister()
+
+	for _, p := range policies {
+		_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(p)
+	}
+
+	gwClient := gatewayclient.NewSimpleClientset()
+	gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+	routeLister := gwInformerFactory.Gateway().V1().HTTPRoutes().Lister()
+
+	tr := &Translator{
+		accessPolicyLister: lister,
+		httprouteLister:    routeLister,
+	}
+	gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
+
+	filters, err := tr.buildExtAuthzFilters(gw)
+	if err != nil {
+		t.Fatalf("Failed to build filters: %v", err)
+	}
+
+	// We expect only ONE filter, corresponding to the "past" policy (oldest).
+	if len(filters) != 1 {
+		t.Fatalf("Expected 1 filter, got %d", len(filters))
+	}
+
+	// Verify it uses the "past" config.
+	if filters[0].GetName() != wellknown.HTTPExternalAuthorization {
+		t.Errorf("Expected filter name %s, got %s", wellknown.HTTPExternalAuthorization, filters[0].GetName())
+	}
+
+	extAuthz := &ext_authzv3.ExtAuthz{}
+	if err := filters[0].GetTypedConfig().UnmarshalTo(extAuthz); err != nil {
+		t.Fatalf("Failed to unmarshal to ExtAuthz: %v", err)
+	}
+
+	clusterName := extAuthz.GetGrpcService().GetEnvoyGrpc().GetClusterName()
+	if !strings.Contains(clusterName, "ext-auth-svc-past") {
+		t.Errorf("Expected cluster name to contain 'ext-auth-svc-past', got %s", clusterName)
 	}
 }

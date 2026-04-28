@@ -18,6 +18,7 @@ package translator
 
 import (
 	"fmt"
+	"sort"
 
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -68,7 +69,14 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
 	}
 	var filters []*hcm.HttpFilter
+	var extAuthPolicy *agenticv0alpha0.XAccessPolicy
 	for i, policy := range gwPolicies {
+		if policy.Spec.Action == agenticv0alpha0.ActionTypeExternalAuth {
+			if extAuthPolicy != nil {
+				continue // Keep only the oldest ExternalAuth policy
+			}
+			extAuthPolicy = policy
+		}
 		// Build the RBAC config for this policy
 		rbacProto := t.buildRBACConfigWithCommonPolicies(policy)
 		rbacAny, err := anypb.New(rbacProto)
@@ -158,7 +166,14 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 		return nil, err
 	}
 
+	var extAuthPolicy *agenticv0alpha0.XAccessPolicy
 	for i, policy := range backendPolicies {
+		if policy.Spec.Action == agenticv0alpha0.ActionTypeExternalAuth {
+			if extAuthPolicy != nil {
+				continue // Keep only the oldest ExternalAuth policy
+			}
+			extAuthPolicy = policy
+		}
 		// Envoy's per-cluster configuration requires an RBACPerRoute message containing
 		// RBAC rules derived from AccessPolicy resources targeting this backend.
 		rbacConfig := t.buildRBACConfigWithCommonPolicies(policy)
@@ -219,6 +234,11 @@ func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name st
 		}
 	}
 
+	// Sort policies by creation timestamp (oldest first)
+	sort.Slice(policies, func(i, j int) bool {
+		return policies[i].CreationTimestamp.Time.Before(policies[j].CreationTimestamp.Time)
+	})
+
 	return policies, nil
 }
 
@@ -230,6 +250,16 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 
 func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
+
+	isExternalAuth := accessPolicy.Spec.Action == agenticv0alpha0.ActionTypeExternalAuth
+	if isExternalAuth && accessPolicy.Spec.ExternalAuth != nil {
+		hash, err := externalAuthUniqueID(accessPolicy.Spec.ExternalAuth)
+		if err != nil {
+			klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
+		} else {
+			rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash)
+		}
+	}
 
 	// Each AccessRule in the XAccessPolicy is translated into a named policy within the Envoy RBAC filter.
 	for _, rule := range accessPolicy.Spec.Rules {
@@ -260,20 +290,10 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 
 		if rule.Authorization != nil {
 			switch rule.Authorization.Type {
-			case agenticv0alpha0.AuthorizationRuleTypeInlineTools:
-				if permission := translateInlineToolsToRBACPermission(rule.Authorization.Tools); permission != nil {
+			case agenticv0alpha0.AuthorizationRuleTypeInline:
+				// TODO: Only MCP is currently supported. Add support for more generic inline auth in the future.
+				if permission := translateMCPToRBACPermission(&rule.Authorization.MCP); permission != nil {
 					rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
-				}
-			case agenticv0alpha0.AuthorizationRuleTypeExternalAuth:
-				if rule.Authorization.ExternalAuth != nil {
-					hash, err := externalAuthUniqueID(rule.Authorization.ExternalAuth)
-					if err != nil {
-						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
-						continue
-					}
-					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash) // a maximum of one ExternalAuth rule per policy is allowed, so we can safely set the shadow rule stat prefix at the RBAC config level
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
-					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 				}
 			}
 		}
@@ -281,7 +301,11 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 		// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
 		// If authorization is omitted or unsupported, we default to a "Disallow tool call" permission.
 		if len(rbacPolicy.GetPermissions()) == 0 {
-			rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowToolCallPermission()}
+			rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowAllMCPTrafficPermission()}
+		}
+
+		if isExternalAuth {
+			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 		}
 
 		addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
@@ -332,59 +356,126 @@ func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, poli
 	rbacConfig.ShadowRules.Policies[policyName] = policy
 }
 
-// buildDisallowToolCallPermission returns a permission that matches anything EXCEPT tool calls.
-// This is used to satisfy Envoy RBAC's requirement that the permissions list must have
-// at least one item (min_items: 1) while effectively denying tool access.
-func buildDisallowToolCallPermission() *rbacconfigv3.Permission {
+// buildDisallowAllMCPTrafficPermission returns a permission that matches requests
+// WITHOUT 'mcp_proxy:method' metadata. This allows non-MCP traffic while
+// effectively denying all MCP traffic (unless explicitly allowed by other rules).
+func buildDisallowAllMCPTrafficPermission() *rbacconfigv3.Permission {
 	return &rbacconfigv3.Permission{
 		Rule: &rbacconfigv3.Permission_NotRule{
-			NotRule: buildToolsCallMethodPermission(),
+			NotRule: &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_SourcedMetadata{
+					SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+						MetadataMatcher: &matcherv3.MetadataMatcher{
+							Filter: mcpProxyFilterName,
+							Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+							Value: &matcherv3.ValueMatcher{
+								MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 }
 
-func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permission {
-	if len(tools) == 0 {
-		return buildDisallowToolCallPermission()
+func translateMCPToRBACPermission(mcp *agenticv0alpha0.MCPAttributes) *rbacconfigv3.Permission {
+	if mcp == nil || len(mcp.Methods) == 0 {
+		return buildDisallowAllMCPTrafficPermission()
 	}
 
-	var toolValueMatchers []*matcherv3.ValueMatcher
-	for _, tool := range tools {
-		toolValueMatchers = append(toolValueMatchers, &matcherv3.ValueMatcher{
+	var methodPermissions []*rbacconfigv3.Permission
+	for _, method := range mcp.Methods {
+		methodPermissions = append(methodPermissions, translateMCPMethodToRBACPermission(method))
+	}
+
+	if len(methodPermissions) == 1 {
+		return methodPermissions[0]
+	}
+
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_OrRules{
+			OrRules: &rbacconfigv3.Permission_Set{
+				Rules: methodPermissions,
+			},
+		},
+	}
+}
+
+func translateMCPMethodToRBACPermission(method agenticv0alpha0.MCPMethod) *rbacconfigv3.Permission {
+	// Match method name
+	methodMatcher := &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_SourcedMetadata{
+			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+				MetadataMatcher: &matcherv3.MetadataMatcher{
+					Filter: mcpProxyFilterName,
+					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+					Value:  buildMCPMethodStringMatcher(string(method.Name)),
+				},
+			},
+		},
+	}
+
+	if len(method.Params) == 0 {
+		return methodMatcher
+	}
+
+	// Match params (assuming they are values for "name")
+	var paramMatchers []*matcherv3.ValueMatcher
+	for _, param := range method.Params {
+		paramMatchers = append(paramMatchers, &matcherv3.ValueMatcher{
 			MatchPattern: &matcherv3.ValueMatcher_StringMatch{
 				StringMatch: &matcherv3.StringMatcher{
-					MatchPattern: &matcherv3.StringMatcher_Exact{Exact: tool},
+					MatchPattern: &matcherv3.StringMatcher_Exact{Exact: string(param)},
 				},
 			},
 		})
 	}
 
-	var toolsMatcher *matcherv3.ValueMatcher
-	if len(toolValueMatchers) == 1 {
-		toolsMatcher = toolValueMatchers[0]
+	var paramsMatcher *matcherv3.ValueMatcher
+	if len(paramMatchers) == 1 {
+		paramsMatcher = paramMatchers[0]
 	} else {
-		toolsMatcher = &matcherv3.ValueMatcher{
-			MatchPattern: &matcherv3.ValueMatcher_OrMatch{OrMatch: &matcherv3.OrMatcher{ValueMatchers: toolValueMatchers}},
+		paramsMatcher = &matcherv3.ValueMatcher{
+			MatchPattern: &matcherv3.ValueMatcher_OrMatch{OrMatch: &matcherv3.OrMatcher{ValueMatchers: paramMatchers}},
 		}
+	}
+
+	paramPermission := &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_SourcedMetadata{
+			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+				MetadataMatcher: &matcherv3.MetadataMatcher{
+					Filter: mcpProxyFilterName,
+					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "params"}}, {Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "name"}}},
+					Value:  paramsMatcher,
+				},
+			},
+		},
 	}
 
 	return &rbacconfigv3.Permission{
 		Rule: &rbacconfigv3.Permission_AndRules{
 			AndRules: &rbacconfigv3.Permission_Set{
-				Rules: []*rbacconfigv3.Permission{
-					buildToolsCallMethodPermission(),
-					{
-						Rule: &rbacconfigv3.Permission_SourcedMetadata{
-							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
-								MetadataMatcher: &matcherv3.MetadataMatcher{
-									Filter: mcpProxyFilterName,
-									Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "params"}}, {Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "name"}}},
-									Value:  toolsMatcher,
-								},
-							},
-						},
-					},
+				Rules: []*rbacconfigv3.Permission{methodMatcher, paramPermission},
+			},
+		},
+	}
+}
+
+func buildMCPMethodStringMatcher(name string) *matcherv3.ValueMatcher {
+	if name == "tools" || name == "prompts" || name == "resources" {
+		return &matcherv3.ValueMatcher{
+			MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+				StringMatch: &matcherv3.StringMatcher{
+					MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: name + "/"},
 				},
+			},
+		}
+	}
+	return &matcherv3.ValueMatcher{
+		MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+			StringMatch: &matcherv3.StringMatcher{
+				MatchPattern: &matcherv3.StringMatcher_Exact{Exact: name},
 			},
 		},
 	}
