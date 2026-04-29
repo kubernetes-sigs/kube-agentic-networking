@@ -18,12 +18,16 @@ package translator
 
 import (
 	"fmt"
+	"regexp"
+	"sync"
 
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/ext"
 	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -275,6 +279,16 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
 					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 				}
+			case agenticv0alpha0.AuthorizationRuleTypeCEL:
+				if rule.Authorization.CEL != nil {
+					ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
+					if err != nil {
+						klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
+						continue
+					}
+					rbacPolicy.Condition = ast.Expr()
+					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
+				}
 			}
 		}
 
@@ -516,4 +530,37 @@ func buildAllowHTTPGetPolicy() *rbacconfigv3.Policy {
 			},
 		},
 	}
+}
+
+var (
+	celEnv           *cel.Env
+	celEnvErr        error
+	celEnvOnce       sync.Once
+	mcpToolNameRegex = regexp.MustCompile(`\brequest\.mcp\.tool_name\b`)
+)
+
+// GetCelEnv returns the shared CEL environment.
+func GetCelEnv() (*cel.Env, error) {
+	celEnvOnce.Do(func() {
+		celEnv, celEnvErr = cel.NewEnv(
+			cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
+			cel.Variable("metadata", cel.MapType(cel.StringType, cel.AnyType)),
+			ext.Strings(),
+		)
+	})
+	return celEnv, celEnvErr
+}
+
+// CompileCelExpression compiles a CEL expression after applying macro replacements.
+func CompileCelExpression(expression string) (*cel.Ast, error) {
+	env, err := GetCelEnv()
+	if err != nil {
+		return nil, err
+	}
+	replaced := mcpToolNameRegex.ReplaceAllString(expression, "metadata.filter_metadata['mcp_proxy'].params.name")
+	ast, issues := env.Compile(replaced)
+	if issues != nil && issues.Err() != nil {
+		return nil, issues.Err()
+	}
+	return ast, nil
 }
