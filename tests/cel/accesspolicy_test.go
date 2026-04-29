@@ -24,7 +24,9 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
@@ -66,7 +68,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 	}{
 		{
 			desc: "valid policy",
-			mutate: func(p *v0alpha0.XAccessPolicy) {
+			mutate: func(_ *v0alpha0.XAccessPolicy) {
 			},
 		},
 		{
@@ -74,14 +76,14 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Group = "wrong.group"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"},
+			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "invalid target kind",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Kind = "WrongKind"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"},
+			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "duplicate rule names",
@@ -122,9 +124,9 @@ func TestValidateXAccessPolicy(t *testing.T) {
 		{
 			desc: "rule name too long",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
-				p.Spec.Rules[0].Name = strings.Repeat("a", 254)
+				p.Spec.Rules[0].Name = strings.Repeat("a", 64)
 			},
-			wantErrors: []string{"may not be more than 253 bytes"},
+			wantErrors: []string{"may not be more than 63 bytes"},
 		},
 		{
 			desc: "too many targets",
@@ -173,7 +175,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			desc: "missing authorization for ExternalAuth type",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
-					Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+					Type:  v0alpha0.AuthorizationRuleTypeExternalAuth,
 					Tools: []string{"tool-1"},
 				}
 			},
@@ -183,7 +185,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			desc: "multiple authorization rule types specified",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
-					Type: v0alpha0.AuthorizationRuleTypeInlineTools,
+					Type:  v0alpha0.AuthorizationRuleTypeInlineTools,
 					Tools: []string{"tool-1"},
 					ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
 						ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
@@ -195,10 +197,56 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			},
 			wantErrors: []string{"only one of tools or externalAuth can be specified"},
 		},
+		{
+			desc: "multiple ExternalAuth authorization rules specified",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+					ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gwapiv1.BackendObjectReference{
+							Name: "ext-auth-svc",
+						},
+					},
+				}
+				// add another rule with ExternalAuth type
+				p.Spec.Rules = append(p.Spec.Rules, v0alpha0.AccessRule{
+					Name: "rule-2",
+					Source: v0alpha0.Source{
+						Type: v0alpha0.AuthorizationSourceTypeServiceAccount,
+						ServiceAccount: &v0alpha0.AuthorizationSourceServiceAccount{
+							Name: "sa-2",
+						},
+					},
+					Authorization: &v0alpha0.AuthorizationRule{
+						Type: v0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gwapiv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gwapiv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef: gwapiv1.BackendObjectReference{
+								Name: "ext-auth-svc-2",
+							},
+						},
+					},
+				})
+			},
+			wantErrors: []string{"a maximum of one rule per policy can specify 'ExternalAuth' authorization type"},
+		},
+		{
+			desc: "heterogeneous target kinds",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.TargetRefs = append(p.Spec.TargetRefs, gwapiv1.LocalPolicyTargetReferenceWithSectionName{
+					LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+						Group: "gateway.networking.k8s.io",
+						Kind:  "Gateway",
+						Name:  "my-gateway",
+					},
+				})
+			},
+			wantErrors: []string{"All targetRefs must have the same Kind"},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-
 			p := basePolicy.DeepCopy()
 			p.Name = fmt.Sprintf("foo-%v", time.Now().UnixNano())
 

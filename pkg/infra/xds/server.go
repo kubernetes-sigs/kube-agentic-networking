@@ -89,7 +89,8 @@ func (s *Server) Run(ctx context.Context) error {
 	runtimev3.RegisterRuntimeDiscoveryServiceServer(grpcServer, s.server)
 
 	// The xDS server listens on a fixed port (15001) on all interfaces.
-	listener, err := net.Listen("tcp", "0.0.0.0:15001")
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(ctx, "tcp", "0.0.0.0:15001")
 	if err != nil {
 		return err
 	}

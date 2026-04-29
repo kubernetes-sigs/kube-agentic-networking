@@ -23,5 +23,5 @@ The `deployment.yaml` file contains the Kubernetes manifests for deploying the L
     -   An `initContainer` that configures `iptables` to redirect traffic to the Envoy sidecar.
     -   The LangChain agent container.
     -   An Envoy sidecar container that proxies requests to the MCP servers.
--   **Service**: `langchain-agent-svc` - A `LoadBalancer` service that exposes the LangChain agent and Envoy proxy.
+-   **Service**: `langchain-agent-svc` - A `LoadBalancer` service that exposes the LangChain agent at port 8051 and Envoy proxy at port 10001.
 

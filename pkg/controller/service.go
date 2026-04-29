@@ -26,6 +26,7 @@ import (
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
@@ -73,9 +74,9 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 	c.enqueueGatewaysForService(svc)
 }
 
-func (c *Controller) onServiceUpdate(old, new interface{}) {
+func (c *Controller) onServiceUpdate(old, newObj interface{}) {
 	oldSvc := old.(*corev1.Service)
-	newSvc := new.(*corev1.Service)
+	newSvc := newObj.(*corev1.Service)
 
 	if !reflect.DeepEqual(oldSvc.Spec.ClusterIPs, newSvc.Spec.ClusterIPs) ||
 		newSvc.DeletionTimestamp != oldSvc.DeletionTimestamp ||
@@ -130,7 +131,7 @@ func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefs(svc *corev1.Se
 	for _, obj := range objs {
 		route := obj.(*gatewayv1.HTTPRoute)
 		// Cross-namespace refs require a ReferenceGrant in the backend namespace.
-		if !translator.AllowedByReferenceGrant(route.Namespace, svc.Namespace, c.gateway.referenceGrantLister) {
+		if !translator.AllowedByReferenceGrant(route.Namespace, gatewayv1.GroupName, "HTTPRoute", svc.Namespace, "", "Service", svc.Name, c.gateway.referenceGrantLister) {
 			continue
 		}
 		klog.V(4).InfoS(
@@ -162,7 +163,7 @@ func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefsList(svc *corev
 					backendNS = string(*backend.Namespace)
 				}
 				if backendNS == svc.Namespace && string(backend.Name) == svc.Name {
-					if !translator.AllowedByReferenceGrant(route.Namespace, backendNS, c.gateway.referenceGrantLister) {
+					if !translator.AllowedByReferenceGrant(route.Namespace, gatewayv1.GroupName, "HTTPRoute", backendNS, "", "Service", string(backend.Name), c.gateway.referenceGrantLister) {
 						continue
 					}
 					matched = true

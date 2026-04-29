@@ -1,7 +1,7 @@
 apiVersion: agentic.prototype.x-k8s.io/v0alpha0
 kind: XAccessPolicy
 metadata:
-  name: e2e-policy
+  name: e2e-backend-level-policy
   namespace: e2e-test-ns
 spec:
   targetRefs:
@@ -9,7 +9,7 @@ spec:
       kind: XBackend
       name: e2e-mcp-backend
   rules:
-    - name: allow-echo
+    - name: allow-get-sum
       source:
         type: ServiceAccount
         serviceAccount:
@@ -18,4 +18,4 @@ spec:
       authorization:
         type: InlineTools
         tools:
-          - "echo"
+          - "get-sum"

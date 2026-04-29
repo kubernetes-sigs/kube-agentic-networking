@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
@@ -111,6 +112,30 @@ func generateSdsConfig(tmpl, sdsConfigName, trustDomain string) (string, error) 
 	return buff.String(), nil
 }
 
+// getLabels creates a map of labels for resources associated with the Gateway.
+// It includes the standard Gateway name label and converts any custom labels
+// from the Gateway Infrastructure to plain strings, as required by Kubernetes ObjectMeta.
+func getLabels(gwName string, infraLabels map[gatewayv1.LabelKey]gatewayv1.LabelValue) map[string]string {
+	labels := map[string]string{
+		constants.GatewayNameLabel: gwName,
+	}
+	for k, v := range infraLabels {
+		labels[string(k)] = string(v)
+	}
+	return labels
+}
+
+// getAnnotations converts the Gateway Infrastructure annotations map to a standard map[string]string
+// required by Kubernetes ObjectMeta. This conversion is necessary because Gateway API uses distinct
+// types for annotation keys and values, which are not directly assignable to plain strings in Go maps.
+func getAnnotations(infraAnnotations map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue) map[string]string {
+	annotations := map[string]string{}
+	for k, v := range infraAnnotations {
+		annotations[string(k)] = string(v)
+	}
+	return annotations
+}
+
 // renderConfigMap creates a ConfigMap for envoy bootstrap config and SDS configs.
 func (r *ResourceManager) renderConfigMap() (*corev1.ConfigMap, error) {
 	bootstrap, err := generateEnvoyBootstrapConfig(types.NamespacedName{
@@ -147,13 +172,18 @@ func (r *ResourceManager) renderConfigMap() (*corev1.ConfigMap, error) {
 
 func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 	replicas := int32(1)
+	var infraAnnotations map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue
+	var infraLabels map[gatewayv1.LabelKey]gatewayv1.LabelValue
+	if r.gw.Spec.Infrastructure != nil {
+		infraAnnotations = r.gw.Spec.Infrastructure.Annotations
+		infraLabels = r.gw.Spec.Infrastructure.Labels
+	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      r.nodeID,
-			Namespace: r.namespace,
-			Labels: map[string]string{
-				constants.GatewayNameLabel: r.gw.Name,
-			},
+			Name:            r.nodeID,
+			Namespace:       r.namespace,
+			Labels:          getLabels(r.gw.Name, infraLabels),
+			Annotations:     getAnnotations(infraAnnotations),
 			OwnerReferences: ownerRef(r.gw),
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -165,10 +195,12 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":                      r.nodeID,
-						constants.GatewayNameLabel: r.gw.Name,
-					},
+					Labels: func() map[string]string {
+						l := getLabels(r.gw.Name, infraLabels)
+						l["app"] = r.nodeID
+						return l
+					}(),
+					Annotations: getAnnotations(infraAnnotations),
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: r.nodeID,
@@ -279,7 +311,7 @@ func (r *ResourceManager) renderDeployment() *appsv1.Deployment {
 func (r *ResourceManager) renderService() *corev1.Service {
 	portsMap := make(map[int32]corev1.ServicePort)
 	for _, listener := range r.gw.Spec.Listeners {
-		port := int32(listener.Port)
+		port := listener.Port
 		if _, ok := portsMap[port]; !ok {
 			portsMap[port] = corev1.ServicePort{
 				Name:     string(listener.Name),
@@ -297,17 +329,22 @@ func (r *ResourceManager) renderService() *corev1.Service {
 		return ports[i].Port < ports[j].Port
 	})
 
+	var infraAnnotations map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue
+	var infraLabels map[gatewayv1.LabelKey]gatewayv1.LabelValue
+	if r.gw.Spec.Infrastructure != nil {
+		infraAnnotations = r.gw.Spec.Infrastructure.Annotations
+		infraLabels = r.gw.Spec.Infrastructure.Labels
+	}
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      r.nodeID,
-			Namespace: r.namespace,
-			Labels: map[string]string{
-				constants.GatewayNameLabel: r.gw.Name,
-			},
+			Name:            r.nodeID,
+			Namespace:       r.namespace,
+			Labels:          getLabels(r.gw.Name, infraLabels),
+			Annotations:     getAnnotations(infraAnnotations),
 			OwnerReferences: ownerRef(r.gw),
 		},
 		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeClusterIP,
+			Type: corev1.ServiceTypeLoadBalancer,
 			Selector: map[string]string{
 				"app": r.nodeID,
 			},
@@ -317,18 +354,24 @@ func (r *ResourceManager) renderService() *corev1.Service {
 }
 
 func (r *ResourceManager) renderServiceAccount() *corev1.ServiceAccount {
+	var infraAnnotations map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue
+	var infraLabels map[gatewayv1.LabelKey]gatewayv1.LabelValue
+	if r.gw.Spec.Infrastructure != nil {
+		infraAnnotations = r.gw.Spec.Infrastructure.Annotations
+		infraLabels = r.gw.Spec.Infrastructure.Labels
+	}
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      r.nodeID,
-			Namespace: r.namespace,
-			Labels: map[string]string{
-				constants.GatewayNameLabel: r.gw.Name,
-			},
+			Name:            r.nodeID,
+			Namespace:       r.namespace,
+			Labels:          getLabels(r.gw.Name, infraLabels),
+			Annotations:     getAnnotations(infraAnnotations),
 			OwnerReferences: ownerRef(r.gw),
 		},
 	}
 }
 
 func ownerRef(gw *gatewayv1.Gateway) []metav1.OwnerReference {
+	//nolint:staticcheck // generated clientset object relies on the deprecated SchemeGroupVersion.WithKind method
 	return []metav1.OwnerReference{*metav1.NewControllerRef(gw, gatewayv1.SchemeGroupVersion.WithKind("Gateway"))}
 }

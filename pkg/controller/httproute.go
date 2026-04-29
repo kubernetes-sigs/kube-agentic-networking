@@ -17,9 +17,16 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
+	"k8s.io/client-go/util/retry"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -41,14 +48,17 @@ func (c *Controller) onHTTPRouteAdd(obj interface{}) {
 	route := obj.(*gatewayv1.HTTPRoute)
 	klog.V(4).InfoS("Adding HTTPRoute", "httproute", klog.KObj(route))
 	c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
+	c.enqueueBackendsForHTTPRouteFinalizer(route)
 }
 
-func (c *Controller) onHTTPRouteUpdate(old, new interface{}) {
+func (c *Controller) onHTTPRouteUpdate(old, newObj interface{}) {
 	oldRoute := old.(*gatewayv1.HTTPRoute)
-	newRoute := new.(*gatewayv1.HTTPRoute)
+	newRoute := newObj.(*gatewayv1.HTTPRoute)
 	if newRoute.Generation != oldRoute.Generation || newRoute.DeletionTimestamp != oldRoute.DeletionTimestamp || !reflect.DeepEqual(newRoute.Annotations, oldRoute.Annotations) {
 		klog.V(4).InfoS("Updating HTTPRoute", "httproute", klog.KObj(oldRoute))
 		c.enqueueGatewaysForHTTPRoute(append(oldRoute.Spec.ParentRefs, newRoute.Spec.ParentRefs...), newRoute.Namespace)
+		c.enqueueBackendsForHTTPRouteFinalizer(oldRoute)
+		c.enqueueBackendsForHTTPRouteFinalizer(newRoute)
 	}
 }
 
@@ -68,6 +78,7 @@ func (c *Controller) onHTTPRouteDelete(obj interface{}) {
 	}
 	klog.V(4).InfoS("Deleting HTTPRoute", "httproute", klog.KObj(route))
 	c.enqueueGatewaysForHTTPRoute(route.Spec.ParentRefs, route.Namespace)
+	c.enqueueBackendsForHTTPRouteFinalizer(route)
 }
 
 // enqueueGatewaysForHTTPRoute enqueues Gateways so they are reconciled; when an HTTPRoute
@@ -90,4 +101,43 @@ func (c *Controller) enqueueGatewaysForHTTPRoute(references []gatewayv1.ParentRe
 	for key := range gatewaysToEnqueue {
 		c.gatewayqueue.Add(key)
 	}
+}
+
+func (c *Controller) updateHTTPRouteStatuses(
+	ctx context.Context,
+	httpRouteStatuses map[types.NamespacedName][]gatewayv1.RouteParentStatus,
+) error {
+	var errGroup []error
+
+	// --- Process HTTPRoutes ---
+	for key, desiredParentStatuses := range httpRouteStatuses {
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			// GET the latest version of the route from the cache.
+			originalRoute, err := c.gateway.httprouteLister.HTTPRoutes(key.Namespace).Get(key.Name)
+			if apierrors.IsNotFound(err) {
+				// Route has been deleted, nothing to do.
+				return nil
+			} else if err != nil {
+				return err
+			}
+
+			// Create a mutable copy to work with.
+			routeToUpdate := originalRoute.DeepCopy()
+			routeToUpdate.Status.Parents = desiredParentStatuses
+
+			// Only make an API call if the status has actually changed.
+			if !semanticIgnoreLastTransitionTime.DeepEqual(originalRoute.Status, routeToUpdate.Status) {
+				_, updateErr := c.gateway.client.GatewayV1().HTTPRoutes(routeToUpdate.Namespace).UpdateStatus(ctx, routeToUpdate, metav1.UpdateOptions{})
+				return updateErr
+			}
+
+			// Status is already up-to-date.
+			return nil
+		})
+		if err != nil {
+			errGroup = append(errGroup, fmt.Errorf("failed to update status for HTTPRoute %s: %w", key, err))
+		}
+	}
+
+	return errors.Join(errGroup...)
 }

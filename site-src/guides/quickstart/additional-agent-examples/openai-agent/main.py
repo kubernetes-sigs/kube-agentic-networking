@@ -20,13 +20,12 @@ from openai import AsyncOpenAI
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-
 envoy_service = os.environ.get("ENVOY_SERVICE")
 if not envoy_service:
     raise ValueError("the ENVOY_SERVICE environment variable is missing.")
 
 DEEPWIKI_URL = f"http://{envoy_service}/remote/mcp"
-EVERYTHINGMCP_URL = f"http://{envoy_service}/local/mcp",
+EVERYTHINGMCP_URL = f"http://{envoy_service}/local/mcp"
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
@@ -36,11 +35,12 @@ hf_model = os.getenv("HF_MODEL")
 if not hf_model:
     raise ValueError("the HF_MODEL environment variable is missing.")
 
+# Initialize OpenAI client with hugging face router
 client = AsyncOpenAI(
     base_url="https://router.huggingface.co/v1",
     api_key=HF_TOKEN
 )
-MODEL_NAME = "deepseek-ai/DeepSeek-R1-0528"
+MODEL_NAME = hf_model.removeprefix("huggingface/")
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"

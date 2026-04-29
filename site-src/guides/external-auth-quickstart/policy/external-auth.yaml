@@ -1,0 +1,28 @@
+# XAccessPolicy for remote MCP backend using external authorization
+apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: auth-policy-remote-mcp
+  namespace: quickstart-ns
+spec:
+  targetRefs:
+    - group: agentic.prototype.x-k8s.io
+      kind: XBackend
+      name: remote-mcp-backend
+  rules:
+    - name: ext-authorizer-for-adk-agent-sa
+      source:
+        type: ServiceAccount
+        serviceAccount:
+          name: adk-agent-sa
+          namespace: quickstart-ns
+      authorization:
+        type: ExternalAuth
+        externalAuth:
+          backendRef:
+            kind: Service
+            name: authorino-authorino-authorization
+            namespace: authorino-operator
+            port: 50051
+          protocol: GRPC
+          grpc: {}

@@ -19,10 +19,13 @@ package controller
 import (
 	"testing"
 
-	"k8s.io/client-go/tools/cache"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/utils/ptr"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
+
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 )
@@ -32,10 +35,14 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	backendName := "my-backend"
 
 	t.Run("no policies in namespace", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
+			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
+			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
+		})
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister:  agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyIndexer: indexer,
 			},
 		}
 		backend := &agenticv0alpha0.XBackend{
@@ -47,7 +54,10 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("policy targets different backend", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
+			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
+			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
+		})
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{
@@ -68,7 +78,8 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 		}
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister:  agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyIndexer: indexer,
 			},
 		}
 		backend := &agenticv0alpha0.XBackend{
@@ -80,7 +91,10 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("policy targets this backend", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
+			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
+			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
+		})
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{
@@ -101,7 +115,8 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 		}
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister:  agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyIndexer: indexer,
 			},
 		}
 		backend := &agenticv0alpha0.XBackend{
@@ -113,7 +128,10 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("policy targets this backend by name but wrong group is skipped", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
+			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
+			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
+		})
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{
@@ -134,7 +152,8 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 		}
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister:  agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyIndexer: indexer,
 			},
 		}
 		backend := &agenticv0alpha0.XBackend{
@@ -146,7 +165,10 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("multiple targetRefs one matches backend", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
+			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
+			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
+		})
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{
@@ -174,7 +196,8 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 		}
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister:  agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyIndexer: indexer,
 			},
 		}
 		backend := &agenticv0alpha0.XBackend{
@@ -184,4 +207,79 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 			t.Error("expected true when one targetRef matches this backend")
 		}
 	})
+}
+
+func TestHasHTTPRoutesReferencingBackend(t *testing.T) {
+	ns := "default"
+	backendName := "my-backend"
+
+	httpRouteWithBackendRef := func(backendRefName string, xbackend bool) *gatewayv1.HTTPRoute {
+		ref := gatewayv1.BackendRef{
+			BackendObjectReference: gatewayv1.BackendObjectReference{
+				Name: gatewayv1.ObjectName(backendRefName),
+			},
+		}
+		if xbackend {
+			ref.Group = ptr.To(gatewayv1.Group(agenticv0alpha0.GroupName))
+			ref.Kind = ptr.To(gatewayv1.Kind("XBackend"))
+		}
+		return &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "route-1"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Rules: []gatewayv1.HTTPRouteRule{{
+					BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: ref}},
+				}},
+			},
+		}
+	}
+
+	tests := []struct {
+		name           string
+		routes         []*gatewayv1.HTTPRoute
+		wantReferenced bool
+	}{
+		{
+			name:           "no routes",
+			routes:         nil,
+			wantReferenced: false,
+		},
+		{
+			name:           "route references different XBackend",
+			routes:         []*gatewayv1.HTTPRoute{httpRouteWithBackendRef("other-backend", true)},
+			wantReferenced: false,
+		},
+		{
+			name:           "route references this XBackend",
+			routes:         []*gatewayv1.HTTPRoute{httpRouteWithBackendRef(backendName, true)},
+			wantReferenced: true,
+		},
+		{
+			name:           "route references Service not XBackend is ignored",
+			routes:         []*gatewayv1.HTTPRoute{httpRouteWithBackendRef(backendName, false)},
+			wantReferenced: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			for _, route := range tt.routes {
+				if err := indexer.Add(route); err != nil {
+					t.Fatalf("indexer.Add: %v", err)
+				}
+			}
+			c := &Controller{
+				gateway: gatewayResources{
+					httprouteLister: gatewaylisters.NewHTTPRouteLister(indexer),
+				},
+			}
+			backend := &agenticv0alpha0.XBackend{
+				ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: backendName},
+			}
+			got := hasHTTPRoutesReferencingBackend(c, backend)
+			if got != tt.wantReferenced {
+				t.Errorf("hasHTTPRoutesReferencingBackend() = %v, want %v", got, tt.wantReferenced)
+			}
+		})
+	}
 }

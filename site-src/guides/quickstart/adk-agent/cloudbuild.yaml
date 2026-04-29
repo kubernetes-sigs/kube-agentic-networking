@@ -14,7 +14,6 @@ steps:
   - name: gcr.io/k8s-staging-test-infra/gcb-docker-gcloud:latest
     entrypoint: make
     env:
-      - IMAGE_NAME=quickstart-adk-agent
       - TAG=$_GIT_TAG
       - BASE_REF=$_PULL_BASE_REF
     args: ["-C", "site-src/guides/quickstart/adk-agent", "push"]

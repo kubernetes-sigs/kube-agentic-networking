@@ -35,6 +35,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
+
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/rendezvous"
 )
 
@@ -79,15 +80,15 @@ func New(clock clock.PassiveClock, handler SignerImpl, kc kubernetes.Interface, 
 	}
 
 	_, err := sc.pcrInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(new any) {
-			key, err := cache.MetaNamespaceKeyFunc(new)
+		AddFunc: func(newObj any) {
+			key, err := cache.MetaNamespaceKeyFunc(newObj)
 			if err != nil {
 				return
 			}
 			sc.pcrQueue.Add(key)
 		},
-		UpdateFunc: func(old, new any) {
-			key, err := cache.MetaNamespaceKeyFunc(new)
+		UpdateFunc: func(_, newObj any) {
+			key, err := cache.MetaNamespaceKeyFunc(newObj)
 			if err != nil {
 				return
 			}

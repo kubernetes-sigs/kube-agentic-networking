@@ -34,15 +34,30 @@ main() {
   kind delete cluster --name "${CLUSTER_NAME}" || true
   kind create cluster --name "${CLUSTER_NAME}" --config dev/ci/kind-config.yaml --wait 5m
 
+  # MetalLB enables Kind clusters to provide external IPs for LoadBalancer services.
+  # Kind (Kubernetes in Docker) does not come with a native LoadBalancer provider.
+  # Without MetalLB (or a similar tool), any Kubernetes Service of type LoadBalancer (which
+  # is typically used to expose the Gateway) would remain in a <pending> state forever, and
+  # the tests would fail.
+  header "Installing MetalLB"
+  source dev/ci/lib.sh
+  install_metallb
+
   header "Building controller image"
-  IMAGE_TAG="us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/agentic-networking-controller:main"
-  docker build . --tag "${IMAGE_TAG}" --label "runnumber=${BUILD_ID:-0}"
+  # These must match the image used in k8s/deploy/deployment.yaml
+  REGISTRY="us-central1-docker.pkg.dev/k8s-staging-images/agentic-net"
+  IMAGE_NAME="agentic-networking-controller"
+  TAG="main"
+
+  # Use the common make rule to build and load the image.
+  # We override TAG to ensure the local image matches the deployment manifest.
+  make build REGISTRY="${REGISTRY}" IMAGE_NAME="${IMAGE_NAME}" TAG="${TAG}" EXTRA_BUILD_OPT="--label runnumber=${BUILD_ID:-0}"
 
   header "Loading controller image into cluster"
-  kind load docker-image "${IMAGE_TAG}" --name "${CLUSTER_NAME}"
+  kind load docker-image "${REGISTRY}/${IMAGE_NAME}:${TAG}" --name "${CLUSTER_NAME}"
 
   header "Installing Gateway API CRDs"
-  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
   header "Installing Project CRDs"
   kubectl apply -f k8s/crds/
@@ -63,7 +78,7 @@ main() {
 
   header "Running E2E tests"
   # Requirements: K8s v1.35+, PodCertificateRequest/ClusterTrustBundle enabled, and KAN Controller running with --enable-agentic-identity-signer=true.
-  cd tests && go clean -testcache && go test -v ./e2e/...
+  cd tests && go clean -testcache && go test -v -parallel=2 ./e2e/...
 }
 
 # Function to print a prominent header
@@ -122,7 +137,7 @@ cleanup() {
     kubectl logs -n "${E2E_NAMESPACE}" -l app=mcp-everything --tail=100 || true
 
     header "Envoy Proxy Logs"
-    kubectl logs -n "${E2E_NAMESPACE}" -l "kube-agentic-networking.sigs.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100 || true
+    kubectl logs -n "${E2E_NAMESPACE}" -l "gateway.networking.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100 || true
   fi
   exit "${status}"
 }

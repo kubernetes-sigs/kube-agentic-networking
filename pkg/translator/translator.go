@@ -23,7 +23,6 @@ import (
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	httpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
@@ -39,10 +38,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
+
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
@@ -106,30 +107,30 @@ func New(
 }
 
 // TranslateGatewayToXDS translates Gateway and HTTPRoute resources into Envoy xDS resources.
-func (t *Translator) TranslateGatewayToXDS(ctx context.Context, gw *gatewayv1.Gateway) (map[resourcev3.Type][]envoyproxytypes.Resource, error) {
+func (t *Translator) TranslateGatewayToXDS(_ context.Context, gw *gatewayv1.Gateway) (map[resourcev3.Type][]envoyproxytypes.Resource, []gatewayv1.ListenerStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, map[types.NamespacedName][]gatewayv1.RouteParentStatus, error) {
 	// Get the desired state
-	envoyResources, _, _, err := t.buildEnvoyResourcesForGateway(gw)
+	envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, err := t.buildEnvoyResourcesForGateway(gw)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	return envoyResources, nil
+	return envoyResources, listenerStatuses, httpRouteStatuses, grpcRouteStatuses, nil
 }
 
-var (
-	SupportedKinds = sets.New[gatewayv1.Kind](
-		"HTTPRoute",
-	)
+var SupportedKinds = sets.New[gatewayv1.Kind](
+	"HTTPRoute",
 )
 
 // Main State Calculation Function
+//
+//nolint:unparam // GRPCRoutes are not yet supported, so the GRPCRoutes return value is always nil
 func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	map[resourcev3.Type][]envoyproxytypes.Resource,
 	[]gatewayv1.ListenerStatus,
 	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // HTTPRoutes
+	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // GRPCRoutes
 	error,
 ) {
-
 	httpRouteStatuses := make(map[types.NamespacedName][]gatewayv1.RouteParentStatus)
 	routesByListener := make(map[gatewayv1.SectionName][]*gatewayv1.HTTPRoute)
 
@@ -185,9 +186,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 		// All these listeners have the same port
 		for _, listener := range listeners {
-			var attachedRoutes int32
 			listenerStatus := gatewayv1.ListenerStatus{
-				Name:           gatewayv1.SectionName(listener.Name),
+				Name:           listener.Name,
 				SupportedKinds: []gatewayv1.RouteGroupKind{},
 				Conditions:     listenerValidationConditions[listener.Name],
 				AttachedRoutes: 0,
@@ -225,6 +225,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				})
 			}
 
+			//nolint:exhaustive // Other protocols such as GRPCRoutes are currently not supported
 			switch listener.Protocol {
 			case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
 				// 6. For each accepted HTTPRoute for this listener -> translate to Envoy routes
@@ -246,15 +247,14 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 					clusters, err := buildClustersFromRouteBackends(allValidBackends)
 					if err != nil {
-						return nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
+						return nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
 					}
 					for _, cluster := range clusters {
-						envoyClusters[cluster.Name] = cluster
+						envoyClusters[cluster.GetName()] = cluster
 					}
 
 					// Aggregate Envoy routes into VirtualHosts.
 					if routes != nil {
-						attachedRoutes++
 						// 7. Put routes into virtual hosts for each intersecting hostname
 						// Get the domain for this listener's VirtualHost.
 						vhostDomains := getIntersectingHostnames(listener, httpRoute.Spec.Hostnames)
@@ -268,11 +268,11 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 								virtualHostsForPort[domain] = vh
 							}
 							vh.Routes = append(vh.Routes, routes...)
-							klog.V(4).Infof("created VirtualHost %s for listener %s with domain %s", vh.Name, listener.
+							klog.V(4).Infof("created VirtualHost %s for listener %s with domain %s", vh.GetName(), listener.
 								Name, domain)
 							if klog.V(4).Enabled() {
 								for _, route := range routes {
-									klog.Infof("adding route %s to VirtualHost %s", route.Name, vh.Name)
+									klog.Infof("adding route %s to VirtualHost %s", route.GetName(), vh.GetName())
 								}
 							}
 						}
@@ -280,14 +280,14 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				}
 
 				// TODO: Process GRPCRoutes
-
 			default:
 				klog.Warningf("Unsupported listener protocol for route processing: %s", listener.Protocol)
 			}
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
-			filterChain, err := t.translateListenerToFilterChain(listener, routeName, t.accessPolicyLister)
-			if err != nil {
+			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway)
+			switch {
+			case err != nil:
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
 					Status:             metav1.ConditionFalse,
@@ -295,7 +295,15 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 					Message:            fmt.Sprintf("Failed to program listener: %v", err),
 					ObservedGeneration: gateway.Generation,
 				})
-			} else {
+			case meta.IsStatusConditionFalse(listenerStatus.Conditions, string(gatewayv1.ListenerConditionResolvedRefs)):
+				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+					Type:               string(gatewayv1.ListenerConditionProgrammed),
+					Status:             metav1.ConditionFalse,
+					Reason:             string(gatewayv1.ListenerReasonInvalid),
+					Message:            "Listener has unresolved references",
+					ObservedGeneration: gateway.Generation,
+				})
+			default:
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
 					Status:             metav1.ConditionTrue,
@@ -307,7 +315,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				filterChains = append(filterChains, filterChain)
 			}
 
-			listenerStatus.AttachedRoutes = attachedRoutes
+			//nolint:gosec // G115: Number of routes on a listener is well within int32 range.
+			listenerStatus.AttachedRoutes = int32(len(routesByListener[listener.Name]))
 			meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 				Type:               string(gatewayv1.ListenerConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -321,7 +330,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 		// 9. Create RouteConfiguration (one per port group) with virtual hosts
 		allVirtualHosts := make([]*routev3.VirtualHost, 0, len(virtualHostsForPort))
 		for _, vh := range virtualHostsForPort {
-			sortRoutes(vh.Routes)
+			sortRoutes(vh.GetRoutes())
 			allVirtualHosts = append(allVirtualHosts, vh)
 		}
 
@@ -335,6 +344,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 		// 10. If there are any filterChains -> create an Envoy Listener for port with those filterChains
 		if len(filterChains) > 0 {
+			//nolint:gosec // G115: port values are within valid uint32 bounds
 			envoyListener := &listenerv3.Listener{
 				Name:            fmt.Sprintf(constants.ListenerNameFormat, port),
 				Address:         createEnvoyAddress(uint32(port)),
@@ -346,7 +356,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			// For HTTPS, we create one filter chain per listener because they have unique
 			// SNI matches and TLS settings.
 			if listeners[0].Protocol == gatewayv1.HTTPProtocolType {
-				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, t.accessPolicyLister)
+				filterChain, _ := t.translateListenerToFilterChain(listeners[0], routeName, gateway)
 				envoyListener.FilterChains = []*listenerv3.FilterChain{filterChain}
 			}
 			finalEnvoyListeners = append(finalEnvoyListeners, envoyListener)
@@ -370,7 +380,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			resourcev3.RouteType:    envoyRoutes,
 			resourcev3.ClusterType:  clustersSlice,
 		}, orderedStatuses,
-		httpRouteStatuses, nil
+		httpRouteStatuses, nil, nil
 }
 
 func getSupportedKinds(listener gatewayv1.Listener) ([]gatewayv1.RouteGroupKind, bool) {
@@ -436,7 +446,6 @@ func (t *Translator) validateHTTPRoute(
 	gateway *gatewayv1.Gateway,
 	httpRoute *gatewayv1.HTTPRoute,
 ) ([]gatewayv1.RouteParentStatus, []gatewayv1.Listener) {
-
 	var parentStatuses []gatewayv1.RouteParentStatus
 	// Use a map to collect a unique set of listeners that accepted the route.
 	acceptedListenerSet := make(map[gatewayv1.SectionName]gatewayv1.Listener)
@@ -445,6 +454,9 @@ func (t *Translator) validateHTTPRoute(
 	// This is a property of the route itself, independent of any parent.
 	resolvedRefsCondition := metav1.Condition{
 		Type:               string(gatewayv1.RouteConditionResolvedRefs),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(gatewayv1.RouteReasonResolvedRefs),
+		Message:            "All references resolved",
 		ObservedGeneration: httpRoute.Generation,
 		LastTransitionTime: metav1.Now(),
 	}
@@ -486,7 +498,7 @@ func (t *Translator) validateHTTPRoute(
 		// --- Build the final status for this ParentRef ---
 		status := gatewayv1.RouteParentStatus{
 			ParentRef:      parentRef,
-			ControllerName: "test",
+			ControllerName: gatewayv1.GatewayController(constants.ControllerName),
 			Conditions:     []metav1.Condition{},
 		}
 
@@ -528,34 +540,6 @@ func (t *Translator) validateHTTPRoute(
 	return parentStatuses, allAcceptingListeners
 }
 
-func createClusterLoadAssignment(clusterName, serviceHost string, servicePort uint32) *endpointv3.ClusterLoadAssignment {
-	return &endpointv3.ClusterLoadAssignment{
-		ClusterName: clusterName,
-		Endpoints: []*endpointv3.LocalityLbEndpoints{
-			{
-				LbEndpoints: []*endpointv3.LbEndpoint{
-					{
-						HostIdentifier: &endpointv3.LbEndpoint_Endpoint{
-							Endpoint: &endpointv3.Endpoint{
-								Address: &corev3.Address{
-									Address: &corev3.Address_SocketAddress{
-										SocketAddress: &corev3.SocketAddress{
-											Address: serviceHost,
-											PortSpecifier: &corev3.SocketAddress_PortValue{
-												PortValue: servicePort,
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
 func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolicyLister) map[string]envoyproxytypes.Resource {
 	clusters := make(map[string]envoyproxytypes.Resource)
 	accessPolicies, err := accessPolicyLister.List(labels.Everything())
@@ -578,6 +562,7 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 			serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
 			servicePort := uint32(defaultExternalAuthPort)
 			if backendRef.Port != nil {
+				//nolint:gosec // G115: port values are within valid uint32 bounds
 				servicePort = uint32(*backendRef.Port)
 			}
 			cluster := &clusterv3.Cluster{
@@ -606,6 +591,8 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 				cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
 					string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
 				}
+			case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
+				// HTTP/1.1 is the default protocol, no special configuration needed
 			}
 			clusters[clusterName] = cluster
 		}

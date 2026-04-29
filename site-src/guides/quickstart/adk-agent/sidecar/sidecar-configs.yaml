@@ -6,8 +6,11 @@ metadata:
 data:
   envoy.yaml: |
     # When Envoy uses the SDS API (even for local files), it needs to identify itself.
-    # This "node identity" is used for logging, metrics, and in more advanced scenarios, for fetching secrets from a remote management server.
-    # Even though we're using local files, the API structure still requires this identification. It doesn't know which Envoy is asking for the secret otherwise.
+    # This "node identity" is used for logging, metrics, and in more advanced
+    # scenarios, for fetching secrets from a remote management server.
+    # Even though we're using local files, the API structure still requires
+    # this identification. It doesn't know which Envoy is asking for the
+    # secret otherwise.
     node:
       id: "envoy-sidecar-node"
       cluster: "envoy-sidecar-cluster"

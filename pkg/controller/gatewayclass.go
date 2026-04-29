@@ -18,45 +18,49 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions/apis/v1"
+
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
-func (c *Controller) setupGatewayClassEventHandlers(gatewayClassInformer gatewayinformers.GatewayClassInformer) error {
+func (c *Controller) setupGatewayClassEventHandlers(ctx context.Context, gatewayClassInformer gatewayinformers.GatewayClassInformer) error {
 	_, err := gatewayClassInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
-				c.syncGatewayClass(key)
+				c.syncGatewayClass(ctx, key)
 			}
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(_, newObj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(newObj)
 			if err == nil {
-				c.syncGatewayClass(key)
+				c.syncGatewayClass(ctx, key)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
-				c.syncGatewayClass(key)
+				c.syncGatewayClass(ctx, key)
 			}
 		},
 	})
 	return err
 }
 
-func (c *Controller) syncGatewayClass(key string) {
+func (c *Controller) syncGatewayClass(ctx context.Context, key string) {
 	startTime := time.Now()
 	klog.V(2).Infof("Started syncing gatewayclass %q (%v)", key, time.Since(startTime))
 	defer func() {
@@ -79,41 +83,72 @@ func (c *Controller) syncGatewayClass(key string) {
 	newGwc := gwc.DeepCopy()
 
 	if newGwc.DeletionTimestamp != nil {
-		if hasGatewaysReferencingClass(c, string(newGwc.Name)) {
+		if hasGatewaysReferencingClass(c, newGwc.Name) {
 			klog.V(4).InfoS("GatewayClass has Gateways still referencing it, blocking deletion", "gatewayclass", key)
 			return
 		}
 		if removeFinalizer(&newGwc.ObjectMeta, constants.GatewayClassFinalizer) {
-			if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
-				klog.Errorf("failed to remove finalizer from GatewayClass: %v", err)
+			if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				latest, err := c.gateway.gatewayClassLister.Get(key)
+				if err != nil {
+					return err
+				}
+				u := latest.DeepCopy()
+				if !removeFinalizer(&u.ObjectMeta, constants.GatewayClassFinalizer) {
+					return nil
+				}
+				_, err = c.gateway.client.GatewayV1().GatewayClasses().Update(ctx, u, metav1.UpdateOptions{})
+				return err
+			}); err != nil {
+				klog.ErrorS(err, "failed to remove finalizer from GatewayClass", "gatewayclass", key)
 			}
 		}
 		return
 	}
 
 	if ensureFinalizer(&newGwc.ObjectMeta, constants.GatewayClassFinalizer) {
-		if _, err := c.gateway.client.GatewayV1().GatewayClasses().Update(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
-			klog.Errorf("failed to add finalizer to GatewayClass: %v", err)
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			latest, err := c.gateway.gatewayClassLister.Get(key)
+			if err != nil {
+				return err
+			}
+			u := latest.DeepCopy()
+			if !ensureFinalizer(&u.ObjectMeta, constants.GatewayClassFinalizer) {
+				return nil
+			}
+			_, err = c.gateway.client.GatewayV1().GatewayClasses().Update(ctx, u, metav1.UpdateOptions{})
+			return err
+		}); err != nil {
+			klog.ErrorS(err, "failed to add finalizer to GatewayClass", "gatewayclass", key)
 			return
 		}
 		return
 	}
 
-	// Set the "Accepted" condition to True and update the observedGeneration.
-	meta.SetStatusCondition(&newGwc.Status.Conditions, metav1.Condition{
-		Type:               string(gatewayv1.GatewayClassConditionStatusAccepted),
-		Status:             metav1.ConditionTrue,
-		Reason:             string(gatewayv1.GatewayClassReasonAccepted),
-		Message:            "GatewayClass is accepted by this controller.",
-		ObservedGeneration: gwc.Generation,
-	})
-
-	// Update the GatewayClass status
-	if _, err := c.gateway.client.GatewayV1().GatewayClasses().UpdateStatus(context.Background(), newGwc, metav1.UpdateOptions{}); err != nil {
-		klog.Errorf("failed to update gatewayclass status: %v", err)
-	} else {
-		klog.InfoS("GatewayClass status updated", "gatewayclass", key)
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest, err := c.gateway.gatewayClassLister.Get(key)
+		if err != nil {
+			return err
+		}
+		u := latest.DeepCopy()
+		meta.SetStatusCondition(&u.Status.Conditions, metav1.Condition{
+			Type:               string(gatewayv1.GatewayClassConditionStatusAccepted),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(gatewayv1.GatewayClassReasonAccepted),
+			Message:            "GatewayClass is accepted by this controller.",
+			ObservedGeneration: latest.Generation,
+		})
+		if reflect.DeepEqual(latest.Status, u.Status) {
+			return nil
+		}
+		_, err = c.gateway.client.GatewayV1().GatewayClasses().UpdateStatus(ctx, u, metav1.UpdateOptions{})
+		return err
+	}); err != nil {
+		klog.ErrorS(err, "failed to update gatewayclass status", "gatewayclass", key)
+		return
 	}
+	klog.InfoS("GatewayClass status updated", "gatewayclass", key)
+	c.enqueueGatewaysForClass(newGwc.Name)
 }
 
 // hasGatewaysReferencingClass returns true if any Gateway exists with spec.gatewayClassName equal to className.
@@ -129,6 +164,23 @@ func hasGatewaysReferencingClass(c *Controller, className string) bool {
 		}
 	}
 	return false
+}
+
+// enqueueGatewaysForClass adds all Gateways referencing the given class to the workqueue.
+func (c *Controller) enqueueGatewaysForClass(className string) {
+	gateways, err := c.gateway.gatewayLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list gateways: %v", err)
+		return
+	}
+	for _, gw := range gateways {
+		if string(gw.Spec.GatewayClassName) == className {
+			key, err := cache.MetaNamespaceKeyFunc(gw)
+			if err == nil {
+				c.gatewayqueue.Add(key)
+			}
+		}
+	}
 }
 
 // gateway class validation

@@ -1,0 +1,6 @@
+title: Proposals
+nav:
+  - List: list.md
+  - By Status:
+      - Provisional: provisional.md
+

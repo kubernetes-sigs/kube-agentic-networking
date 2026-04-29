@@ -34,25 +34,29 @@ logger = logging.getLogger(__name__)
 
 # Environment variables
 envoy_service = os.environ.get("ENVOY_SERVICE")
+gemini_model = os.environ.get("GEMINI_MODEL")
 hf_model = os.environ.get("HF_MODEL")
 ollama_base_url = os.environ.get("OLLAMA_BASE_URL")
-ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2")
+ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 
 # Agent configuration
 AGENT_NAME = "multi_mcp_agent"
 AGENT_SYSTEM = "huggingface"
 
-# Automatically determine which model to use based on available credentials
+# Default to Hugging Face mode if provided, then Gemini, then Ollama
 if hf_model:
-    # Use Hugging Face model
     logger.info(f"Using Hugging Face model: {hf_model}")
     model = LiteLlm(
         model=hf_model,
     )
+elif gemini_model:
+    AGENT_SYSTEM = "gemini"
+    logger.info(f"Using Gemini model: {gemini_model}")
+    model = gemini_model
 else:
     AGENT_SYSTEM = "ollama"
-    # Use Ollama (either custom URL or default local)
-    base_url = ollama_base_url or "http://localhost:11434"
+    # Use Ollama (either custom URL or default host.docker.internal)
+    base_url = ollama_base_url or "http://host.docker.internal:11434"
 
     # Set dummy OPENAI_API_KEY if not available (required for openai/ usage in LiteLLM)
     if not os.environ.get("OPENAI_API_KEY"):
@@ -68,6 +72,17 @@ else:
         model=f"openai/{ollama_model}",
         api_base=f"{base_url}/v1",
     )
+
+# Initialize mcp connections
+try:
+    local_mcp = McpToolset(
+        connection_params=StreamableHTTPConnectionParams(
+            url=f"http://{envoy_service}/local/mcp",
+        ),
+    )
+    logger.info("McpToolset local_mcp initialized successfully.")
+except Exception as e:
+    logger.error(f"Error initializing McpToolset local_mcp: {e}")
 
 # Get tracer for custom spans
 tracer = trace.get_tracer(__name__)
@@ -119,6 +134,7 @@ with genai_helper.create_agent_chat_span(
         genai_helper.set_error_status(parent_span, e, error_type="AgentInitializationError")
         raise
 
+# Initialize the root agent
 root_agent = LlmAgent(
     model=model,
     name=AGENT_NAME,

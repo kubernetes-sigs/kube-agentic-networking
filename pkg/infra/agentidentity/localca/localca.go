@@ -139,13 +139,13 @@ type CA struct {
 }
 
 type serializedPool struct {
-	CAs []*serializedCA
+	CAs []*serializedCA `json:"cas"`
 }
 type serializedCA struct {
-	ID                          string
-	SigningKeyPKCS8             []byte
-	RootCertificateDER          []byte
-	IntermediateCertificatesDER [][]byte
+	ID                          string   `json:"id"`
+	SigningKeyPKCS8             []byte   `json:"signingKeyPKCS8"`
+	RootCertificateDER          []byte   `json:"rootCertificateDER"`
+	IntermediateCertificatesDER [][]byte `json:"intermediateCertificatesDER"`
 }
 
 // Marshal writes the given Pool to JSON.
@@ -184,8 +184,8 @@ func Unmarshal(wireBytes []byte) (*Pool, error) {
 	var err error
 	wire := &serializedPool{}
 
-	if err := json.Unmarshal(wireBytes, wire); err != nil {
-		return nil, fmt.Errorf("while unmarshaling JSON: %w", err)
+	if errUnmarshal := json.Unmarshal(wireBytes, wire); errUnmarshal != nil {
+		return nil, fmt.Errorf("while unmarshaling JSON: %w", errUnmarshal)
 	}
 
 	pool := &Pool{}

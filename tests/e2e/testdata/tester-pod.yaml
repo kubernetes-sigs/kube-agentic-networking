@@ -21,9 +21,9 @@ spec:
           signerName: kube-agentic-networking.sigs.k8s.io/identity
           labelSelector:
             matchLabels:
-              "kube-agentic-networking.sigs.k8s.io/canarying":             "live"
+              "kube-agentic-networking.sigs.k8s.io/canarying": "live"
               "kube-agentic-networking.sigs.k8s.io/workload-trust-domain": "cluster.local"
-              "kube-agentic-networking.sigs.k8s.io/peer-trust-domain":     "cluster.local"
+              "kube-agentic-networking.sigs.k8s.io/peer-trust-domain": "cluster.local"
           path: cluster.local.trust-bundle.pem
       - podCertificate:
           signerName: kube-agentic-networking.sigs.k8s.io/identity

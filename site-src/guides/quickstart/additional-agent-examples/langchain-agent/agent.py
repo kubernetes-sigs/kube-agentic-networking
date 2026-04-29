@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="LangChain Agent", page_icon="🤖")
-st.title("🤖 LangChain Agent")
+st.title("🤖 MCP Agent built by LangChain")
 
 # 1. Environment Variable Check
 envoy_service = os.environ.get("ENVOY_SERVICE")

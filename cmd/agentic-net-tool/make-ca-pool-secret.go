@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 	"k8s.io/klog/v2"
+
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/localca"
 )
 
@@ -69,7 +70,7 @@ func (c *MakeCAPoolSecretCommand) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&c.name, "name", "", "Create the secret with this name")
 }
 
-func (c *MakeCAPoolSecretCommand) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (c *MakeCAPoolSecretCommand) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if err := c.do(ctx); err != nil {
 		klog.ErrorS(err, "Error while executing")
 		return subcommands.ExitFailure

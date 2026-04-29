@@ -20,6 +20,7 @@ package v0alpha0
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -31,7 +32,8 @@ type AccessPolicySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
-	// +kubebuilder:validation:XValidation:rule="self.all(x, x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend')",message="TargetRef must have group agentic.prototype.x-k8s.io group and kind XBackend"
+	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
+	// +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
 	TargetRefs []gwapiv1.LocalPolicyTargetReferenceWithSectionName `json:"targetRefs"`
 	// Rules defines a list of rules to be applied to the target.
 	// An AccessPolicy must have at least one rule.
@@ -40,6 +42,7 @@ type AccessPolicySpec struct {
 	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
 	// +kubebuilder:validation:XValidation:rule="self.all(r, self.filter(x, x.name == r.name).size() == 1)",message="AccessRule names must be unique"
+	// +kubebuilder:validation:XValidation:rule="self.filter(r, has(r.authorization) && r.authorization.type == 'ExternalAuth').size() <= 1",message="a maximum of one rule per policy can specify 'ExternalAuth' authorization type"
 	Rules []AccessRule `json:"rules"`
 }
 
@@ -50,7 +53,7 @@ type AccessRule struct {
 	// +required
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 	// Source specifies the source of the request.
 	// +required
@@ -65,7 +68,6 @@ type AccessRule struct {
 // Type must be set to indicate the type of source type.
 // Similarly, either SPIFFE or Serviceaccount can be set based on the type.
 type Source struct {
-
 	// +unionDiscriminator
 	// +required
 	Type AuthorizationSourceType `json:"type"`
@@ -76,8 +78,9 @@ type Source struct {
 	//   spiffe://<trust_domain>/<workload-identifier>
 	//
 	// The exact workload identifier structure is implementation-specific.
+	// This will likely change in the future.
 	//
-	// spiffe identities for authorization can be derived in various ways by the underlying
+	// SPIFFE identities for authorization can be derived in various ways by the underlying
 	// implementation. Common methods include:
 	// - From peer mTLS certificates: The identity is extracted from the client's
 	//   mTLS certificate presented during connection establishment.
@@ -86,19 +89,14 @@ type Source struct {
 	//   identities (e.g., Service Account, SPIFFE IDs).
 	// - From JWTs or other request-level authentication tokens.
 	//
-	// Note for reviewers: While this GEP primarily focuses on identity-based
-	// authorization where identity is often established at the transport layer,
-	// some implementations might derive identity from authenticated tokens or sources
-	// within the request itself.
-	//
 	// +optional
 	SPIFFE *AuthorizationSourceSPIFFE `json:"spiffe,omitempty"`
 
-	// ServiceAccount specifies a Kubernetes Service Account that is
+	// serviceAccount specifies a Kubernetes Service Account that is
 	// matched by this rule. A request originating from a pod associated with
-	// this serviceaccount will match the rule.
+	// this Service Account will match the rule.
 	//
-	// The ServiceAccount listed here is expected to exist within the same
+	// The Service Account listed here is expected to exist within the same
 	// trust domain as the targeted workload. Cross-trust-domain access should
 	// instead be expressed using the `SPIFFE` field.
 	// +optional
@@ -164,6 +162,28 @@ const (
 	// AuthorizationRuleTypeExternalAuth is used to identify authorization rules
 	// evaluated by an external auth service.
 	AuthorizationRuleTypeExternalAuth AuthorizationRuleType = "ExternalAuth"
+)
+
+const (
+	// PolicyConditionAccepted indicates whether the policy has been accepted by the controller.
+	//
+	// Possible reasons for this condition to be True are:
+	//
+	// * "Accepted"
+	//
+	// Possible reasons for this condition to be False are:
+	//
+	// * "LimitPerTargetExceeded"
+	//
+	PolicyConditionAccepted gwapiv1.PolicyConditionType = "Accepted"
+
+	// This reason is used with the "Accepted" condition when the policy
+	// has been accepted by the controller.
+	PolicyReasonAccepted gwapiv1.PolicyConditionReason = "Accepted"
+
+	// This reason is used with the "Accepted" condition when the policy
+	// was rejected because the maximum number of policies per target was exceeded.
+	PolicyLimitPerTargetExceeded gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
 )
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.
