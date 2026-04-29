@@ -21,16 +21,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"time"
 
-	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
-	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
-	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
-	tlsinspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	udpproxy "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/udp/udp_proxy/v3"
@@ -39,7 +33,6 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -52,12 +45,6 @@ import (
 
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
-)
-
-const (
-	uriTimeout = 5 * time.Second
-
-	wellknownJWTAuthnFilter = "envoy.filters.http.jwt_authn"
 )
 
 type listenerConditions map[gatewayv1.SectionName][]metav1.Condition
@@ -365,79 +352,6 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 }
 
 // buildLocalReplyConfig constructs the local reply configuration for 403 responses
-func buildLocalReplyConfig() *hcm.LocalReplyConfig {
-	return &hcm.LocalReplyConfig{
-		Mappers: []*hcm.ResponseMapper{
-			{
-				// Use an access-log style filter to identify the responses we want to remap.
-				// The AND filter ensures both conditions must hold:
-				// 1) Status code equals the runtime-configurable value (default 403).
-				// 2) The "WWW-Authenticate" header is NOT present so we don't catch
-				//    upstream authentication failures (which include that header).
-				Filter: &accesslogv3.AccessLogFilter{
-					FilterSpecifier: &accesslogv3.AccessLogFilter_AndFilter{
-						AndFilter: &accesslogv3.AndFilter{
-							Filters: []*accesslogv3.AccessLogFilter{
-								{
-									FilterSpecifier: &accesslogv3.AccessLogFilter_StatusCodeFilter{
-										StatusCodeFilter: &accesslogv3.StatusCodeFilter{
-											Comparison: &accesslogv3.ComparisonFilter{
-												Op: accesslogv3.ComparisonFilter_EQ,
-												Value: &corev3.RuntimeUInt32{
-													DefaultValue: 403,
-												},
-											},
-										},
-									},
-								},
-								// MCP servers typically return 403 with a "WWW-Authenticate" header when
-								// the client fails to authenticate. We only want to remap our custom 403s,
-								// so require that header to be absent.
-								// https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#protected-resource-metadata-discovery-requirements
-								{
-									FilterSpecifier: &accesslogv3.AccessLogFilter_HeaderFilter{
-										HeaderFilter: &accesslogv3.HeaderFilter{
-											Header: &routev3.HeaderMatcher{
-												Name:                 "WWW-Authenticate",
-												HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: false},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				// TODO: https://github.com/kubernetes-sigs/kube-agentic-networking/issues/169
-				// NOTE: Temporary workaround: Agent SDKs incorrectly treat a 403 in a way that
-				// prevents proper client-side error handling. To remain compatible until all SDKs
-				// are fixed, set the HTTP status code to 200 and encode a JSON-RPC error body.
-				// See the linked SDK improvement below for context.
-				// https://github.com/modelcontextprotocol/python-sdk/commit/2fe56e56de2aff8fcb964ff7e26e7c6df4d14653
-				// Change the HTTP status code back to 403 when the commit above is released in all Agent SDKs.
-				StatusCode: wrapperspb.UInt32(200),
-				// Override the body format to JSON-RPC 2.0.
-				BodyFormatOverride: &corev3.SubstitutionFormatString{
-					Format: &corev3.SubstitutionFormatString_JsonFormat{
-						JsonFormat: &structpb.Struct{
-							Fields: map[string]*structpb.Value{
-								"jsonrpc": structpb.NewStringValue("2.0"),
-								"id":      structpb.NewStringValue("%DYNAMIC_METADATA(mcp_proxy:id)%"),
-								"error": structpb.NewStructValue(&structpb.Struct{
-									Fields: map[string]*structpb.Value{
-										"code":    structpb.NewNumberValue(403),
-										"message": structpb.NewStringValue("Access to this tool is forbidden."),
-									},
-								}),
-							},
-						},
-					},
-					ContentType: "application/json",
-				},
-			},
-		},
-	}
-}
 
 func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
 	httpFilters, err := t.buildHTTPFilters(gateway)
@@ -569,22 +483,6 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	return filters, nil
 }
 
-func buildMCPFilter() (*hcm.HttpFilter, error) {
-	mcpProto := &mcpv3.Mcp{}
-	mcpAny, err := anypb.New(mcpProto)
-	if err != nil {
-		klog.Errorf("Failed to marshal mcp config: %v", err)
-		return nil, err
-	}
-
-	return &hcm.HttpFilter{
-		Name: "envoy.filters.http.mcp",
-		ConfigType: &hcm.HttpFilter_TypedConfig{
-			TypedConfig: mcpAny,
-		},
-	}, nil
-}
-
 func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
 	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
 	if err != nil {
@@ -634,7 +532,7 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 			Path: []*matcherv3.MetadataMatcher_PathSegment{
 				{
 					Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
-						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", externalAuthzShadowRulePrefix, extAuthzUniqueID),
+						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", constants.ExternalAuthzShadowRulePrefix, extAuthzUniqueID),
 					},
 				},
 			},
@@ -643,8 +541,8 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 			},
 		},
 		MetadataContextNamespaces: []string{
-			mcpProxyFilterName,
-			wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
+			constants.MCPProxyFilterName,
+			constants.WellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
 		},
 	}
 	backendRef := extAuthz.BackendRef
@@ -685,7 +583,7 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 						HttpUpstreamType: &corev3.HttpUri_Cluster{
 							Cluster: clusterName,
 						},
-						Timeout: durationpb.New(uriTimeout),
+						Timeout: durationpb.New(constants.URITimeout),
 					},
 					PathPrefix: config.Path,
 				},
@@ -753,48 +651,6 @@ func (t *Translator) isAccessPolicyAttachedToGateway(ap *v0alpha0.XAccessPolicy,
 	return false
 }
 
-func buildRouterFilter() (*hcm.HttpFilter, error) {
-	routerProto := &routerv3.Router{}
-	routerAny, err := anypb.New(routerProto)
-	if err != nil {
-		klog.Errorf("Failed to marshal router config: %v", err)
-		return nil, err
-	}
-
-	return &hcm.HttpFilter{
-		Name: wellknown.Router,
-		ConfigType: &hcm.HttpFilter_TypedConfig{
-			TypedConfig: routerAny,
-		},
-	}, nil
-}
-
-func newAdsSdsSecretConfig(secretName string) *tlsv3.SdsSecretConfig {
-	return &tlsv3.SdsSecretConfig{
-		Name: secretName,
-		SdsConfig: &corev3.ConfigSource{
-			ResourceApiVersion: corev3.ApiVersion_V3,
-			ConfigSourceSpecifier: &corev3.ConfigSource_Ads{
-				Ads: &corev3.AggregatedConfigSource{},
-			},
-		},
-	}
-}
-
-func newPathSdsSecretConfig(name, filename string) *tlsv3.SdsSecretConfig {
-	return &tlsv3.SdsSecretConfig{
-		Name: name,
-		SdsConfig: &corev3.ConfigSource{
-			ResourceApiVersion: corev3.ApiVersion_V3,
-			ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
-				PathConfigSource: &corev3.PathConfigSource{
-					Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, filename),
-				},
-			},
-		},
-	}
-}
-
 // buildDownstreamTLSContext configures TLS for the downstream (client-to-gateway) connection.
 func buildDownstreamTLSContext(lis gatewayv1.Listener, gateway *gatewayv1.Gateway) (*anypb.Any, error) {
 	certRef, caRef, hasMultipleCerts, hasMultipleCAs := extractCertificateRefs(gateway, lis)
@@ -841,44 +697,6 @@ func buildDownstreamTLSContext(lis gatewayv1.Listener, gateway *gatewayv1.Gatewa
 		return nil, err
 	}
 	return anyObj, nil
-}
-
-func createEnvoyAddress(port uint32) *corev3.Address {
-	return &corev3.Address{
-		Address: &corev3.Address_SocketAddress{
-			SocketAddress: &corev3.SocketAddress{
-				Protocol: corev3.SocketAddress_TCP,
-				Address:  "0.0.0.0",
-				PortSpecifier: &corev3.SocketAddress_PortValue{
-					PortValue: port,
-				},
-			},
-		},
-	}
-}
-
-func createListenerFilters() []*listener.ListenerFilter {
-	tlsInspectorConfig, _ := anypb.New(&tlsinspector.TlsInspector{})
-	return []*listener.ListenerFilter{
-		{
-			Name: wellknown.TlsInspector,
-			ConfigType: &listener.ListenerFilter_TypedConfig{
-				TypedConfig: tlsInspectorConfig,
-			},
-		},
-	}
-}
-
-func toEnvoyExactStringMatchers(s []string) []*matcherv3.StringMatcher {
-	var matchers []*matcherv3.StringMatcher
-	for _, str := range s {
-		matchers = append(matchers, &matcherv3.StringMatcher{
-			MatchPattern: &matcherv3.StringMatcher_Exact{
-				Exact: str,
-			},
-		})
-	}
-	return matchers
 }
 
 func externalAuthUniqueID(externalAuth *gatewayv1.HTTPExternalAuthFilter) (string, error) {
