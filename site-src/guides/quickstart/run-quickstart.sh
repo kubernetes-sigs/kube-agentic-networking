@@ -198,8 +198,8 @@ install_gateway_api_crds() {
 
 install_agentic_networking_crds() {
   info "Step 3/9: Installing Agentic Networking CRDs..."
-  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.prototype.x-k8s.io_xbackends.yaml"
-  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.prototype.x-k8s.io_xaccesspolicies.yaml"
+  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.networking.x-k8s.io_xbackends.yaml"
+  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.networking.x-k8s.io_xaccesspolicies.yaml"
 }
 
 # --- Step 4: Create Namespaces ---
