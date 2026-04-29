@@ -41,7 +41,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{
 				{
 					LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
-						Group: "agentic.prototype.x-k8s.io",
+						Group: "agentic.networking.x-k8s.io",
 						Kind:  "XBackend",
 						Name:  "my-backend",
 					},
@@ -76,14 +76,14 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Group = "wrong.group"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
+			wantErrors: []string{"TargetRef must have group agentic.networking.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "invalid target kind",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Kind = "WrongKind"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
+			wantErrors: []string{"TargetRef must have group agentic.networking.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "duplicate rule names",
@@ -135,7 +135,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 				for i := 0; i < 10; i++ {
 					p.Spec.TargetRefs = append(p.Spec.TargetRefs, gwapiv1.LocalPolicyTargetReferenceWithSectionName{
 						LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
-							Group: "agentic.prototype.x-k8s.io",
+							Group: "agentic.networking.x-k8s.io",
 							Kind:  "XBackend",
 							Name:  "my-backend",
 						},

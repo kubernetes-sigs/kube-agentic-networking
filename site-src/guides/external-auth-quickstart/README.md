@@ -134,14 +134,14 @@ The `run-external-auth-quickstart.sh` script performs the following steps:
 The key difference in this quickstart is the `XAccessPolicy` for the remote MCP backend. Let's examine how it's configured:
 
 ```yaml
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XAccessPolicy
 metadata:
   name: auth-policy-remote-mcp
   namespace: quickstart-ns
 spec:
   targetRefs:
-    - group: agentic.prototype.x-k8s.io
+    - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
   rules:

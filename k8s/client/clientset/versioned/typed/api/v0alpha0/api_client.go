@@ -32,7 +32,7 @@ type AgenticV0alpha0Interface interface {
 	XBackendsGetter
 }
 
-// AgenticV0alpha0Client is used to interact with features provided by the agentic.prototype.x-k8s.io group.
+// AgenticV0alpha0Client is used to interact with features provided by the agentic.networking.x-k8s.io group.
 type AgenticV0alpha0Client struct {
 	restClient rest.Interface
 }

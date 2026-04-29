@@ -81,7 +81,7 @@ func TestCRDValidation(t *testing.T) {
 
 		apiResources, err := executeKubectlCommand(t, kubectlLocation, kubeconfigLocation, []string{"api-resources"})
 		require.NoError(t, err)
-		require.Contains(t, apiResources, "agentic.prototype.x-k8s.io/v0alpha0")
+		require.Contains(t, apiResources, "agentic.networking.x-k8s.io/v0alpha0")
 	})
 
 	t.Run("should be able to install valid examples", func(t *testing.T) {
