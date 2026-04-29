@@ -73,17 +73,6 @@ else:
         api_base=f"{base_url}/v1",
     )
 
-# Initialize mcp connections
-try:
-    local_mcp = McpToolset(
-        connection_params=StreamableHTTPConnectionParams(
-            url=f"http://{envoy_service}/local/mcp",
-        ),
-    )
-    logger.info("McpToolset local_mcp initialized successfully.")
-except Exception as e:
-    logger.error(f"Error initializing McpToolset local_mcp: {e}")
-
 # Get tracer for custom spans
 tracer = trace.get_tracer(__name__)
 
