@@ -68,15 +68,16 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
 	}
 	var filters []*hcm.HttpFilter
-	for i, policy := range gwPolicies {
-		// Build the RBAC config for this policy
-		rbacProto := t.buildRBACConfigWithCommonPolicies(policy)
-		rbacAny, err := anypb.New(rbacProto)
+
+	rbacConfigs := t.buildRBACConfigsForPolicies(gwPolicies)
+
+	for _, rbacConfig := range rbacConfigs {
+		rbacAny, err := anypb.New(rbacConfig)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, &hcm.HttpFilter{
-			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, i+1),
+			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, len(filters)+1),
 			ConfigType: &hcm.HttpFilter_TypedConfig{
 				TypedConfig: rbacAny,
 			},
@@ -84,6 +85,82 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 	}
 
 	return filters, nil
+}
+
+// buildRBACConfigsForPolicies creates RBAC configs for merged InlineTools and individual ExternalAuth rules.
+func (t *Translator) buildRBACConfigsForPolicies(policies []*agenticv0alpha0.XAccessPolicy) []*rbacv3.RBAC {
+	mergedInlineToolsRBAC := &rbacv3.RBAC{
+		Rules: &rbacconfigv3.RBAC{
+			Action:   rbacconfigv3.RBAC_ALLOW,
+			Policies: map[string]*rbacconfigv3.Policy{},
+		},
+	}
+	hasInlineToolsRules := false
+
+	var extAuthConfigs []*rbacv3.RBAC
+
+	for _, policy := range policies {
+		var extAuthRBAC *rbacv3.RBAC
+		hasExtAuthInThisPolicy := false
+
+		for _, rule := range policy.Spec.Rules {
+			rbacPolicy, isExternalAuth, extAuthStatPrefix, err := t.translateAccessRuleToRBACPolicy(policy.Namespace, rule)
+			if err != nil {
+				klog.Errorf("Failed to translate access rule %s in policy %s/%s: %v", rule.Name, policy.Namespace, policy.Name, err)
+				continue
+			}
+
+			if isExternalAuth {
+				hasExtAuthInThisPolicy = true
+				if extAuthRBAC == nil {
+					extAuthRBAC = &rbacv3.RBAC{
+						ShadowRules: &rbacconfigv3.RBAC{
+							Action:   rbacconfigv3.RBAC_DENY,
+							Policies: map[string]*rbacconfigv3.Policy{},
+						},
+						ShadowRulesStatPrefix: extAuthStatPrefix,
+						Rules: &rbacconfigv3.RBAC{
+							Action:   rbacconfigv3.RBAC_ALLOW,
+							Policies: map[string]*rbacconfigv3.Policy{},
+						},
+					}
+				}
+				extAuthRBAC.ShadowRules.Policies[rule.Name] = rbacPolicy
+				extAuthRBAC.Rules.Policies[rule.Name] = rbacPolicy
+			} else {
+				// InlineTools rule
+				prefixedName := fmt.Sprintf("%s.%s.%s", policy.Namespace, policy.Name, rule.Name)
+				mergedInlineToolsRBAC.Rules.Policies[prefixedName] = rbacPolicy
+				hasInlineToolsRules = true
+			}
+		}
+
+		if hasExtAuthInThisPolicy {
+			// Add common policies to this filter
+			t.addCommonPoliciesToRBAC(extAuthRBAC)
+			extAuthConfigs = append(extAuthConfigs, extAuthRBAC)
+		}
+	}
+
+	// Inject merged InlineTools rules into ExternalAuth filters
+	if len(extAuthConfigs) > 0 && hasInlineToolsRules {
+		for _, extAuthRBAC := range extAuthConfigs {
+			for ruleName, routePolicy := range mergedInlineToolsRBAC.GetRules().GetPolicies() {
+				extAuthRBAC.Rules.Policies[ruleName] = routePolicy
+			}
+		}
+	}
+
+	// Return logic to avoid redundant filters
+	var result []*rbacv3.RBAC
+	if len(extAuthConfigs) > 0 {
+		result = extAuthConfigs
+	} else if hasInlineToolsRules {
+		t.addCommonPoliciesToRBAC(mergedInlineToolsRBAC)
+		result = []*rbacv3.RBAC{mergedInlineToolsRBAC}
+	}
+
+	return result
 }
 
 // buildBackendLevelRBACFilters creates placeholder RBAC filters for backends.
@@ -132,14 +209,39 @@ func (t *Translator) calculateMaxBackendRBACFilters(gateway *gatewayv1.Gateway) 
 
 	maxCount := 0
 
-	// 3. For each backend, count its accepted policies.
+	// 3. For each backend, count its needed filters after merging.
 	for beKey := range backendNames {
 		policies, err := t.findAccessPoliciesForTarget(agenticv0alpha0.GroupName, "XBackend", beKey.Namespace, beKey.Name)
 		if err != nil {
 			klog.Errorf("Failed to count policies for backend %s: %v", beKey, err)
 			continue
 		}
-		count := len(policies)
+
+		hasInlineTools := false
+		extAuthCount := 0
+
+		for _, policy := range policies {
+			hasPolicyExtAuth := false
+
+			for _, rule := range policy.Spec.Rules {
+				if rule.Authorization != nil && rule.Authorization.Type == agenticv0alpha0.AuthorizationRuleTypeExternalAuth {
+					hasPolicyExtAuth = true
+				} else {
+					hasInlineTools = true
+				}
+			}
+			// only increase the count by 1 for each policy that contains ExternalAuth,
+			// as all rules of this type in a policy are handled by a single filter.
+			if hasPolicyExtAuth {
+				extAuthCount++
+			}
+		}
+
+		count := extAuthCount
+		if count == 0 && hasInlineTools {
+			count = 1
+		}
+
 		if count > maxCount {
 			maxCount = count
 		}
@@ -158,21 +260,17 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 		return nil, err
 	}
 
-	for i, policy := range backendPolicies {
-		// Envoy's per-cluster configuration requires an RBACPerRoute message containing
-		// RBAC rules derived from AccessPolicy resources targeting this backend.
-		rbacConfig := t.buildRBACConfigWithCommonPolicies(policy)
+	rbacConfigs := t.buildRBACConfigsForPolicies(backendPolicies)
+
+	for _, rbacConfig := range rbacConfigs {
 		rbacPerRouteProto := &rbacv3.RBACPerRoute{
 			Rbac: rbacConfig,
 		}
-
-		// Marshal the RBAC config into an Any proto.
 		rbacAny, err := anypb.New(rbacPerRouteProto)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal RBACPerRoute proto: %w", err)
+			return nil, err
 		}
-
-		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
+		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, len(perFilterConfig)+1)
 		perFilterConfig[filterName] = rbacAny
 	}
 
@@ -185,12 +283,16 @@ func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0al
 	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy)
 
 	// Add common policies to avoid blocking basic MCP operations.
-	// These are added to the 'Rules' section which is where allowed traffic is defined.
+	t.addCommonPoliciesToRBAC(rbacConfig)
+
+	return rbacConfig
+}
+
+// addCommonPoliciesToRBAC adds the common policies needed for MCP session management to the RBAC config.
+func (t *Translator) addCommonPoliciesToRBAC(rbacConfig *rbacv3.RBAC) {
 	addPolicyToRBACRules(rbacConfig, allowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
 	addPolicyToRBACRules(rbacConfig, allowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
 	addPolicyToRBACRules(rbacConfig, allowHTTPGet, buildAllowHTTPGetPolicy())
-
-	return rbacConfig
 }
 
 // findAccessPoliciesForTarget finds all AccessPolicies that target the given resource.
@@ -233,61 +335,78 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 
 	// Each AccessRule in the XAccessPolicy is translated into a named policy within the Envoy RBAC filter.
 	for _, rule := range accessPolicy.Spec.Rules {
-		policyName := rule.Name
-
-		source := t.ruleSourceToPrincipalName(accessPolicy.Namespace, rule.Source)
-
-		var principalIDs []*rbacconfigv3.Principal
-		if source != "" {
-			principalIDs = append(principalIDs, &rbacconfigv3.Principal{
-				Identifier: &rbacconfigv3.Principal_Authenticated_{
-					Authenticated: &rbacconfigv3.Principal_Authenticated{
-						PrincipalName: &matcherv3.StringMatcher{
-							MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
-						},
-					},
-				},
-			})
+		rbacPolicy, isExternalAuth, extAuthStatPrefix, err := t.translateAccessRuleToRBACPolicy(accessPolicy.Namespace, rule)
+		if err != nil {
+			klog.Errorf("Failed to translate access rule %s in policy %s/%s: %v", rule.Name, accessPolicy.Namespace, accessPolicy.Name, err)
+			continue
 		}
 
-		if len(principalIDs) == 0 {
-			principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
+		if isExternalAuth {
+			rbacConfig.ShadowRulesStatPrefix = extAuthStatPrefix
+			addPolicyToRBACShadowRules(rbacConfig, rule.Name, rbacPolicy)
 		}
 
-		rbacPolicy := &rbacconfigv3.Policy{
-			Principals: principalIDs,
-		}
-
-		if rule.Authorization != nil {
-			switch rule.Authorization.Type {
-			case agenticv0alpha0.AuthorizationRuleTypeInlineTools:
-				if permission := translateInlineToolsToRBACPermission(rule.Authorization.Tools); permission != nil {
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
-				}
-			case agenticv0alpha0.AuthorizationRuleTypeExternalAuth:
-				if rule.Authorization.ExternalAuth != nil {
-					hash, err := externalAuthUniqueID(rule.Authorization.ExternalAuth)
-					if err != nil {
-						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
-						continue
-					}
-					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash) // a maximum of one ExternalAuth rule per policy is allowed, so we can safely set the shadow rule stat prefix at the RBAC config level
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
-					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
-				}
-			}
-		}
-
-		// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
-		// If authorization is omitted or unsupported, we default to a "Disallow tool call" permission.
-		if len(rbacPolicy.GetPermissions()) == 0 {
-			rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowToolCallPermission()}
-		}
-
-		addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
+		addPolicyToRBACRules(rbacConfig, rule.Name, rbacPolicy)
 	}
 
 	return rbacConfig
+}
+
+// translateAccessRuleToRBACPolicy translates a single AccessRule into an Envoy RBAC Policy.
+// It returns the policy, a boolean indicating if it is an ExternalAuth rule, the shadow rule stat prefix if applicable, and an error.
+func (t *Translator) translateAccessRuleToRBACPolicy(policyNamespace string, rule agenticv0alpha0.AccessRule) (*rbacconfigv3.Policy, bool, string, error) {
+	source := t.ruleSourceToPrincipalName(policyNamespace, rule.Source)
+
+	var principalIDs []*rbacconfigv3.Principal
+	if source != "" {
+		principalIDs = append(principalIDs, &rbacconfigv3.Principal{
+			Identifier: &rbacconfigv3.Principal_Authenticated_{
+				Authenticated: &rbacconfigv3.Principal_Authenticated{
+					PrincipalName: &matcherv3.StringMatcher{
+						MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
+					},
+				},
+			},
+		})
+	}
+
+	if len(principalIDs) == 0 {
+		principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
+	}
+
+	rbacPolicy := &rbacconfigv3.Policy{
+		Principals: principalIDs,
+	}
+
+	isExternalAuth := false
+	shadowRulesStatPrefix := ""
+
+	if rule.Authorization != nil {
+		switch rule.Authorization.Type {
+		case agenticv0alpha0.AuthorizationRuleTypeInlineTools:
+			if permission := translateInlineToolsToRBACPermission(rule.Authorization.Tools); permission != nil {
+				rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
+			}
+		case agenticv0alpha0.AuthorizationRuleTypeExternalAuth:
+			if rule.Authorization.ExternalAuth != nil {
+				hash, err := externalAuthUniqueID(rule.Authorization.ExternalAuth)
+				if err != nil {
+					return nil, false, "", fmt.Errorf("failed to generate unique ID for externalAuth config: %w", err)
+				}
+				isExternalAuth = true
+				shadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash)
+				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
+			}
+		}
+	}
+
+	// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
+	// If authorization is omitted or unsupported, we default to a "Disallow tool call" permission.
+	if len(rbacPolicy.GetPermissions()) == 0 {
+		rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowToolCallPermission()}
+	}
+
+	return rbacPolicy, isExternalAuth, shadowRulesStatPrefix, nil
 }
 
 // ruleSourceToPrincipalName converts an AccessRule source into a SPIFFE ID string.

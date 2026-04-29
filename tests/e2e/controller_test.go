@@ -147,11 +147,11 @@ func TestControllerE2E(t *testing.T) {
 			},
 		},
 	)
+	deleteFromNamespace(t, "testdata/backend-policy.yaml", namespace)
 
 	// Case 3: Only gateway policy
 	t.Log("--------------------------------------------------------------------------------")
 	t.Log("Case 3: Only gateway policy (allows echo)")
-	deleteFromNamespace(t, "testdata/backend-policy.yaml", namespace)
 	applyToNamespace(t, "testdata/gateway-policy.yaml", namespace)
 	// Wait for xDS propagation
 	time.Sleep(xdsUpdateWaitTime)
@@ -242,6 +242,184 @@ func TestControllerE2E(t *testing.T) {
 			},
 		},
 	)
+
+	// Delete policy from Case 4 and 5 to have a clean state
+	deleteFromNamespace(t, "testdata/gateway-policy.yaml", namespace)
+	deleteFromNamespace(t, "testdata/backend-policy.yaml", namespace)
+	// Case 6: Multiple gateway policies targeting the same Gateway
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 6: Multiple gateway policies (OR semantics)")
+
+	applyToNamespace(t, "testdata/gateway-policy-echo.yaml", namespace)
+	applyToNamespace(t, "testdata/gateway-policy-get-sum.yaml", namespace)
+
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+
+	// Verify echo is allowed
+	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Echo: hello",
+						},
+					},
+				},
+			},
+		})
+
+	// Verify get-sum is allowed
+	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "The sum of 2 and 3 is 5.",
+						},
+					},
+				},
+			},
+		})
+
+	// Remove one policy and verify restriction
+	t.Log("Removing echo tool and verifying get-sum is still allowed")
+	deleteFromNamespace(t, "testdata/gateway-policy-echo.yaml", namespace)
+
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+
+	// Verify echo is restricted
+	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
+				},
+			},
+		})
+
+	// Verify get-sum is still allowed
+	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "The sum of 2 and 3 is 5.",
+						},
+					},
+				},
+			},
+		})
+
+	// Cleanup remaining policy
+	deleteFromNamespace(t, "testdata/gateway-policy-get-sum.yaml", namespace)
+
+	// Case 7: Multiple backend policies targeting the same Backend
+	t.Log("--------------------------------------------------------------------------------")
+	t.Log("Case 7: Multiple backend policies (OR semantics)")
+
+	// Apply backend policies
+	applyToNamespace(t, "testdata/backend-policy-echo.yaml", namespace)
+	applyToNamespace(t, "testdata/backend-policy-get-sum.yaml", namespace)
+
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+
+	// Verify echo is allowed
+	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "Echo: hello",
+						},
+					},
+				},
+			},
+		})
+
+	// Verify get-sum is allowed
+	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "The sum of 2 and 3 is 5.",
+						},
+					},
+				},
+			},
+		})
+
+	// Remove one policy and verify restriction
+	t.Log("Removing echo tool and verifying get-sum is still allowed")
+	deleteFromNamespace(t, "testdata/backend-policy-echo.yaml", namespace)
+
+	// Wait for xDS propagation
+	time.Sleep(xdsUpdateWaitTime)
+
+	// Verify echo is restricted
+	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Error: &mcpError{
+					Code:    403,
+					Message: "Access to this tool is forbidden.",
+				},
+			},
+		})
+
+	// Verify get-sum is still allowed
+	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+		mcpResponse{
+			StatusCode: 200,
+			Body: respBody{
+				JSONRPC: "2.0",
+				Result: &mcpResult{
+					IsError: false,
+					Content: []mcpContent{
+						{
+							Type: "text",
+							Text: "The sum of 2 and 3 is 5.",
+						},
+					},
+				},
+			},
+		})
+
+	// Cleanup remaining policies applied in this case
+	deleteFromNamespace(t, "testdata/backend-policy-get-sum.yaml", namespace)
 	t.Log("--------------------------------------------------------------------------------")
 }
 
