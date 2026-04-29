@@ -26,8 +26,11 @@ import (
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 )
 
-func newTestGateway(name, ns string) *gatewayv1.Gateway {
-	return &gatewayv1.Gateway{
+// Suppress linter as ns always receives the same value: "quickstart-ns"
+//
+//nolint:unparam
+func newTestGateway(name, ns string, certRefs []gatewayv1.SecretObjectReference, frontendConfig *gatewayv1.FrontendTLSConfig) *gatewayv1.Gateway {
+	gw := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: "cloud-provider-kind",
@@ -41,8 +44,22 @@ func newTestGateway(name, ns string) *gatewayv1.Gateway {
 			}},
 		},
 	}
+	if len(certRefs) > 0 {
+		gw.Spec.Listeners[0].TLS = &gatewayv1.ListenerTLSConfig{
+			CertificateRefs: certRefs,
+		}
+	}
+	if frontendConfig != nil {
+		gw.Spec.TLS = &gatewayv1.GatewayTLSConfig{
+			Frontend: frontendConfig,
+		}
+	}
+	return gw
 }
 
+// Suppress linter as ns always receives the same value: "quickstart-ns"
+//
+//nolint:unparam
 func newTestBackend(name, ns string) *agenticv0alpha0.XBackend {
 	return &agenticv0alpha0.XBackend{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
@@ -123,6 +140,10 @@ func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *ag
 	}
 }
 
+// Suppress linter as ns always receives the same value: "quickstart-ns"
+// Suppress linter as port always receives 3001
+//
+//nolint:unparam
 func newTestService(name, ns string, port int32) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},

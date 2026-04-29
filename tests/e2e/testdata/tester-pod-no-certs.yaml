@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-tester-no-certs
+  namespace: e2e-test-ns
+spec:
+  serviceAccountName: e2e-tester-sa
+  containers:
+  - name: tester
+    image: curlimages/curl:latest
+    command: ["sleep", "infinity"]

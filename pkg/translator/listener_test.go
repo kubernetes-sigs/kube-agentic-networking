@@ -40,34 +40,183 @@ import (
 )
 
 func TestBuildDownstreamTLSContext(t *testing.T) {
-	anyContext, err := buildDownstreamTLSContext()
-	if err != nil {
-		t.Fatalf("failed to build downstream TLS context: %v", err)
+	tests := []struct {
+		name                 string
+		listener             gatewayv1.Listener
+		gateway              *gatewayv1.Gateway
+		expectedCertSDSName  string
+		expectedTrustSDSName string
+	}{
+		{
+			name:                 "Default SPIFFE configs",
+			listener:             gatewayv1.Listener{},
+			gateway:              &gatewayv1.Gateway{},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: constants.SpiffeTrustSdsConfigName,
+		},
+		{
+			name: "Custom per-port CA trust not matching the Listener port",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							PerPort: []gatewayv1.TLSPortConfig{
+								{
+									Port: 8444,
+									TLS: gatewayv1.TLSConfig{
+										Validation: &gatewayv1.FrontendTLSValidation{
+											CACertificateRefs: []gatewayv1.ObjectReference{
+												{
+													Name: "my-port-ca",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: constants.SpiffeTrustSdsConfigName,
+		},
+		{
+			name: "Custom per-port CA trust matching Listener port",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							PerPort: []gatewayv1.TLSPortConfig{
+								{
+									Port: 8443,
+									TLS: gatewayv1.TLSConfig{
+										Validation: &gatewayv1.FrontendTLSValidation{
+											CACertificateRefs: []gatewayv1.ObjectReference{
+												{
+													Name: "my-port-ca",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: "test-ns-my-port-ca",
+		},
+		{
+			name: "Custom default CA client validation without cert",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							Default: gatewayv1.TLSConfig{
+								Validation: &gatewayv1.FrontendTLSValidation{
+									CACertificateRefs: []gatewayv1.ObjectReference{
+										{
+											Name: "my-port-ca",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  constants.SpiffeIdentitySdsConfigName,
+			expectedTrustSDSName: "test-ns-my-port-ca",
+		},
+		{
+			name: "Custom cert with default CA trust",
+			listener: gatewayv1.Listener{
+				Port: 8443,
+				TLS: &gatewayv1.ListenerTLSConfig{
+					CertificateRefs: []gatewayv1.SecretObjectReference{
+						{
+							Name: "my-cert",
+						},
+					},
+				},
+			},
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Frontend: &gatewayv1.FrontendTLSConfig{
+							Default: gatewayv1.TLSConfig{
+								Validation: &gatewayv1.FrontendTLSValidation{
+									CACertificateRefs: []gatewayv1.ObjectReference{
+										{
+											Name: "my-port-ca",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCertSDSName:  "test-ns-my-cert",
+			expectedTrustSDSName: "test-ns-my-port-ca",
+		},
 	}
 
-	if anyContext == nil {
-		t.Fatal("expected non-nil TLS context")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			anyContext, err := buildDownstreamTLSContext(tt.listener, tt.gateway)
+			if err != nil {
+				t.Fatalf("failed to build downstream TLS context: %v", err)
+			}
 
-	tlsContext := &tlsv3.DownstreamTlsContext{}
-	if err := anyContext.UnmarshalTo(tlsContext); err != nil {
-		t.Fatalf("failed to unmarshal any to DownstreamTlsContext: %v", err)
-	}
+			if anyContext == nil {
+				t.Fatal("expected non-nil TLS context")
+			}
 
-	// Verify mTLS requirement
-	if tlsContext.GetRequireClientCertificate() == nil || !tlsContext.GetRequireClientCertificate().GetValue() {
-		t.Errorf("RequireClientCertificate should be true for mTLS")
-	}
+			tlsContext := &tlsv3.DownstreamTlsContext{}
+			if err := anyContext.UnmarshalTo(tlsContext); err != nil {
+				t.Fatalf("failed to unmarshal any to DownstreamTlsContext: %v", err)
+			}
 
-	// Verify SDS Config Names
-	common := tlsContext.GetCommonTlsContext()
-	if len(common.GetTlsCertificateSdsSecretConfigs()) != 1 || common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != constants.SpiffeIdentitySdsConfigName {
-		t.Errorf("Identity SDS secret config name mismatch")
-	}
+			// Verify mTLS requirement
+			if tlsContext.GetRequireClientCertificate() == nil || !tlsContext.GetRequireClientCertificate().GetValue() {
+				t.Errorf("RequireClientCertificate should be true for mTLS")
+			}
 
-	validation := common.GetValidationContextSdsSecretConfig()
-	if validation == nil || validation.GetName() != constants.SpiffeTrustSdsConfigName {
-		t.Errorf("Trust SDS secret config name mismatch")
+			// Verify SDS Config Names
+			common := tlsContext.GetCommonTlsContext()
+			if len(common.GetTlsCertificateSdsSecretConfigs()) != 1 || common.GetTlsCertificateSdsSecretConfigs()[0].GetName() != tt.expectedCertSDSName {
+				t.Errorf("Identity SDS secret config name mismatch: got %s, want %s", common.GetTlsCertificateSdsSecretConfigs()[0].GetName(), tt.expectedCertSDSName)
+			}
+
+			validation := common.GetValidationContextSdsSecretConfig()
+			if validation == nil || validation.GetName() != tt.expectedTrustSDSName {
+				t.Errorf("Trust SDS secret config name mismatch: got %s, want %s", validation.GetName(), tt.expectedTrustSDSName)
+			}
+		})
 	}
 }
 
@@ -383,6 +532,10 @@ func TestValidateListeners(t *testing.T) {
 			secrets: []runtime.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{Name: "my-secret", Namespace: ns},
+					Data: map[string][]byte{
+						corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+						corev1.TLSPrivateKeyKey: []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n"),
+					},
 				},
 			},
 			expectedConditions: map[gatewayv1.SectionName][]metav1.Condition{
@@ -481,6 +634,10 @@ func TestValidateListeners(t *testing.T) {
 			secrets: []runtime.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{Name: "other-secret", Namespace: "other-ns"},
+					Data: map[string][]byte{
+						corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+						corev1.TLSPrivateKeyKey: []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n"),
+					},
 				},
 			},
 			referenceGrants: []runtime.Object{
@@ -538,6 +695,10 @@ func TestValidateListeners(t *testing.T) {
 			secrets: []runtime.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{Name: "other-secret", Namespace: "other-ns"},
+					Data: map[string][]byte{
+						corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+						corev1.TLSPrivateKeyKey: []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n"),
+					},
 				},
 			},
 			expectedConditions: map[gatewayv1.SectionName][]metav1.Condition{
@@ -591,6 +752,366 @@ func TestValidateListeners(t *testing.T) {
 					if !found {
 						t.Errorf("Listener %s: expected condition %s not found", listenerName, expCond.Type)
 					}
+				}
+			}
+		})
+	}
+}
+
+func TestValidateCertificateRef(t *testing.T) {
+	ns := "test-ns"
+	gwName := "test-gw"
+
+	tests := []struct {
+		name            string
+		ref             gatewayv1.SecretObjectReference
+		secrets         []runtime.Object
+		referenceGrants []runtime.Object
+		expectedStatus  metav1.ConditionStatus
+		expectedReason  string
+	}{
+		{
+			name: "Valid Secret in same namespace",
+			ref: gatewayv1.SecretObjectReference{
+				Name: "my-secret",
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-secret", Namespace: ns},
+					Data: map[string][]byte{
+						corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+						corev1.TLSPrivateKeyKey: []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n"),
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionTrue,
+		},
+		{
+			name: "Unsupported Group",
+			ref: gatewayv1.SecretObjectReference{
+				Group: ptr.To(gatewayv1.Group("custom.group")),
+				Name:  "my-secret",
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+		},
+		{
+			name: "Unsupported Kind",
+			ref: gatewayv1.SecretObjectReference{
+				Kind: ptr.To(gatewayv1.Kind("ConfigMap")),
+				Name: "my-secret",
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+		},
+		{
+			name: "Secret not found",
+			ref: gatewayv1.SecretObjectReference{
+				Name: "missing-secret",
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+		},
+		{
+			name: "Secret missing data",
+			ref: gatewayv1.SecretObjectReference{
+				Name: "empty-secret",
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "empty-secret", Namespace: ns},
+					Data:       map[string][]byte{},
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+		},
+		{
+			name: "Secret invalid PEM",
+			ref: gatewayv1.SecretObjectReference{
+				Name: "invalid-pem",
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "invalid-pem", Namespace: ns},
+					Data: map[string][]byte{
+						corev1.TLSCertKey: []byte("not-pem"),
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+		},
+		{
+			name: "Secret invalid private key PEM",
+			ref: gatewayv1.SecretObjectReference{
+				Name: "invalid-key-pem",
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "invalid-key-pem", Namespace: ns},
+					Data: map[string][]byte{
+						corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+						corev1.TLSPrivateKeyKey: []byte("not-pem"),
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+		},
+		{
+			name: "Cross-Namespace allowed by ReferenceGrant",
+			ref: gatewayv1.SecretObjectReference{
+				Namespace: ptr.To(gatewayv1.Namespace("other-ns")),
+				Name:      "other-secret",
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "other-secret", Namespace: "other-ns"},
+					Data: map[string][]byte{
+						corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+						corev1.TLSPrivateKeyKey: []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n"),
+					},
+				},
+			},
+			referenceGrants: []runtime.Object{
+				&gatewayv1beta1.ReferenceGrant{
+					ObjectMeta: metav1.ObjectMeta{Name: "grant", Namespace: "other-ns"},
+					Spec: gatewayv1beta1.ReferenceGrantSpec{
+						From: []gatewayv1beta1.ReferenceGrantFrom{
+							{
+								Group:     gatewayv1.GroupName,
+								Kind:      "Gateway",
+								Namespace: gatewayv1.Namespace(ns),
+							},
+						},
+						To: []gatewayv1beta1.ReferenceGrantTo{
+							{
+								Group: "",
+								Kind:  "Secret",
+								Name:  ptr.To(gatewayv1.ObjectName("other-secret")),
+							},
+						},
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionTrue,
+		},
+		{
+			name: "Cross-Namespace denied by missing ReferenceGrant",
+			ref: gatewayv1.SecretObjectReference{
+				Namespace: ptr.To(gatewayv1.Namespace("other-ns")),
+				Name:      "other-secret",
+			},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "other-secret", Namespace: "other-ns"},
+					Data: map[string][]byte{
+						corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"),
+						corev1.TLSPrivateKeyKey: []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n"),
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonRefNotPermitted),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8sClient := k8sfake.NewClientset(tt.secrets...)
+			k8sInformerFactory := informers.NewSharedInformerFactory(k8sClient, 0)
+			for _, s := range tt.secrets {
+				_ = k8sInformerFactory.Core().V1().Secrets().Informer().GetIndexer().Add(s)
+			}
+
+			gwClient := gatewayclient.NewClientset(tt.referenceGrants...)
+			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+			for _, rg := range tt.referenceGrants {
+				_ = gwInformerFactory.Gateway().V1beta1().ReferenceGrants().Informer().GetIndexer().Add(rg)
+			}
+
+			translator := &Translator{
+				secretLister:         k8sInformerFactory.Core().V1().Secrets().Lister(),
+				referenceGrantLister: gwInformerFactory.Gateway().V1beta1().ReferenceGrants().Lister(),
+			}
+			gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
+
+			cond := translator.validateCertificateRef(gw, tt.ref)
+
+			if tt.expectedStatus == metav1.ConditionTrue {
+				if cond != nil {
+					t.Errorf("Expected nil condition for successful validation, got %v", cond)
+				}
+			} else {
+				if cond == nil {
+					t.Fatal("Expected non-nil condition for failed validation")
+				}
+				if cond.Status != tt.expectedStatus {
+					t.Errorf("Expected status %v, got %v", tt.expectedStatus, cond.Status)
+				}
+				if cond.Reason != tt.expectedReason {
+					t.Errorf("Expected reason %v, got %v", tt.expectedReason, cond.Reason)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateCACertificateRef(t *testing.T) {
+	ns := "test-ns"
+	gwName := "test-gw"
+
+	tests := []struct {
+		name            string
+		caRef           gatewayv1.ObjectReference
+		configMaps      []runtime.Object
+		referenceGrants []runtime.Object
+		expectedStatus  metav1.ConditionStatus
+		expectedReason  string
+	}{
+		{
+			name: "Valid ConfigMap in same namespace",
+			caRef: gatewayv1.ObjectReference{
+				Name: "my-ca",
+				Kind: "ConfigMap",
+			},
+			configMaps: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-ca", Namespace: ns},
+					Data: map[string]string{
+						corev1.ServiceAccountRootCAKey: "ca-data",
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionTrue,
+		},
+		{
+			name: "Invalid Kind",
+			caRef: gatewayv1.ObjectReference{
+				Name: "my-ca",
+				Kind: "Secret",
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCACertificateKind),
+		},
+		{
+			name: "Missing ConfigMap",
+			caRef: gatewayv1.ObjectReference{
+				Name: "missing-ca",
+				Kind: "ConfigMap",
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCACertificateRef),
+		},
+		{
+			name: "ConfigMap missing CA key",
+			caRef: gatewayv1.ObjectReference{
+				Name: "empty-ca",
+				Kind: "ConfigMap",
+			},
+			configMaps: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "empty-ca", Namespace: ns},
+					Data:       map[string]string{},
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonInvalidCACertificateRef),
+		},
+		{
+			name: "Cross-Namespace allowed by ReferenceGrant",
+			caRef: gatewayv1.ObjectReference{
+				Namespace: ptr.To(gatewayv1.Namespace("other-ns")),
+				Name:      "other-ca",
+				Kind:      "ConfigMap",
+			},
+			configMaps: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "other-ca", Namespace: "other-ns"},
+					Data: map[string]string{
+						corev1.ServiceAccountRootCAKey: "ca-data",
+					},
+				},
+			},
+			referenceGrants: []runtime.Object{
+				&gatewayv1beta1.ReferenceGrant{
+					ObjectMeta: metav1.ObjectMeta{Name: "grant", Namespace: "other-ns"},
+					Spec: gatewayv1beta1.ReferenceGrantSpec{
+						From: []gatewayv1beta1.ReferenceGrantFrom{
+							{
+								Group:     gatewayv1.GroupName,
+								Kind:      "Gateway",
+								Namespace: gatewayv1.Namespace(ns),
+							},
+						},
+						To: []gatewayv1beta1.ReferenceGrantTo{
+							{
+								Group: "",
+								Kind:  "ConfigMap",
+								Name:  ptr.To(gatewayv1.ObjectName("other-ca")),
+							},
+						},
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionTrue,
+		},
+		{
+			name: "Cross-Namespace denied by missing ReferenceGrant",
+			caRef: gatewayv1.ObjectReference{
+				Namespace: ptr.To(gatewayv1.Namespace("other-ns")),
+				Name:      "other-ca",
+				Kind:      "ConfigMap",
+			},
+			configMaps: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "other-ca", Namespace: "other-ns"},
+					Data: map[string]string{
+						corev1.ServiceAccountRootCAKey: "ca-data",
+					},
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: string(gatewayv1.ListenerReasonRefNotPermitted),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8sClient := k8sfake.NewClientset(tt.configMaps...)
+			k8sInformerFactory := informers.NewSharedInformerFactory(k8sClient, 0)
+			for _, cm := range tt.configMaps {
+				_ = k8sInformerFactory.Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
+			}
+
+			gwClient := gatewayclient.NewClientset(tt.referenceGrants...)
+			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+			for _, rg := range tt.referenceGrants {
+				_ = gwInformerFactory.Gateway().V1beta1().ReferenceGrants().Informer().GetIndexer().Add(rg)
+			}
+
+			translator := &Translator{
+				configMapLister:      k8sInformerFactory.Core().V1().ConfigMaps().Lister(),
+				referenceGrantLister: gwInformerFactory.Gateway().V1beta1().ReferenceGrants().Lister(),
+			}
+			gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
+
+			cond := translator.validateCACertificateRef(gw, tt.caRef)
+
+			if tt.expectedStatus == metav1.ConditionTrue {
+				if cond != nil {
+					t.Errorf("Expected nil condition for successful validation, got %v", cond)
+				}
+			} else {
+				if cond == nil {
+					t.Fatal("Expected non-nil condition for failed validation")
+				}
+				if cond.Status != tt.expectedStatus {
+					t.Errorf("Expected status %v, got %v", tt.expectedStatus, cond.Status)
+				}
+				if cond.Reason != tt.expectedReason {
+					t.Errorf("Expected reason %v, got %v", tt.expectedReason, cond.Reason)
 				}
 			}
 		})
