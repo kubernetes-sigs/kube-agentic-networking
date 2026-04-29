@@ -62,7 +62,7 @@ const (
 )
 
 // buildGatewayLevelRBACFilters finds all AccessPolicies targeting the Gateway and translates them into HTTP filters.
-func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway, te *translationErrors) ([]*hcm.HttpFilter, error) {
 	gwPolicies, err := t.findAccessPoliciesForTarget(gatewayv1.GroupName, "Gateway", gateway.Namespace, gateway.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
@@ -70,7 +70,7 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 	var filters []*hcm.HttpFilter
 	for i, policy := range gwPolicies {
 		// Build the RBAC config for this policy
-		rbacProto := t.buildRBACConfigWithCommonPolicies(policy)
+		rbacProto := t.buildRBACConfigWithCommonPolicies(policy, te)
 		rbacAny, err := anypb.New(rbacProto)
 		if err != nil {
 			return nil, err
@@ -149,7 +149,7 @@ func (t *Translator) calculateMaxBackendRBACFilters(gateway *gatewayv1.Gateway) 
 }
 
 // buildBackendLevelRBACOverrides creates the TypedPerFilterConfig for a cluster, specifically for the RBAC filter overrides.
-func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBackend) (map[string]*anypb.Any, error) {
+func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBackend, te *translationErrors) (map[string]*anypb.Any, error) {
 	perFilterConfig := make(map[string]*anypb.Any)
 
 	// 1. Find and sort AccessPolicies targeting the Backend.
@@ -161,7 +161,7 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 	for i, policy := range backendPolicies {
 		// Envoy's per-cluster configuration requires an RBACPerRoute message containing
 		// RBAC rules derived from AccessPolicy resources targeting this backend.
-		rbacConfig := t.buildRBACConfigWithCommonPolicies(policy)
+		rbacConfig := t.buildRBACConfigWithCommonPolicies(policy, te)
 		rbacPerRouteProto := &rbacv3.RBACPerRoute{
 			Rbac: rbacConfig,
 		}
@@ -181,8 +181,8 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 
 // buildRBACConfigWithCommonPolicies generates an RBAC config for an AccessPolicy.
 // It includes the common policies needed for MCP session management to avoid blocking basic operations.
-func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
-	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy)
+func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0alpha0.XAccessPolicy, te *translationErrors) *rbacv3.RBAC {
+	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy, te)
 
 	// Add common policies to avoid blocking basic MCP operations.
 	// These are added to the 'Rules' section which is where allowed traffic is defined.
@@ -228,7 +228,7 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 	return fmt.Sprintf(spiffeIDFormat, trustDomain, namespace, saName)
 }
 
-func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
+func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy, te *translationErrors) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
 
 	// Each AccessRule in the XAccessPolicy is translated into a named policy within the Envoy RBAC filter.
@@ -269,6 +269,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 					hash, err := externalAuthUniqueID(rule.Authorization.ExternalAuth)
 					if err != nil {
 						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
+						te.recordAccessPolicyIssue(types.NamespacedName{Namespace: accessPolicy.Namespace, Name: accessPolicy.Name}, rule.Name, "cannot fingerprint external authorization config", err)
 						continue
 					}
 					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash) // a maximum of one ExternalAuth rule per policy is allowed, so we can safely set the shadow rule stat prefix at the RBAC config level

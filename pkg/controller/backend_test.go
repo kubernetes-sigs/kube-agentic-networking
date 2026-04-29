@@ -28,17 +28,23 @@ import (
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
+
+func accessPolicyTestIndexers() cache.Indexers {
+	return cache.Indexers{
+		cache.NamespaceIndex:                      cache.MetaNamespaceIndexFunc,
+		translator.AccessPolicyTargetRefIndex:     translator.AccessPolicyXBackendTargetRefIndexFunc,
+		translator.AccessPolicyGatewayTargetIndex: translator.AccessPolicyGatewayTargetRefIndexFunc,
+	}
+}
 
 func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	ns := "default"
 	backendName := "my-backend"
 
 	t.Run("no policies in namespace", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
-			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
-			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
-		})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, accessPolicyTestIndexers())
 		c := &Controller{
 			agentic: agenticNetResources{
 				accessPolicyLister:  agenticlisters.NewXAccessPolicyLister(indexer),
@@ -54,10 +60,7 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("policy targets different backend", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
-			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
-			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
-		})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, accessPolicyTestIndexers())
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{
@@ -91,10 +94,7 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("policy targets this backend", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
-			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
-			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
-		})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, accessPolicyTestIndexers())
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{
@@ -128,10 +128,7 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("policy targets this backend by name but wrong group is skipped", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
-			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
-			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
-		})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, accessPolicyTestIndexers())
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{
@@ -165,10 +162,7 @@ func TestHasAccessPoliciesTargetingBackend(t *testing.T) {
 	})
 
 	t.Run("multiple targetRefs one matches backend", func(t *testing.T) {
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
-			cache.NamespaceIndex:       cache.MetaNamespaceIndexFunc,
-			AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc,
-		})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, accessPolicyTestIndexers())
 		policy := &agenticv0alpha0.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "policy-1"},
 			Spec: agenticv0alpha0.AccessPolicySpec{

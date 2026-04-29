@@ -17,13 +17,16 @@ limitations under the License.
 package translator
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
@@ -147,7 +150,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agenticClient := agenticclient.NewSimpleClientset(tt.policies...)
+			agenticClient := agenticclient.NewClientset(tt.policies...)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 			lister := agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister()
 
@@ -159,7 +162,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 
 			for gwn, expectedNames := range tt.gatewaysToCheck {
 				gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwn, Namespace: ns}}
-				filters, err := tr.buildGatewayLevelRBACFilters(gw)
+				filters, err := tr.buildGatewayLevelRBACFilters(gw, nil)
 				if err != nil {
 					t.Fatalf("Gateway %s: Failed to build filters: %v", gwn, err)
 				}
@@ -294,7 +297,7 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 			for i, r := range tt.routes {
 				gwObjs[i] = r
 			}
-			gwClient := gatewayclient.NewSimpleClientset(gwObjs...)
+			gwClient := gatewayclient.NewClientset(gwObjs...)
 			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
 			routeLister := gwInformerFactory.Gateway().V1().HTTPRoutes().Lister()
 			for _, r := range tt.routes {
@@ -305,7 +308,7 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 			for i, p := range tt.policies {
 				agenticObjs[i] = p
 			}
-			agenticClient := agenticclient.NewSimpleClientset(agenticObjs...)
+			agenticClient := agenticclient.NewClientset(agenticObjs...)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 			policyLister := agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister()
 			for _, p := range tt.policies {
@@ -403,7 +406,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agenticClient := agenticclient.NewSimpleClientset(tt.policies...)
+			agenticClient := agenticclient.NewClientset(tt.policies...)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 			lister := agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister()
 
@@ -416,7 +419,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			for ben, expectedFilterNames := range tt.backendsToCheck {
 				xbackend := &agenticv0alpha0.XBackend{ObjectMeta: metav1.ObjectMeta{Name: ben, Namespace: ns}}
 
-				configs, err := tr.buildBackendLevelRBACOverrides(xbackend)
+				configs, err := tr.buildBackendLevelRBACOverrides(xbackend, nil)
 				if err != nil {
 					t.Fatalf("Backend %s: Failed to build configs: %v", ben, err)
 				}
@@ -443,7 +446,7 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 		},
 	}
 
-	rbac := tr.buildRBACConfigWithCommonPolicies(policy)
+	rbac := tr.buildRBACConfigWithCommonPolicies(policy, nil)
 
 	expectedPolicies := []string{
 		"custom-rule",
@@ -504,7 +507,7 @@ func TestFindAccessPoliciesForTarget(t *testing.T) {
 		},
 	}
 
-	agenticClient := agenticclient.NewSimpleClientset(policies...)
+	agenticClient := agenticclient.NewClientset(policies...)
 	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 	lister := agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister()
 
@@ -737,7 +740,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
-			rbac := tr.translateAccessPolicyToRBAC(tc.accessPolicy)
+			rbac := tr.translateAccessPolicyToRBAC(tc.accessPolicy, nil)
 
 			verifyRBAC(t, rbac.GetRules(), tc.expectedRules)
 			verifyRBAC(t, rbac.GetShadowRules(), tc.expectedShadowRules)
@@ -746,6 +749,62 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				t.Errorf("ShadowRulesStatPrefix: expected set=%v, got %q", tc.expectShadowStatPrefix, rbac.GetShadowRulesStatPrefix())
 			}
 		})
+	}
+}
+
+// TestTranslateAccessPolicyToRBAC_recordsExternalAuthFingerprintFailure exercises the path at
+// accesspolicy.go where externalAuthUniqueID fails. json.Marshal on well-formed Gateway API
+// objects essentially never fails in production; this replaces marshalExternalAuthForUniqueID to
+// prove the collector message is what reconcileAccessPolicyTranslationStatus surfaces on status.
+// Do not call t.Parallel here: the test temporarily mutates that package-level hook.
+func TestTranslateAccessPolicyToRBAC_recordsExternalAuthFingerprintFailure(t *testing.T) {
+	const (
+		ruleNameExtAuthFingerprint       = "ext-rule"
+		simulatedMarshalFailureErrText   = "simulated marshal failure"
+		wantIssueContainsRuleFingerprint = `rule "` + ruleNameExtAuthFingerprint + `": cannot fingerprint`
+	)
+
+	orig := marshalExternalAuthForUniqueID
+	marshalExternalAuthForUniqueID = func(_ any) ([]byte, error) {
+		return nil, errors.New(simulatedMarshalFailureErrText)
+	}
+	t.Cleanup(func() { marshalExternalAuthForUniqueID = orig })
+
+	spiffe := agenticv0alpha0.AuthorizationSourceSPIFFE("spiffe://cluster.local/ns/default/sa/sa1")
+	policy := &agenticv0alpha0.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pol-fingerprint"},
+		Spec: agenticv0alpha0.AccessPolicySpec{
+			Rules: []agenticv0alpha0.AccessRule{
+				{
+					Name:   ruleNameExtAuthFingerprint,
+					Source: agenticv0alpha0.Source{Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE, SPIFFE: &spiffe},
+					Authorization: &agenticv0alpha0.AuthorizationRule{
+						Type: agenticv0alpha0.AuthorizationRuleTypeExternalAuth,
+						ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+							ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+							BackendRef:           gatewayv1.BackendObjectReference{Name: "auth-svc"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	coll := newTranslationErrors()
+	tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
+	_ = tr.translateAccessPolicyToRBAC(policy, coll)
+
+	snap := coll.accessPolicyIssuesSnapshot()
+	nn := types.NamespacedName{Namespace: "default", Name: "pol-fingerprint"}
+	msgs, ok := snap[nn]
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("expected one recorded issue for %v, got %#v", nn, snap)
+	}
+	if !strings.Contains(msgs[0], wantIssueContainsRuleFingerprint) {
+		t.Errorf("message %q should mention rule and fingerprint", msgs[0])
+	}
+	if !strings.Contains(msgs[0], simulatedMarshalFailureErrText) {
+		t.Errorf("message should include underlying error: %q", msgs[0])
 	}
 }
 

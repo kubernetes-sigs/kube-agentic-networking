@@ -38,6 +38,7 @@ import (
 // It now correctly handles RequestHeaderModifier filters.
 func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 	httpRoute *gatewayv1.HTTPRoute,
+	te *translationErrors,
 ) ([]*routev3.Route, []*routeBackend, metav1.Condition) {
 	var envoyRoutes []*routev3.Route
 	var allValidBackends []*routeBackend
@@ -101,6 +102,7 @@ func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 				routeAction, validBackends, err := t.buildHTTPRouteAction(
 					httpRoute.Namespace,
 					rule.BackendRefs,
+					te,
 				)
 				var controllerErr *ControllerError
 				if errors.As(err, &controllerErr) {
@@ -262,6 +264,7 @@ func processRequestHeaderModifierFilter(f *gatewayv1.HTTPHeaderFilter) ([]*corev
 func (t *Translator) buildHTTPRouteAction(
 	namespace string,
 	backendRefs []gatewayv1.HTTPBackendRef,
+	te *translationErrors,
 ) (*routev3.RouteAction, []*routeBackend, error) {
 	weightedClusters := &routev3.WeightedCluster{}
 	var validBackends []*routeBackend
@@ -293,7 +296,7 @@ func (t *Translator) buildHTTPRouteAction(
 		}
 
 		if rb.XBackend() != nil {
-			clusterWeight.TypedPerFilterConfig, err = t.buildBackendLevelRBACOverrides(rb.XBackend())
+			clusterWeight.TypedPerFilterConfig, err = t.buildBackendLevelRBACOverrides(rb.XBackend(), te)
 			if err != nil {
 				klog.Errorf("Failed to build per-cluster RBAC config for backend %s: %v", rb.ClusterName(), err)
 			}

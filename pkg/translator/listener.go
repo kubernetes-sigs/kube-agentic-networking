@@ -46,6 +46,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -321,13 +322,85 @@ func (t *Translator) validateCACertificateRef(gateway *gatewayv1.Gateway, caRef 
 	return nil
 }
 
-func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
+// ListAccessPoliciesAttachedToGateway returns every XAccessPolicy that is attached to the Gateway
+// via a Gateway targetRef or an XBackend targetRef reachable from this Gateway's HTTPRoutes.
+//
+// When accessPolicyIndexer is set (controller wiring), this uses informer indexes instead of
+// listing every XAccessPolicy in the cluster.
+func (t *Translator) ListAccessPoliciesAttachedToGateway(gateway *gatewayv1.Gateway) ([]*v0alpha0.XAccessPolicy, error) {
+	if t.accessPolicyIndexer == nil {
+		return t.listAccessPoliciesAttachedToGatewaySlow(gateway)
+	}
+	return t.listAccessPoliciesAttachedToGatewayIndexed(gateway)
+}
+
+func (t *Translator) listAccessPoliciesAttachedToGatewaySlow(gateway *gatewayv1.Gateway) ([]*v0alpha0.XAccessPolicy, error) {
+	all, err := t.accessPolicyLister.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
+	}
+	var out []*v0alpha0.XAccessPolicy
+	for _, ap := range all {
+		if t.isAccessPolicyAttachedToGateway(ap, gateway) {
+			out = append(out, ap)
+		}
+	}
+	return out, nil
+}
+
+func (t *Translator) listAccessPoliciesAttachedToGatewayIndexed(gateway *gatewayv1.Gateway) ([]*v0alpha0.XAccessPolicy, error) {
+	seen := make(map[types.UID]struct{})
+	var out []*v0alpha0.XAccessPolicy
+
+	addFromIndex := func(indexName, key string) error {
+		objs, err := t.accessPolicyIndexer.ByIndex(indexName, key)
+		if err != nil {
+			return fmt.Errorf("AccessPolicy index %q key %q: %w", indexName, key, err)
+		}
+		for _, obj := range objs {
+			ap := obj.(*v0alpha0.XAccessPolicy)
+			if _, ok := seen[ap.UID]; ok {
+				continue
+			}
+			seen[ap.UID] = struct{}{}
+			out = append(out, ap)
+		}
+		return nil
+	}
+
+	gwKey := gateway.Namespace + "/" + gateway.Name
+	if err := addFromIndex(AccessPolicyGatewayTargetIndex, gwKey); err != nil {
+		return nil, err
+	}
+
+	routes := t.getHTTPRoutesForGateway(gateway)
+	for _, route := range routes {
+		for _, rule := range route.Spec.Rules {
+			for _, beRef := range rule.BackendRefs {
+				if beRef.Group == nil || *beRef.Group != v0alpha0.GroupName || beRef.Kind == nil || *beRef.Kind != "XBackend" {
+					continue
+				}
+				ns := route.Namespace
+				if beRef.Namespace != nil {
+					ns = string(*beRef.Namespace)
+				}
+				key := ns + "/" + string(beRef.Name)
+				if err := addFromIndex(AccessPolicyTargetRefIndex, key); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway, te *translationErrors) (*listener.FilterChain, error) {
 	var filterChain *listener.FilterChain
 	var err error
 
 	switch lis.Protocol {
 	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		filterChain, err = t.buildHTTPFilterChain(lis, routeName, gateway)
+		filterChain, err = t.buildHTTPFilterChain(lis, routeName, gateway, te)
 	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType:
 		filterChain, err = buildTCPFilterChain(lis)
 	case gatewayv1.UDPProtocolType:
@@ -439,8 +512,8 @@ func buildLocalReplyConfig() *hcm.LocalReplyConfig {
 	}
 }
 
-func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
-	httpFilters, err := t.buildHTTPFilters(gateway)
+func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway, te *translationErrors) (*listener.FilterChain, error) {
+	httpFilters, err := t.buildHTTPFilters(gateway, te)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +591,7 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
-func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway, te *translationErrors) ([]*hcm.HttpFilter, error) {
 	// 1. Add MCP filter.
 	mcpFilter, err := buildMCPFilter()
 	if err != nil {
@@ -526,7 +599,7 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 2. Add Gateway-level RBAC filters.
-	gatewayRBACFilters, err := t.buildGatewayLevelRBACFilters(gateway)
+	gatewayRBACFilters, err := t.buildGatewayLevelRBACFilters(gateway, te)
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +614,7 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 4. Add ext_authz filters.
-	extAuthzFilters, err := t.buildExtAuthzFilters(gateway)
+	extAuthzFilters, err := t.buildExtAuthzFilters(gateway, te)
 	if err != nil {
 		return nil, err
 	}
@@ -585,19 +658,17 @@ func buildMCPFilter() (*hcm.HttpFilter, error) {
 	}, nil
 }
 
-func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
-	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
+func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway, te *translationErrors) ([]*hcm.HttpFilter, error) {
+	accessPolicies, err := t.ListAccessPoliciesAttachedToGateway(gateway)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
+		return nil, err
 	}
 
 	var filters []*hcm.HttpFilter
 	uniqueExtAuthzConfigs := make(map[string]struct{}) // To track unique externalAuth configs and avoid duplicate filters
 	for _, ap := range accessPolicies {
-		// We only care about AccessPolicies that are directly or indirectly attached to this Gateway.
-		if !t.isAccessPolicyAttachedToGateway(ap, gateway) {
-			continue
-		}
+		// One NamespacedName per policy, reused for each rule's recordAccessPolicyIssue.
+		apKey := types.NamespacedName{Namespace: ap.Namespace, Name: ap.Name}
 		for _, rule := range ap.Spec.Rules {
 			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
 				continue
@@ -606,6 +677,7 @@ func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.Ht
 			uniqueID, err := externalAuthUniqueID(extAuthz)
 			if err != nil {
 				klog.Error(err)
+				te.recordAccessPolicyIssue(apKey, rule.Name, "cannot fingerprint external authorization config", err)
 				continue
 			}
 			if _, exists := uniqueExtAuthzConfigs[uniqueID]; exists {
@@ -617,6 +689,7 @@ func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.Ht
 			extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, ap.GetNamespace())
 			if err != nil {
 				klog.Error(err)
+				te.recordAccessPolicyIssue(apKey, rule.Name, "build external authorization filter", err)
 				continue
 			}
 			filters = append(filters, extAuthzFilter)
@@ -881,8 +954,17 @@ func toEnvoyExactStringMatchers(s []string) []*matcherv3.StringMatcher {
 	return matchers
 }
 
+// marshalExternalAuthForUniqueID is the JSON encoder used by externalAuthUniqueID. In normal
+// operation it is always [json.Marshal]. It exists as a package-level variable only so unit
+// tests can replace it to inject a marshal error (see
+// TestTranslateAccessPolicyToRBAC_recordsExternalAuthFingerprintFailure). Production code must
+// not assign to this. Test helpers that override it must restore the previous function (e.g. with
+// t.Cleanup) and must not use [testing.T.Parallel], because concurrent tests mutating this
+// variable would race.
+var marshalExternalAuthForUniqueID = json.Marshal
+
 func externalAuthUniqueID(externalAuth *gatewayv1.HTTPExternalAuthFilter) (string, error) {
-	j, err := json.Marshal(externalAuth)
+	j, err := marshalExternalAuthForUniqueID(externalAuth)
 	if err != nil {
 		return "", fmt.Errorf("Failed to marshal externalAuth config for unique ID generation: %v", err)
 	}
