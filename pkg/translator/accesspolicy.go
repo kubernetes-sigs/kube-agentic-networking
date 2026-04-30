@@ -35,32 +35,6 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
-const (
-	// allowMCPSessionClosePolicyName is the name of the RBAC policy that allows agents to close MCP sessions.
-	allowMCPSessionClosePolicyName = "allow-mcp-session-close"
-
-	// allowAnyoneToInitializeAndListToolsPolicyName is the name of the RBAC policy that allows anyone to initialize a session and list available tools.
-	allowAnyoneToInitializeAndListToolsPolicyName = "allow-anyone-to-initialize-and-list-tools"
-	initializeMethod                              = "initialize"
-	initializedMethod                             = "notifications/initialized"
-	toolsListMethod                               = "tools/list"
-
-	// allowHTTPGet is the name of the RBAC policy that allows an HTTP GET to the MCP endpoint for SSE stream.
-	allowHTTPGet = "allow-http-get"
-
-	mcpSessionIDHeader = "mcp-session-id"
-	toolsCallMethod    = "tools/call"
-	mcpProxyFilterName = "mcp_proxy"
-
-	// spiffeIDFormat is the standard SPIFFE ID format for Kubernetes workloads.
-	// Format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
-	spiffeIDFormat = "spiffe://%s/ns/%s/sa/%s"
-
-	// externalAuthzShadowRulePrefix is the prefix for stat names of shadow rules generated from AccessPolicies with ExternalAuthz.
-	// This allows us to monitor the presence of RBAC rules that are evaluated (though not enforced), with the purpose of signaling the need to call an ext_authz service.
-	externalAuthzShadowRulePrefix = "access_policy_ext_authz"
-)
-
 // buildGatewayLevelRBACFilters finds all AccessPolicies targeting the Gateway and translates them into HTTP filters.
 func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
 	gwPolicies, err := t.findAccessPoliciesForTarget(gatewayv1.GroupName, "Gateway", gateway.Namespace, gateway.Name)
@@ -186,9 +160,9 @@ func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0al
 
 	// Add common policies to avoid blocking basic MCP operations.
 	// These are added to the 'Rules' section which is where allowed traffic is defined.
-	addPolicyToRBACRules(rbacConfig, allowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
-	addPolicyToRBACRules(rbacConfig, allowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
-	addPolicyToRBACRules(rbacConfig, allowHTTPGet, buildAllowHTTPGetPolicy())
+	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
+	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
+	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
 
 	return rbacConfig
 }
@@ -225,7 +199,7 @@ func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name st
 // convertSAtoSPIFFEID constructs a standard SPIFFE ID for a Kubernetes ServiceAccount.
 // Format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
 func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
-	return fmt.Sprintf(spiffeIDFormat, trustDomain, namespace, saName)
+	return fmt.Sprintf(constants.SpiffeIDFormat, trustDomain, namespace, saName)
 }
 
 func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
@@ -271,7 +245,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
 						continue
 					}
-					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", externalAuthzShadowRulePrefix, hash) // a maximum of one ExternalAuth rule per policy is allowed, so we can safely set the shadow rule stat prefix at the RBAC config level
+					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash) // a maximum of one ExternalAuth rule per policy is allowed, so we can safely set the shadow rule stat prefix at the RBAC config level
 					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
 					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 				}
@@ -377,7 +351,7 @@ func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permissi
 						Rule: &rbacconfigv3.Permission_SourcedMetadata{
 							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
 								MetadataMatcher: &matcherv3.MetadataMatcher{
-									Filter: mcpProxyFilterName,
+									Filter: constants.MCPProxyFilterName,
 									Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "params"}}, {Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "name"}}},
 									Value:  toolsMatcher,
 								},
@@ -412,7 +386,7 @@ func buildAllowMCPSessionClosePolicy() *rbacconfigv3.Policy {
 							},
 							{ // Condition 2: The 'mcp-session-id' header must exist
 								Identifier: &rbacconfigv3.Principal_Header{
-									Header: &routev3.HeaderMatcher{Name: mcpSessionIDHeader, HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: true}},
+									Header: &routev3.HeaderMatcher{Name: constants.MCPSessionIDHeader, HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: true}},
 								},
 							},
 						},
@@ -437,9 +411,9 @@ func buildToolsCallMethodPermission() *rbacconfigv3.Permission {
 		Rule: &rbacconfigv3.Permission_SourcedMetadata{
 			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
 				MetadataMatcher: &matcherv3.MetadataMatcher{
-					Filter: mcpProxyFilterName,
+					Filter: constants.MCPProxyFilterName,
 					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
-					Value:  &matcherv3.ValueMatcher{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: toolsCallMethod}}}},
+					Value:  &matcherv3.ValueMatcher{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: constants.ToolsCallMethod}}}},
 				},
 			},
 		},
@@ -468,15 +442,15 @@ func buildAllowAnyoneToInitializeAndListToolsPolicy() *rbacconfigv3.Policy {
 								Rule: &rbacconfigv3.Permission_SourcedMetadata{
 									SourcedMetadata: &rbacconfigv3.SourcedMetadata{
 										MetadataMatcher: &matcherv3.MetadataMatcher{
-											Filter: mcpProxyFilterName,
+											Filter: constants.MCPProxyFilterName,
 											Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
 											Value: &matcherv3.ValueMatcher{
 												MatchPattern: &matcherv3.ValueMatcher_OrMatch{
 													OrMatch: &matcherv3.OrMatcher{
 														ValueMatchers: []*matcherv3.ValueMatcher{
-															{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: initializeMethod}}}},
-															{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: initializedMethod}}}},
-															{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: toolsListMethod}}}},
+															{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: constants.InitializeMethod}}}},
+															{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: constants.InitializedMethod}}}},
+															{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: constants.ToolsListMethod}}}},
 														},
 													},
 												},

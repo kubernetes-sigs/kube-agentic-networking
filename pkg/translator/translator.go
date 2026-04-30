@@ -25,7 +25,6 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	httpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	envoyproxytypes "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
@@ -48,11 +47,6 @@ import (
 
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
-)
-
-const (
-	// The default port for external authorization services if not specified in the BackendRef.
-	defaultExternalAuthPort = 5000
 )
 
 type ControllerError struct {
@@ -515,19 +509,7 @@ func (t *Translator) resolveCertificate(
 	keyBytes := secret.Data[corev1.TLSPrivateKeyKey]
 
 	if !seenSecrets[sdsName] {
-		envoySecret := &tlsv3.Secret{
-			Name: sdsName,
-			Type: &tlsv3.Secret_TlsCertificate{
-				TlsCertificate: &tlsv3.TlsCertificate{
-					CertificateChain: &corev3.DataSource{
-						Specifier: &corev3.DataSource_InlineBytes{InlineBytes: certBytes},
-					},
-					PrivateKey: &corev3.DataSource{
-						Specifier: &corev3.DataSource_InlineBytes{InlineBytes: keyBytes},
-					},
-				},
-			},
-		}
+		envoySecret := newTLSCertificateSecret(sdsName, certBytes, keyBytes)
 		*envoySecrets = append(*envoySecrets, envoySecret)
 		seenSecrets[sdsName] = true
 	}
@@ -562,16 +544,7 @@ func (t *Translator) resolveCACertificate(
 	caStr := cm.Data[corev1.ServiceAccountRootCAKey]
 
 	if !seenSecrets[sdsName] {
-		envoySecret := &tlsv3.Secret{
-			Name: sdsName,
-			Type: &tlsv3.Secret_ValidationContext{
-				ValidationContext: &tlsv3.CertificateValidationContext{
-					TrustedCa: &corev3.DataSource{
-						Specifier: &corev3.DataSource_InlineBytes{InlineBytes: []byte(caStr)},
-					},
-				},
-			},
-		}
+		envoySecret := newValidationContextSecret(sdsName, []byte(caStr))
 		*envoySecrets = append(*envoySecrets, envoySecret)
 		seenSecrets[sdsName] = true
 	}
@@ -756,14 +729,14 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 				continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
 			}
 			serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
-			servicePort := uint32(defaultExternalAuthPort)
+			servicePort := uint32(constants.DefaultExternalAuthPort)
 			if backendRef.Port != nil {
 				//nolint:gosec // G115: port values are within valid uint32 bounds
 				servicePort = uint32(*backendRef.Port)
 			}
 			cluster := &clusterv3.Cluster{
 				Name:                 clusterName,
-				ConnectTimeout:       durationpb.New(defaultConnectTimeout),
+				ConnectTimeout:       durationpb.New(constants.DefaultConnectTimeout),
 				ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
 				LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
 				LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
