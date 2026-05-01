@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -44,6 +45,7 @@ func TestMain(m *testing.M) {
 	var err error
 
 	utilruntime.Must(v0alpha0.Install(scheme))
+	utilruntime.Must(v1alpha1.Install(scheme))
 
 	// Add core APIs in case we refer secrets, services and configmaps
 	utilruntime.Must(corev1.AddToScheme(scheme))

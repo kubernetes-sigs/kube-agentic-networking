@@ -1141,7 +1141,7 @@ spec:
                         Name specifies the name of the rule.
                         This follows the DNS Subdomain naming convention.
                         See: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#dns-subdomain-names
-                      maxLength: 253
+                      maxLength: 63
                       minLength: 1
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                       type: string

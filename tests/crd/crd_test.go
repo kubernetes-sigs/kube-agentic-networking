@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 )
 
 func TestCRDValidation(t *testing.T) {
@@ -44,6 +45,7 @@ func TestCRDValidation(t *testing.T) {
 	var kubectlLocation, kubeconfigLocation string
 
 	utilruntime.Must(v0alpha0.Install(scheme))
+	utilruntime.Must(v1alpha1.Install(scheme))
 	utilruntime.Must(corev1.AddToScheme(scheme))
 
 	k8sVersion := os.Getenv("K8S_VERSION")
@@ -82,6 +84,7 @@ func TestCRDValidation(t *testing.T) {
 		apiResources, err := executeKubectlCommand(t, kubectlLocation, kubeconfigLocation, []string{"api-resources"})
 		require.NoError(t, err)
 		require.Contains(t, apiResources, "agentic.networking.x-k8s.io/v0alpha0")
+		require.Contains(t, apiResources, "agentic.networking.x-k8s.io/v1alpha1")
 	})
 
 	t.Run("should be able to install valid examples", func(t *testing.T) {
