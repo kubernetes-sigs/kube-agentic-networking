@@ -1,0 +1,16 @@
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
+kind: XAccessPolicy
+metadata:
+  name: policy-v1alpha1-wrong-action-ext-auth
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: my-gateway
+  action: ExternalAuth
+  rules:
+  - name: allow-sa
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: my-sa
