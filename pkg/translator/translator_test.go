@@ -346,6 +346,61 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			},
 		},
 		{
+			name:    "Listener with Unresolved Secret Refs still counts AttachedRoutes",
+			gw:      newTestGateway("invalid-secret-gw", ns, []gatewayv1.SecretObjectReference{{Name: "missing-cert"}}, nil),
+			backend: newTestBackend("backend", ns),
+			routes: []*gatewayv1.HTTPRoute{
+				newTestHTTPRoute("route-1", ns, "invalid-secret-gw", "backend"),
+			},
+			policies: nil,
+			mcpSvc:   newTestService("backend-svc", ns, 3001),
+			secrets:  nil, // No secrets provided, so "missing-cert" will be unresolved
+			expected: expectedResult{
+				listeners: []expectedListener{
+					{
+						envoyName:          "", // No Envoy listener expected
+						k8sName:            "https-listener",
+						maxBackendPolicies: 0,
+						attachedRoutes:     1, // THIS IS THE KEY CHECK
+						conditions: []metav1.Condition{
+							{
+								Type:   string(gatewayv1.ListenerConditionAccepted),
+								Status: metav1.ConditionTrue,
+								Reason: string(gatewayv1.ListenerReasonAccepted),
+							},
+							{
+								Type:   string(gatewayv1.ListenerConditionProgrammed),
+								Status: metav1.ConditionFalse,
+								Reason: string(gatewayv1.ListenerReasonInvalid),
+							},
+							{
+								Type:   string(gatewayv1.ListenerConditionResolvedRefs),
+								Status: metav1.ConditionFalse,
+								Reason: string(gatewayv1.ListenerReasonInvalidCertificateRef),
+							},
+						},
+					},
+				},
+				routes: []expectedRoute{
+					{
+						envoyName:    "route-10001",
+						k8sName:      "route-1",
+						k8sNamespace: ns,
+						parentStatuses: []gatewayv1.RouteParentStatus{
+							{
+								ParentRef:      gatewayv1.ParentReference{Name: "invalid-secret-gw"},
+								ControllerName: gatewayv1.GatewayController(constants.ControllerName),
+								Conditions: []metav1.Condition{
+									{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue},
+								},
+							},
+						},
+					},
+				},
+				clusters: []string{"quickstart-ns-backend"},
+			},
+		},
+		{
 			name:    "Listener programmed with only cert Ref and use default SPIFFE trust",
 			gw:      newTestGateway("cert-only-gw", ns, []gatewayv1.SecretObjectReference{{Name: "my-cert"}}, nil),
 			backend: newTestBackend("cert-only-backend", ns),
