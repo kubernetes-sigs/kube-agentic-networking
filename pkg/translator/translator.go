@@ -206,7 +206,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				certValid, caValid := t.processHTTPSListenerSecrets(gateway, listener, &listenerStatus, &envoySecrets, seenSecrets)
 				if !certValid || !caValid {
 					allListenerStatuses[listener.Name] = listenerStatus
-					continue
+					// Do not continue here, allow counting attached routes even if references are unresolved.
+					// The listener will still be marked as not programmed and skipped for Envoy config generation.
 				}
 			}
 
