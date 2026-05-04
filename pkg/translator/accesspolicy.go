@@ -501,4 +501,3 @@ func buildAllowHTTPGetPolicy() *rbacconfigv3.Policy {
 		},
 	}
 }
-

@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ func TestCompileCelExpression(t *testing.T) {
 	}{
 		{
 			name:       "valid standard expression",
-			expression: "metadata.filter_metadata['mcp_proxy'].params.name.startsWith('verify_')",
+			expression: "request.path.startsWith('/verify_')",
 			wantErr:    false,
 		},
 		{
@@ -60,7 +60,7 @@ func TestCompileCelExpression(t *testing.T) {
 		},
 		{
 			name:       "valid complex expression with multiple macros and logical operators",
-			expression: "request.mcp.tool_name == 'fetch_data' || request.mcp.tool_name.startsWith('read_')",
+			expression: "request.mcp.tool_name == 'fetch_data' || request.path.startsWith('/read_')",
 			wantErr:    false,
 		},
 		{
@@ -68,6 +68,18 @@ func TestCompileCelExpression(t *testing.T) {
 			expression:  "request.mcp.tool_name.startsWith(",
 			wantErr:     true,
 			errContains: "Syntax error",
+		},
+		{
+			name:        "unsupported variable error",
+			expression:  "request.unrecognized == 'bar'",
+			wantErr:     true,
+			errContains: "unsupported CEL variable: request.unrecognized",
+		},
+		{
+			name:        "unsupported source variable error",
+			expression:  "source.unknown == 'foo'",
+			wantErr:     true,
+			errContains: "undeclared reference",
 		},
 		{
 			name:        "undeclared variable error",
@@ -131,4 +143,3 @@ func TestCompileCelExpressionCachingAndConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
-
