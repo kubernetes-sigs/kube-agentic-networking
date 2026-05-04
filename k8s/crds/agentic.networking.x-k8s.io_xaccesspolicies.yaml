@@ -771,7 +771,7 @@ spec:
         - spec
         type: object
     served: true
-    storage: false
+    storage: true
     subresources:
       status: {}
   - name: v1alpha1
@@ -1586,7 +1586,7 @@ spec:
         required:
         - spec
         type: object
-    served: true
-    storage: true
+    served: false
+    storage: false
     subresources:
       status: {}
