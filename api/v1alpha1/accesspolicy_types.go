@@ -184,7 +184,7 @@ type MCPAttributes struct {
 	// Methods is a list of specific MCP functional methods to match.
 	// If specified, only MCP requests with a method
 	// that matches one of these items will be authorized.
-	// If empty or omitted, no method-level whitelisting is applied, meaning all
+	// If empty or omitted, no method-level allowlisting is applied, meaning all
 	// MCP methods (e.g., all tools, prompts, and resources) are permitted.
 	// +kubebuilder:validation:MaxItems=10
 	// +optional
@@ -207,7 +207,7 @@ type MCPMethod struct {
 
 	// Params allows matching against specific arguments in the MCP request.
 	// Only valid for 'get', 'call', 'subscribe', 'unsubscribe', and 'read' methods.
-	// If empty or omitted, parameter-level whitelisting is not applied, meaning the method
+	// If empty or omitted, parameter-level allowlisting is not applied, meaning the method
 	// is authorized regardless of the arguments passed in the request.
 	// +optional
 	// +listType=set
