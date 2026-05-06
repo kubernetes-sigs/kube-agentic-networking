@@ -50,8 +50,6 @@ const (
 	testClientCertPath = "/tmp/mtls-client/tls.crt"
 	testClientKeyPath  = "/tmp/mtls-client/tls.key"
 	testClientCAPath   = "/tmp/mtls-client/ca.crt"
-
-	xdsUpdateWaitTime = 5 * time.Second
 )
 
 // TestControllerE2E verifies the core functionality of the agentic networking controller including:
@@ -73,176 +71,162 @@ func TestControllerE2E(t *testing.T) {
 	// Initialize MCP session
 	mcp := initializeMCP(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: "e2e-tester"})
 
-	// Case 1: No policy
-	t.Log("--------------------------------------------------------------------------------")
-	t.Log("Case 1: No policy applied (all allowed)")
-	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "The sum of 2 and 3 is 5.",
+	t.Run("Case 1: No policy applied (all allowed)", func(t *testing.T) {
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
 						},
 					},
 				},
 			},
-		},
-	)
+		)
 
-	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "Echo: hello",
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "Echo: hello",
+							},
+						},
+					},
+				},
+			})
+	})
+
+	t.Run("Case 2: Only backend policy (allows get-sum)", func(t *testing.T) {
+		applyToNamespace(t, "testdata/backend-policy.yaml", namespace)
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
 						},
 					},
 				},
 			},
-		})
+		)
 
-	// Case 2: Only backend policy
-	t.Log("--------------------------------------------------------------------------------")
-	t.Log("Case 2: Only backend policy (allows get-sum)")
-	applyToNamespace(t, "testdata/backend-policy.yaml", namespace)
-	// Wait for xDS propagation
-	time.Sleep(xdsUpdateWaitTime)
-	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "The sum of 2 and 3 is 5.",
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
+
+	t.Run("Case 3: Only gateway policy (allows echo)", func(t *testing.T) {
+		deleteFromNamespace(t, "testdata/backend-policy.yaml", namespace)
+		applyToNamespace(t, "testdata/gateway-policy.yaml", namespace)
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "Echo: hello",
+							},
+						},
+					},
+				},
+			})
+	})
+
+	t.Run("Case 4: Both policies (GW: echo, BE: get-sum)", func(t *testing.T) {
+		applyToNamespace(t, "testdata/backend-policy.yaml", namespace)
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
+
+	t.Run("Case 5: Patch Gateway policy to allow get-sum", func(t *testing.T) {
+		// Modifying Gateway Policy: Allowing 'get-sum' to align with Backend policy.
+		patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": ["get-sum"]}]`
+		runKubectl(t, "patch", "xaccesspolicy", "e2e-gateway-level-policy", "-n", namespace, "--type=json", "-p", patchGW)
+
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
 						},
 					},
 				},
 			},
-		},
-	)
-
-	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
-				},
-			},
-		},
-	)
-
-	// Case 3: Only gateway policy
-	t.Log("--------------------------------------------------------------------------------")
-	t.Log("Case 3: Only gateway policy (allows echo)")
-	deleteFromNamespace(t, "testdata/backend-policy.yaml", namespace)
-	applyToNamespace(t, "testdata/gateway-policy.yaml", namespace)
-	// Wait for xDS propagation
-	time.Sleep(xdsUpdateWaitTime)
-	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
-				},
-			},
-		},
-	)
-
-	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "Echo: hello",
-						},
-					},
-				},
-			},
-		})
-
-	// Case 4: Both policies applied
-	t.Log("--------------------------------------------------------------------------------")
-	t.Log("Case 4: Both policies (GW: echo, BE: get-sum)")
-	applyToNamespace(t, "testdata/backend-policy.yaml", namespace)
-	// Wait for xDS propagation
-	time.Sleep(xdsUpdateWaitTime)
-	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
-				},
-			},
-		},
-	)
-	mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
-				},
-			},
-		},
-	)
-
-	// Case 5: Patch Gateway policy to allow get-sum
-	t.Log("--------------------------------------------------------------------------------")
-	t.Log("Case 5: Patch Gateway policy to allow get-sum")
-	// Modifying Gateway Policy: Allowing 'get-sum' to align with Backend policy.
-	patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": ["get-sum"]}]`
-	runKubectl(t, "patch", "xaccesspolicy", "e2e-gateway-level-policy", "-n", namespace, "--type=json", "-p", patchGW)
-
-	// Wait for xDS propagation
-	time.Sleep(xdsUpdateWaitTime)
-	mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "The sum of 2 and 3 is 5.",
-						},
-					},
-				},
-			},
-		},
-	)
-	t.Log("--------------------------------------------------------------------------------")
+		)
+	})
 }
 
 // TestExternalAuthE2E verifies the ExternalAuth authorization feature including:
@@ -288,182 +272,176 @@ func TestExternalAuthE2E(t *testing.T) {
 	mcp1 := initializeMCP(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: "e2e-tester"})
 	mcp2 := initializeMCP(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: "e2e-tester-2"})
 
-	// Case 1: Combined backend policy (InlineTools for tester-1, ExternalAuth for tester-2)
-	t.Log("--------------------------------------------------------------------------------")
-	t.Log("Case 1: Combined backend policy - InlineTools (tester-1) + ExternalAuth (tester-2)")
-	applyToNamespace(t, "testdata/backend-policy-extauth.yaml", namespace)
-	time.Sleep(xdsUpdateWaitTime)
+	t.Run("Case 1: Combined backend policy - InlineTools (tester-1) + ExternalAuth (tester-2)", func(t *testing.T) {
+		applyToNamespace(t, "testdata/backend-policy-extauth.yaml", namespace)
 
-	// tester-1 with InlineTools: can call echo and get-sum
-	t.Log("Testing tester-1 (InlineTools: echo, get-sum allowed)")
-	mcp1.assertToolCall(t, "echo", `{"message":"hello"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "Echo: hello",
+		// tester-1 with InlineTools: can call echo and get-sum
+		t.Log("Testing tester-1 (InlineTools: echo, get-sum allowed)")
+		mcp1.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "Echo: hello",
+							},
 						},
 					},
 				},
-			},
-		})
+			})
 
-	mcp1.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "The sum of 2 and 3 is 5.",
+		mcp1.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
 						},
 					},
 				},
-			},
-		})
+			})
 
-	mcp1.assertToolCall(t, "get-env", `{}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
+		mcp1.assertToolCall(t, "get-env", `{}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
 				},
-			},
-		})
+			})
 
-	// tester-2 with ExternalAuth: can call get-sum and get-env (per AuthConfig)
-	t.Log("Testing tester-2 (ExternalAuth: get-sum, get-env allowed per AuthConfig)")
-	mcp2.assertToolCall(t, "get-sum", `{"a":5,"b":7}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "The sum of 5 and 7 is 12.",
+		// tester-2 with ExternalAuth: can call get-sum and get-env (per AuthConfig)
+		t.Log("Testing tester-2 (ExternalAuth: get-sum, get-env allowed per AuthConfig)")
+		mcp2.assertToolCall(t, "get-sum", `{"a":5,"b":7}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 5 and 7 is 12.",
+							},
 						},
 					},
 				},
-			},
-		})
+			})
 
-	mcp2.assertToolCall(t, "get-env", `{}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
+		mcp2.assertToolCall(t, "get-env", `{}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+					},
 				},
-			},
-		})
+			})
 
-	mcp2.assertToolCall(t, "echo", `{"message":"world"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
+		mcp2.assertToolCall(t, "echo", `{"message":"world"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
 				},
-			},
-		})
+			})
+	})
 
-	// Case 2: Gateway-level ExternalAuth policy (applies to all requests)
-	t.Log("--------------------------------------------------------------------------------")
-	t.Log("Case 2: Gateway-level ExternalAuth policy (all requests go through external auth)")
-	deleteFromNamespace(t, "testdata/backend-policy-extauth.yaml", namespace)
-	applyToNamespace(t, "testdata/gateway-policy-extauth.yaml", namespace)
-	time.Sleep(xdsUpdateWaitTime)
+	t.Run("Case 2: Gateway-level ExternalAuth policy (all requests go through external auth)", func(t *testing.T) {
+		deleteFromNamespace(t, "testdata/backend-policy-extauth.yaml", namespace)
+		applyToNamespace(t, "testdata/gateway-policy-extauth.yaml", namespace)
 
-	// Both testers should now be subject to the same ExternalAuth rules
-	t.Log("Testing tester-1 with gateway-level ExternalAuth")
-	mcp1.assertToolCall(t, "get-sum", `{"a":10,"b":20}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "The sum of 10 and 20 is 30.",
+		// Both testers should now be subject to the same ExternalAuth rules
+		t.Log("Testing tester-1 with gateway-level ExternalAuth")
+		mcp1.assertToolCall(t, "get-sum", `{"a":10,"b":20}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 10 and 20 is 30.",
+							},
 						},
 					},
 				},
-			},
-		})
+			})
 
-	mcp1.assertToolCall(t, "get-env", `{}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
+		mcp1.assertToolCall(t, "get-env", `{}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+					},
 				},
-			},
-		})
+			})
 
-	mcp1.assertToolCall(t, "echo", `{"message":"test"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
+		mcp1.assertToolCall(t, "echo", `{"message":"test"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
 				},
-			},
-		})
+			})
 
-	t.Log("Testing tester-2 with gateway-level ExternalAuth")
-	mcp2.assertToolCall(t, "get-sum", `{"a":3,"b":4}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Result: &mcpResult{
-					IsError: false,
-					Content: []mcpContent{
-						{
-							Type: "text",
-							Text: "The sum of 3 and 4 is 7.",
+		t.Log("Testing tester-2 with gateway-level ExternalAuth")
+		mcp2.assertToolCall(t, "get-sum", `{"a":3,"b":4}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 3 and 4 is 7.",
+							},
 						},
 					},
 				},
-			},
-		})
+			})
 
-	mcp2.assertToolCall(t, "echo", `{"message":"gateway"}`,
-		mcpResponse{
-			StatusCode: 200,
-			Body: respBody{
-				JSONRPC: "2.0",
-				Error: &mcpError{
-					Code:    403,
-					Message: "Access to this tool is forbidden.",
+		mcp2.assertToolCall(t, "echo", `{"message":"gateway"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
 				},
-			},
-		})
-
-	t.Log("--------------------------------------------------------------------------------")
+			})
+	})
 }
 
 func createTestNamespace(t *testing.T, name string) (cleanup func()) {
@@ -602,13 +580,16 @@ func runKubectlOutput(t *testing.T, args ...string) (string, error) {
 }
 
 func retry(attempts int, sleep time.Duration, f func() error) error {
+	var lastErr error
 	for i := 0; i < attempts; i++ {
-		if err := f(); err == nil {
+		err := f()
+		if err == nil {
 			return nil
 		}
+		lastErr = err
 		time.Sleep(sleep)
 	}
-	return fmt.Errorf("after %d attempts", attempts)
+	return fmt.Errorf("after %d attempts, last error: %w", attempts, lastErr)
 }
 
 type mcpTestSession struct {
@@ -627,7 +608,6 @@ func initializeMCP(t *testing.T, gatewayIP string, pod types.NamespacedName) *mc
 
 func initializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.NamespacedName, certPath, keyPath, caPath string) *mcpTestSession {
 	t.Logf("Initialize MCP session for pod %s", pod)
-	time.Sleep(xdsUpdateWaitTime)
 
 	mcpSessionID := ""
 	err := retry(5, 10*time.Second, func() error {
@@ -703,10 +683,10 @@ type mcpContent struct {
 	Text string `json:"text"`
 }
 
-func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) {
+func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) error {
 	nBig, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
-		t.Fatalf("failed to generate random request ID: %v", err)
+		return fmt.Errorf("failed to generate random request ID: %w", err)
 	}
 	requestID := int(nBig.Int64())
 	expected.Body.ID = requestID
@@ -714,7 +694,7 @@ func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string,
 	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, requestID, toolName, toolArgs)
 
 	if m.pod.Name == "" || m.pod.Namespace == "" {
-		t.Fatalf("invalid pod reference in MCP session: %v", m.pod)
+		return fmt.Errorf("invalid pod reference in MCP session: %v", m.pod)
 	}
 
 	out, err := runKubectlOutput(t, "exec", m.pod.Name, "-n", m.pod.Namespace, "--",
@@ -729,75 +709,97 @@ func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string,
 		"--data-raw", data,
 		fmt.Sprintf("https://%s:10001/mcp", m.gatewayIP))
 	if err != nil {
-		t.Fatalf("failed to call tool: %v", err)
+		return fmt.Errorf("failed to call tool: %w", err)
 	}
 
 	out = strings.TrimSpace(out)
 	lines := strings.Split(out, "\n")
 	if len(lines) == 0 {
-		t.Fatalf("empty response from gateway")
+		return fmt.Errorf("empty response from gateway")
 	}
 
 	// Check HTTP status code
 	codeStr := strings.TrimSpace(lines[len(lines)-1])
 	code, err := strconv.Atoi(codeStr)
 	if err != nil {
-		t.Fatalf("failed to parse HTTP status code from response: %q", codeStr)
+		return fmt.Errorf("failed to parse HTTP status code from response: %q", codeStr)
 	}
 	if expected.StatusCode != 0 && code != expected.StatusCode {
-		t.Fatalf("unexpected HTTP status code: got %d, want %d\n", code, expected.StatusCode)
+		return fmt.Errorf("unexpected HTTP status code: got %d, want %d", code, expected.StatusCode)
 	}
-	// An example mcp response body: {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"Access to this tool is forbidden (403).","type":"text"}],"isError":true}}
-	// Check HTTP body
+
 	body := strings.TrimSpace(strings.Join(lines[:len(lines)-1], "\n"))
+	resp, err := parseMCPResponse(body)
+	if err != nil {
+		return err
+	}
+
+	return assertMCPResponse(resp, expected, body)
+}
+
+func parseMCPResponse(body string) (respBody, error) {
 	var resp respBody
 	idx := strings.Index(body, "{")
 	if idx == -1 {
-		t.Fatalf("failed to find JSON payload in response\nbody: %s", body)
+		return resp, fmt.Errorf("failed to find JSON payload in response\nbody: %s", body)
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(body[idx:])), &resp); err != nil {
-		t.Fatalf("failed to parse JSON response: %v\nbody: %s", err, body)
+		return resp, fmt.Errorf("failed to parse JSON response: %w\nbody: %s", err, body)
 	}
+	return resp, nil
+}
 
+func assertMCPResponse(resp respBody, expected mcpResponse, body string) error {
 	if expected.Body.JSONRPC != "" && resp.JSONRPC != expected.Body.JSONRPC {
-		t.Fatalf("jsonrpc mismatch: got %q, want %q\nJSON payload: %s", resp.JSONRPC, expected.Body.JSONRPC, body)
+		return fmt.Errorf("jsonrpc mismatch: got %q, want %q\nJSON payload: %s", resp.JSONRPC, expected.Body.JSONRPC, body)
 	}
 
 	if resp.ID != expected.Body.ID {
-		t.Fatalf("id mismatch: got %d, want %d\nbody: %s", resp.ID, expected.Body.ID, body)
+		return fmt.Errorf("id mismatch: got %d, want %d\nbody: %s", resp.ID, expected.Body.ID, body)
 	}
 
 	if expected.Body.Error != nil {
 		if resp.Error == nil {
-			t.Fatalf("expected error but got nil\nbody: %s", body)
+			return fmt.Errorf("expected error but got nil\nbody: %s", body)
 		}
 		if resp.Error.Code != expected.Body.Error.Code {
-			t.Fatalf("error code mismatch: got %d, want %d\nbody: %s", resp.Error.Code, expected.Body.Error.Code, body)
+			return fmt.Errorf("error code mismatch: got %d, want %d\nbody: %s", resp.Error.Code, expected.Body.Error.Code, body)
 		}
 		if expected.Body.Error.Message != "" && resp.Error.Message != expected.Body.Error.Message {
-			t.Fatalf("error message mismatch: got %q, want %q\nbody: %s", resp.Error.Message, expected.Body.Error.Message, body)
+			return fmt.Errorf("error message mismatch: got %q, want %q\nbody: %s", resp.Error.Message, expected.Body.Error.Message, body)
 		}
 	} else {
 		if resp.Result == nil || len(resp.Result.Content) == 0 {
-			t.Fatalf("response contains no result\nbody: %s", body)
+			return fmt.Errorf("response contains no result\nbody: %s", body)
 		}
 		isError := resp.Result.IsError
 		message := resp.Result.Content[0].Text
 		tp := resp.Result.Content[0].Type
 		expectedIsError := expected.Body.Result.IsError
 		if expectedIsError != isError {
-			t.Fatalf("isError mismatch: got %v, want %v\nbody: %s", isError, expectedIsError, body)
+			return fmt.Errorf("isError mismatch: got %v, want %v\nbody: %s", isError, expectedIsError, body)
 		}
 		if expectedContent := expected.Body.Result.Content; len(expectedContent) > 0 {
 			expectedMessage := expectedContent[0].Text
 			expectedType := expectedContent[0].Type
 			if expectedMessage != "" && message != expectedMessage {
-				t.Fatalf("message mismatch: expected %q to be in %q\nbody: %s", expectedMessage, message, body)
+				return fmt.Errorf("message mismatch: expected %q to be in %q\nbody: %s", expectedMessage, message, body)
 			}
 			if expectedType != "" && tp != expectedType {
-				t.Fatalf("type mismatch: got %q, want %q\nbody: %s", tp, expectedType, body)
+				return fmt.Errorf("type mismatch: got %q, want %q\nbody: %s", tp, expectedType, body)
 			}
 		}
+	}
+	return nil
+}
+
+func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) {
+	// Retry 10 times with 2 second interval. This to allow xds update to propagate.
+	err := retry(10, 2*time.Second, func() error {
+		return m.checkToolCall(t, toolName, toolArgs, expected)
+	})
+	if err != nil {
+		t.Fatalf("Tool call %q failed after retries: %v", toolName, err)
 	}
 	t.Logf("Tool call %q from pod %s: got expected response.", toolName, m.pod)
 }
@@ -872,9 +874,6 @@ func TestGatewayTLS(t *testing.T) {
 	t.Run("DeployTesterPod", func(t *testing.T) {
 		applyToNamespace(t, "testdata/tester-pod-no-certs.yaml", namespace)
 		runKubectl(t, "wait", "--for=condition=Ready", "pod/e2e-tester-no-certs", "-n", namespace, "--timeout=5m")
-
-		// Wait for xDS propagation
-		time.Sleep(xdsUpdateWaitTime)
 
 		// Prepare workspace in pod
 		runKubectl(t, "exec", podName, "-n", namespace, "--", "mkdir", "-p", "/tmp/mtls-client")
