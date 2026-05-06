@@ -112,8 +112,8 @@ header() {
   echo ""
 }
 
-# Function to dump logs on failure
-cleanup() {
+# Function to dump diagnostics on failure
+dump_diagnostics() {
   local status=$?
   local cluster_name=$1
   local system_namespace=$2

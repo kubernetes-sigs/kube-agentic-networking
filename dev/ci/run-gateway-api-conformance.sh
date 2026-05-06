@@ -41,6 +41,6 @@ main() {
   GOWORK=off CGO_ENABLED=0 go test "${test_args[@]}"
 }
 
-# Register the cleanup trap and run main
-trap 'cleanup "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${CONFORMANCE_NAMESPACE}" "conformance-tester" "gateway.networking.k8s.io/gateway-name"' EXIT
+# Register the diagnostics trap and run main
+trap 'dump_diagnostics "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${CONFORMANCE_NAMESPACE}" "conformance-tester" "gateway.networking.k8s.io/gateway-name"' EXIT
 main "$@"

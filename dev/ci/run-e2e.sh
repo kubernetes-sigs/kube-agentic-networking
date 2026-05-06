@@ -35,6 +35,6 @@ main() {
   cd tests && go clean -testcache && go test -v -parallel=2 ./e2e/...
 }
 
-# Register the cleanup trap and run main
-trap 'cleanup "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${E2E_NAMESPACE}" "e2e-tester" "gateway.networking.k8s.io/gateway-name=e2e-gateway"' EXIT
+# Register the diagnostics trap and run main
+trap 'dump_diagnostics "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${E2E_NAMESPACE}" "e2e-tester" "gateway.networking.k8s.io/gateway-name=e2e-gateway"' EXIT
 main "$@"

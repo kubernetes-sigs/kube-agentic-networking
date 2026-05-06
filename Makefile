@@ -85,10 +85,10 @@ test-e2e: ## Run full E2E tests including cluster setup and controller deploymen
 	$(info ...Running full E2E pipeline (setup + test).)
 	./dev/ci/run-e2e.sh
 
-.PHONY: test-conformance
-test-conformance: ## Run full Conformance tests including cluster setup and controller deployment.
-	$(info ...Running full Conformance pipeline (setup + test).)
-	RUN_TEST="$(RUN_TEST)" ./dev/ci/run-conformance.sh
+.PHONY: test-gateway-api-conformance
+test-gateway-api-conformance: ## Run full Gateway API conformance tests including cluster setup and controller deployment.
+	$(info ...Running full Gateway API conformance pipeline (setup + test).)
+	RUN_TEST="$(RUN_TEST)" ./dev/ci/run-gateway-api-conformance.sh
 
 .PHONY: verify
 verify: ## Run go vet
