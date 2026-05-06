@@ -17,7 +17,6 @@
 
 # Enable Go modules.
 export GO111MODULE=on
-export GOWORK=off
 # Warn if undefined variables are referenced.
 MAKEFLAGS += --warn-undefined-variablesm
 
@@ -73,22 +72,22 @@ test-unit: ## Run unit tests.
 .PHONY: test-cel
 test-cel: ## Run CEL tests.
 	$(info ...Running CEL tests.)
-	cd tests && go test -v ./cel/...
+	go test -v ./tests/cel/...
 
 .PHONY: test-crd
 test-crd: ## Run CRD tests.
 	$(info ...Running CRD tests.)
-	cd tests && go test -v ./crd/...
+	go test -v ./tests/crd/...
 
 .PHONY: test-e2e
 test-e2e: ## Run full E2E tests including cluster setup and controller deployment.
 	$(info ...Running full E2E pipeline (setup + test).)
 	./dev/ci/run-e2e.sh
 
-.PHONY: test-conformance
-test-conformance: ## Run conformance tests.
-	$(info ...Running conformance tests.)
-	cd conformance && go test -v ./...
+.PHONY: conformance
+conformance: ## Run agentic-networking conformance tests.
+	$(info ...Running agentic-networking conformance tests.)
+	go test -v ./conformance -run TestConformance
 
 .PHONY: test-gateway-api-conformance
 test-gateway-api-conformance: ## Run full Gateway API conformance tests including cluster setup and controller deployment.

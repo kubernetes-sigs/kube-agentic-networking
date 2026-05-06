@@ -192,7 +192,7 @@ build_and_load_controller_image() {
 # Function to install CRDs
 install_crds() {
   header "Installing Gateway API CRDs"
-  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 
   header "Installing Project CRDs"
   kubectl apply -f k8s/crds/
@@ -226,8 +226,8 @@ deploy_controller() {
 setup_cluster_with_controller() {
   local cluster_name=$1
 
-  setup_kind_cluster "${cluster_name}"
-  build_and_load_controller_image "${cluster_name}" "${REGISTRY}" "${IMAGE_NAME}" "${TAG}"
+  # setup_kind_cluster "${cluster_name}"
+  # build_and_load_controller_image "${cluster_name}" "${REGISTRY}" "${IMAGE_NAME}" "${TAG}"
   
   install_crds
   setup_agentic_identity "${SYSTEM_NAMESPACE}"

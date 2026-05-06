@@ -33,14 +33,14 @@ main() {
 
   cd tests && go clean -testcache
 
-  local test_args=(-mod=mod -tags conformance -timeout=10m -v ./conformance/... -gateway-class=kube-agentic-networking -cleanup-base-resources=false)
+  local test_args=(-tags gatewayconformance -timeout=10m -v ./gateway-conformance/... -gateway-class=kube-agentic-networking -cleanup-base-resources=false)
   if [ -n "${RUN_TEST:-}" ]; then
     test_args+=(-run-test="$RUN_TEST")
   fi
 
-  GOWORK=off CGO_ENABLED=0 go test "${test_args[@]}"
+  CGO_ENABLED=0 go test "${test_args[@]}"
 }
 
 # Register the diagnostics trap and run main
-trap 'dump_diagnostics "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${CONFORMANCE_NAMESPACE}" "conformance-tester" "gateway.networking.k8s.io/gateway-name"' EXIT
+# trap 'dump_diagnostics "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${CONFORMANCE_NAMESPACE}" "conformance-tester" "gateway.networking.k8s.io/gateway-name"' EXIT
 main "$@"
