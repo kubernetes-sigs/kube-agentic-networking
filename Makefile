@@ -17,6 +17,7 @@
 
 # Enable Go modules.
 export GO111MODULE=on
+export GOWORK=off
 # Warn if undefined variables are referenced.
 MAKEFLAGS += --warn-undefined-variablesm
 
@@ -83,6 +84,11 @@ test-crd: ## Run CRD tests.
 test-e2e: ## Run full E2E tests including cluster setup and controller deployment.
 	$(info ...Running full E2E pipeline (setup + test).)
 	./dev/ci/run-e2e.sh
+
+.PHONY: test-gateway-api-conformance
+test-gateway-api-conformance: ## Run full Gateway API conformance tests including cluster setup and controller deployment.
+	$(info ...Running full Gateway API conformance pipeline (setup + test).)
+	RUN_TEST="$(RUN_TEST)" ./dev/ci/run-gateway-api-conformance.sh
 
 .PHONY: verify
 verify: ## Run go vet
@@ -225,9 +231,9 @@ dev-reload-controller: build ## Build and reload controller image into Kind clus
 	@echo "Updating Deployment in namespace: agentic-net-system..."
 	kubectl patch deployment agentic-net-controller -n agentic-net-system --type=json \
 		-p='[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "IfNotPresent"}]'
-	
+
 	kubectl set image deployment/agentic-net-controller manager=$(REGISTRY)/$(IMAGE_NAME):$(TAG) -n agentic-net-system
-	
+
 	@echo "Restarting agentic-net-controller pods..."
 	kubectl rollout restart deployment/agentic-net-controller -n agentic-net-system
 

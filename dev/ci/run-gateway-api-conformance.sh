@@ -19,9 +19,8 @@ set -o nounset
 set -o pipefail
 
 # Configuration
-CLUSTER_NAME="kan-e2e"
-E2E_NAMESPACE="e2e-test-ns"
-
+CLUSTER_NAME="kan-conformance"
+CONFORMANCE_NAMESPACE="gateway-conformance-infra"
 
 # Source common library relative to this script
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -30,11 +29,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 main() {
   setup_cluster_with_controller "${CLUSTER_NAME}"
 
-  header "Running E2E tests"
-  # Requirements: K8s v1.35+, PodCertificateRequest/ClusterTrustBundle enabled, and KAN Controller running with --enable-agentic-identity-signer=true.
-  cd tests && go clean -testcache && go test -v -parallel=2 ./e2e/...
+  header "Running Conformance tests"
+
+  cd tests && go clean -testcache
+
+  local test_args=(-mod=mod -tags conformance -timeout=10m -v ./conformance/... -gateway-class=kube-agentic-networking -cleanup-base-resources=false)
+  if [ -n "${RUN_TEST:-}" ]; then
+    test_args+=(-run-test="$RUN_TEST")
+  fi
+
+  GOWORK=off CGO_ENABLED=0 go test "${test_args[@]}"
 }
 
 # Register the diagnostics trap and run main
-trap 'dump_diagnostics "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${E2E_NAMESPACE}" "e2e-tester" "gateway.networking.k8s.io/gateway-name=e2e-gateway"' EXIT
+trap 'dump_diagnostics "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${CONFORMANCE_NAMESPACE}" "conformance-tester" "gateway.networking.k8s.io/gateway-name"' EXIT
 main "$@"
