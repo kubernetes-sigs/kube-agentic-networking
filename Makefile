@@ -117,9 +117,12 @@ BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 .PHONY: generate
 generate: manifests deepcopy register clientsets ## Generate manifests, deepcopy code, and clientsets.
 
+# TODO: Remove the python post-processing patch once XAccessPolicy v1alpha1 is fully implemented
+# and flipped to `served: true` instead of v0alpha0.
 .PHONY: manifests
 manifests: controller-gen ## Generate CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./api/..." output:crd:artifacts:config=k8s/crds
+	python3 -c "p='k8s/crds/agentic.networking.x-k8s.io_xaccesspolicies.yaml'; text=open(p).read(); parts=text.split('  - name: v1alpha1'); parts[1]=parts[1].replace('    served: true', '    served: false', 1); open(p,'w').write('  - name: v1alpha1'.join(parts))" 
 
 .PHONY: deepcopy
 deepcopy: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -139,7 +142,7 @@ clientsets: ## Generate clientsets, listers, and informers.
 		    ./'
 
 .PHONY: register
-register: ## Generate register code for CRDs under ./api/v0alpha0
+register: ## Generate register code for CRDs under ./api/v0alpha0 and ./api/v1alpha1
 	@echo "--- Ensuring code-generator is in module cache..."
 	@go mod download k8s.io/code-generator
 	@echo "+++ Generating register code for api/v0alpha0..."
@@ -147,6 +150,12 @@ register: ## Generate register code for CRDs under ./api/v0alpha0
 		kube::codegen::gen_register \
 		    --boilerplate $(BOILERPLATE_FILE) \
 		    ./api/v0alpha0'
+	@echo "+++ Generating register code for api/v1alpha1..."
+	@bash -c 'source $(CODEGEN_SCRIPT); \
+		kube::codegen::gen_register \
+		    --boilerplate $(BOILERPLATE_FILE) \
+		    ./api/v1alpha1'
+
 
 ## @ Dependencies
 
