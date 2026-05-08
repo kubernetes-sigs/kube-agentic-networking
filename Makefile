@@ -84,10 +84,17 @@ test-e2e: ## Run full E2E tests including cluster setup and controller deploymen
 	$(info ...Running full E2E pipeline (setup + test).)
 	./dev/ci/run-e2e.sh
 
+## The below role tests against an existing kubernetes cluster, (using current context). 
+## The expectation is that you have the an agentic-netwokring gateway implementation installed. 
 .PHONY: conformance
 conformance: ## Run agentic-networking conformance tests.
 	$(info ...Running agentic-networking conformance tests.)
-	go test -v ./conformance -run TestConformance
+	@if [ -z "$(GATEWAY_CLASS)" ]; then \
+		read -p "Enter Gateway Class Name: " gwclass; \
+		go test -v ./conformance -run TestConformance -args --gateway-class=$$gwclass --cleanup-base-resources=false; \
+	else \
+		go test -v ./conformance -run TestConformance -args --gateway-class="$(GATEWAY_CLASS)" --cleanup-base-resources=false; \
+	fi
 
 .PHONY: test-gateway-api-conformance
 test-gateway-api-conformance: ## Run full Gateway API conformance tests including cluster setup and controller deployment.

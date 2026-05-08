@@ -20,4 +20,6 @@ import (
 	confsuite "sigs.k8s.io/gateway-api/conformance/utils/suite"
 )
 
-var ConformanceTests []confsuite.ConformanceTest
+var ConformanceTests = []confsuite.ConformanceTest{
+	XAccessPolicyAccepted,
+}

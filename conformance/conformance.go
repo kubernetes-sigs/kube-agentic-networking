@@ -30,6 +30,7 @@ import (
 	k8sconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	confflags "sigs.k8s.io/gateway-api/conformance/utils/flags"
+	"sigs.k8s.io/gateway-api/conformance/utils/kubernetes"
 	confsuite "sigs.k8s.io/gateway-api/conformance/utils/suite"
 
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
@@ -86,9 +87,14 @@ func RunConformance(t *testing.T) {
 	cSuite, err := confsuite.NewConformanceTestSuite(opts)
 	require.NoError(t, err, "error initializing conformance suite")
 
+	cSuite.Applier.ManifestFS = cSuite.ManifestFS
+
 	// Apply base manifests
 	cSuite.Applier.GatewayClass = opts.GatewayClassName
-	cSuite.Applier.MustApplyWithCleanup(t, opts.Client, opts.TimeoutConfig, opts.BaseManifests, cSuite.Cleanup)
+	cSuite.Applier.MustApplyWithCleanup(t, opts.Client, cSuite.TimeoutConfig, opts.BaseManifests, cSuite.Cleanup)
+
+	t.Log("Waiting for agentic-conformance-infra namespace to be ready")
+	kubernetes.NamespacesMustBeReady(t, opts.Client, cSuite.TimeoutConfig, []string{"agentic-conformance-infra"})
 
 	err = cSuite.Run(t, tests.ConformanceTests)
 	require.NoError(t, err, "error running conformance tests")

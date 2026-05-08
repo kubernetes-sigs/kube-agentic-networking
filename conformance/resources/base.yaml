@@ -4,11 +4,6 @@ kind: Namespace
 metadata:
   name: agentic-conformance-infra
 ---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: agentic-conformance-app-backend
----
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
