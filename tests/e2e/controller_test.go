@@ -227,6 +227,216 @@ func TestControllerE2E(t *testing.T) {
 			},
 		)
 	})
+
+	t.Run("Case 6: CEL policy (allows only get-sum)", func(t *testing.T) {
+		// Clean up previous policies first to avoid interference
+		runKubectl(t, "delete", "xaccesspolicy", "e2e-gateway-level-policy", "-n", namespace, "--ignore-not-found")
+		deleteFromNamespace(t, "testdata/backend-policy.yaml", namespace)
+
+		applyToNamespace(t, "testdata/cel-policy.yaml", namespace)
+
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
+						},
+					},
+				},
+			},
+		)
+
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
+
+	t.Run("Case 7: CEL policy - All failures (allows nothing)", func(t *testing.T) {
+		deleteFromNamespace(t, "testdata/cel-policy.yaml", namespace)
+		applyToNamespace(t, "testdata/cel-all-failures.yaml", namespace)
+
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
+
+	t.Run("Case 8: CEL policy - Mix of failure and success (allows get-sum)", func(t *testing.T) {
+		deleteFromNamespace(t, "testdata/cel-all-failures.yaml", namespace)
+		applyToNamespace(t, "testdata/cel-multi-rule.yaml", namespace)
+
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
+						},
+					},
+				},
+			},
+		)
+
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
+
+	// Case 9: CEL policy - Macros and functions
+	t.Run("Case 9: CEL policy - Macros and functions (startsWith, contains, matches)", func(t *testing.T) {
+		deleteFromNamespace(t, "testdata/cel-multi-rule.yaml", namespace)
+		applyToNamespace(t, "testdata/cel-macros.yaml", namespace)
+
+		// get-sum satisfies startsWith('/mc'), contains('2025'), and matches('^get-[a-z]+$')
+		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Result: &mcpResult{
+						IsError: false,
+						Content: []mcpContent{
+							{
+								Type: "text",
+								Text: "The sum of 2 and 3 is 5.",
+							},
+						},
+					},
+				},
+			},
+		)
+
+		// echo fails the regex match for request.mcp.tool_name.matches('^get-[a-z]+$')
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
+			mcpResponse{
+				StatusCode: 200,
+				Body: respBody{
+					JSONRPC: "2.0",
+					Error: &mcpError{
+						Code:    403,
+						Message: "Access to this tool is forbidden.",
+					},
+				},
+			},
+		)
+	})
+
+	// --- Individual CEL Variable Tests via Dynamic Patching ---
+	t.Run("Cases 10-15: CEL policy - Individual Native Variables", func(t *testing.T) {
+		// Clean up previous policies
+		deleteFromNamespace(t, "testdata/cel-macros.yaml", namespace)
+
+		// Apply the base CEL policy
+		applyToNamespace(t, "testdata/cel-policy.yaml", namespace)
+
+		celCases := []struct {
+			name           string
+			validExpr      string
+			failExpression string
+		}{
+			{"request.path", "request.path == '/mcp'", "request.path == '/wrong'"},
+			{"request.url_path", "request.url_path == '/mcp'", "request.url_path == '/wrong'"},
+			{"request.method", "request.method == 'POST'", "request.method == 'GET'"},
+			{"request.host", "request.host.endsWith(':10001')", "request.host.endsWith(':9999')"},
+			{"request.headers", "request.headers['mcp-protocol-version'] == '2025-11-25'", "request.headers['mcp-protocol-version'] == '1999-01-01'"},
+			{"request.time", "request.time.getFullYear() >= 2025", "request.time.getFullYear() < 2000"},
+		}
+
+		for _, tc := range celCases {
+			t.Logf("Testing CEL native variable: %s", tc.name)
+
+			// 1. Success Path: Patch to valid expression
+			validPatch := `[{"op": "replace", "path": "/spec/rules/0/authorization/cel/expression", "value": "` + tc.validExpr + `"}]`
+			runKubectl(t, "patch", "xaccesspolicy", "e2e-cel-policy", "-n", namespace, "--type=json", "-p", validPatch)
+
+			mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+				mcpResponse{
+					StatusCode: 200,
+					Body: respBody{
+						JSONRPC: "2.0",
+						Result: &mcpResult{
+							IsError: false,
+							Content: []mcpContent{
+								{
+									Type: "text",
+									Text: "The sum of 2 and 3 is 5.",
+								},
+							},
+						},
+					},
+				},
+			)
+
+			// 2. Failure Path: Patch to invalid expression
+			failPatch := `[{"op": "replace", "path": "/spec/rules/0/authorization/cel/expression", "value": "` + tc.failExpression + `"}]`
+			runKubectl(t, "patch", "xaccesspolicy", "e2e-cel-policy", "-n", namespace, "--type=json", "-p", failPatch)
+
+			mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
+				mcpResponse{
+					StatusCode: 200,
+					Body: respBody{
+						JSONRPC: "2.0",
+						Error: &mcpError{
+							Code:    403,
+							Message: "Access to this tool is forbidden.",
+						},
+					},
+				},
+			)
+		}
+	})
 }
 
 // TestExternalAuthE2E verifies the ExternalAuth authorization feature including:

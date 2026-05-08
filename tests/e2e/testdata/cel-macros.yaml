@@ -1,0 +1,23 @@
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: e2e-cel-macros
+  namespace: e2e-test-ns
+spec:
+  targetRefs:
+  - group: agentic.networking.x-k8s.io
+    kind: XBackend
+    name: e2e-mcp-backend
+  rules:
+  - name: allow-macros
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: e2e-tester-sa
+    authorization:
+      type: CEL
+      cel:
+        expression: >-
+          request.path.startsWith('/mc') &&
+          request.headers['mcp-protocol-version'].contains('2025') &&
+          request.mcp.tool_name.matches('^get-[a-z]+$')

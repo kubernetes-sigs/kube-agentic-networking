@@ -249,6 +249,16 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
 					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 				}
+			case agenticv0alpha0.AuthorizationRuleTypeCEL:
+				if rule.Authorization.CEL != nil {
+					ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
+					if err != nil {
+						klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
+						continue
+					}
+					rbacPolicy.Condition = ast.Expr()
+					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
+				}
 			}
 		}
 
