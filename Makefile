@@ -90,11 +90,11 @@ test-e2e: ## Run full E2E tests including cluster setup and controller deploymen
 conformance: ## Run agentic-networking conformance tests.
 	$(info ...Running agentic-networking conformance tests.)
 	@if [ -z "$(GATEWAY_CLASS)" ]; then \
-		read -p "Enter Gateway Class Name: " gwclass; \
-		go test -v ./conformance -run TestConformance -args --gateway-class=$$gwclass --cleanup-base-resources=false; \
-	else \
-		go test -v ./conformance -run TestConformance -args --gateway-class="$(GATEWAY_CLASS)" --cleanup-base-resources=false; \
+		echo "Error: GATEWAY_CLASS environment variable is not set." >&2; \
+		echo "Please set it, e.g., GATEWAY_CLASS=kube-agentic-networking make conformance" >&2; \
+		exit 1; \
 	fi
+	go test -v ./conformance -run TestConformance -args --gateway-class="$(GATEWAY_CLASS)" --cleanup-base-resources=false
 
 .PHONY: test-gateway-api-conformance
 test-gateway-api-conformance: ## Run full Gateway API conformance tests including cluster setup and controller deployment.

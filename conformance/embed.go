@@ -18,5 +18,5 @@ package conformance
 
 import "embed"
 
-//go:embed *
+//go:embed resources tests/*
 var Manifests embed.FS

@@ -69,7 +69,7 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 		Clientset:            cs,
 		RestConfig:           cfg,
 		GatewayClassName:     *confflags.GatewayClassName,
-		BaseManifests:        "resources/base.yaml",
+		BaseManifests:        "resources/base.yaml.tmpl",
 		Debug:                *confflags.ShowDebug,
 		CleanupBaseResources: *confflags.CleanupBaseResources,
 		SupportedFeatures:    sets.New(features.AgenticCoreFeatures.UnsortedList()...),
