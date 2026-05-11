@@ -1,4 +1,4 @@
-//go:build conformance
+//go:build gatewayconformance
 
 /*
 Copyright The Kubernetes Authors.
@@ -16,7 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package conformance
+package gatewayconformance
 
 import (
 	"flag"
@@ -70,10 +70,10 @@ func conformanceOpts(t *testing.T) suite.ConformanceOptions {
 	opts := conformance.DefaultOptions(t)
 	opts.SkipTests = skipTestsShortNames(SkipTests)
 	opts.SupportedFeatures = sets.New(
-			features.SupportGateway,
-			features.SupportReferenceGrant,
-			features.SupportHTTPRoute,
-		)
+		features.SupportGateway,
+		features.SupportReferenceGrant,
+		features.SupportHTTPRoute,
+	)
 
 	opts.TimeoutConfig = config.DefaultTimeoutConfig()
 	opts.FailFast = true

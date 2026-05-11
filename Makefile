@@ -17,7 +17,6 @@
 
 # Enable Go modules.
 export GO111MODULE=on
-export GOWORK=off
 # Warn if undefined variables are referenced.
 MAKEFLAGS += --warn-undefined-variablesm
 
@@ -67,23 +66,34 @@ test: test-unit test-cel test-crd ## Run all tests.
 .PHONY: test-unit
 test-unit: ## Run unit tests.
 	$(info ...Running unit tests.)
-	# Only run tests for packages that actually contain test files to avoid warnings and wasted cycles.
-	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./... | xargs go test -race -cover
+	go test -race ./api/... ./pkg/...
 
 .PHONY: test-cel
 test-cel: ## Run CEL tests.
 	$(info ...Running CEL tests.)
-	cd tests && go test -v ./cel/...
+	go test -v ./tests/cel/...
 
 .PHONY: test-crd
 test-crd: ## Run CRD tests.
 	$(info ...Running CRD tests.)
-	cd tests && go test -v ./crd/...
+	go test -v ./tests/crd/...
 
 .PHONY: test-e2e
 test-e2e: ## Run full E2E tests including cluster setup and controller deployment.
 	$(info ...Running full E2E pipeline (setup + test).)
 	./dev/ci/run-e2e.sh
+
+## The below role tests against an existing kubernetes cluster, (using current context). 
+## The expectation is that you have the an agentic-netwokring gateway implementation installed. 
+.PHONY: conformance
+conformance: ## Run agentic-networking conformance tests.
+	$(info ...Running agentic-networking conformance tests.)
+	@if [ -z "$(GATEWAY_CLASS)" ]; then \
+		echo "Error: GATEWAY_CLASS environment variable is not set." >&2; \
+		echo "Please set it, e.g., GATEWAY_CLASS=kube-agentic-networking make conformance" >&2; \
+		exit 1; \
+	fi
+	go test -v ./conformance -run TestConformance -args --gateway-class="$(GATEWAY_CLASS)" --cleanup-base-resources=false
 
 .PHONY: test-gateway-api-conformance
 test-gateway-api-conformance: ## Run full Gateway API conformance tests including cluster setup and controller deployment.
