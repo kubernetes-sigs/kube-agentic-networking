@@ -66,8 +66,7 @@ test: test-unit test-cel test-crd ## Run all tests.
 .PHONY: test-unit
 test-unit: ## Run unit tests.
 	$(info ...Running unit tests.)
-	# Only run tests for packages that actually contain test files to avoid warnings and wasted cycles.
-	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./... | xargs go test -race -cover
+	go test -race ./api/... ./pkg/...
 
 .PHONY: test-cel
 test-cel: ## Run CEL tests.
