@@ -2,7 +2,7 @@
 # The image will be pushed to https://console.cloud.google.com/artifacts/docker/k8s-staging-images/us-central1/agentic-net.
 
 # This will be overridden at build time by makefile to .go-version
-ARG GO_VERSION=1.25.5
+ARG GO_VERSION=1.26.0
 FROM golang:${GO_VERSION} AS builder
 
 WORKDIR /workspace
