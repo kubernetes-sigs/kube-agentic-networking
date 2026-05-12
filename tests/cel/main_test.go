@@ -27,10 +27,8 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -66,19 +64,16 @@ func TestMain(m *testing.M) {
 		// If the envvar is not passed, the latest GA will be used
 		k8sVersion := os.Getenv("K8S_VERSION")
 
-		// TODO: Revert to standard envtest.CRDInstallOptions{Paths: []string{...}} instead of custom loadAndModifyCRDs
-		// once XAccessPolicy v1alpha1 is fully implemented and flipped to `served: true` in the manifests.
-		var crds []*apiextensionsv1.CustomResourceDefinition
-		crds, err = loadAndModifyCRDs(filepath.Join("..", "..", "k8s", "crds"))
-		if err != nil {
-			panic(fmt.Sprintf("Failed to load and modify CRDs: %v", err))
-		}
-
 		testEnv = &envtest.Environment{
-			Scheme:                      scheme,
-			CRDs:                        crds,
-			ErrorIfCRDPathMissing:       true,
-			DownloadBinaryAssets:        true,
+			Scheme: scheme,
+			CRDInstallOptions: envtest.CRDInstallOptions{
+				Paths: []string{
+					filepath.Join("..", "..", "k8s", "crds"),
+				},
+				CleanUpAfterUse: true,
+			},
+			ErrorIfCRDPathMissing: true,
+			DownloadBinaryAssets:  true,
 			DownloadBinaryAssetsVersion: k8sVersion,
 		}
 
@@ -103,44 +98,6 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(rc)
-}
-
-func loadAndModifyCRDs(dir string) ([]*apiextensionsv1.CustomResourceDefinition, error) {
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	var crds []*apiextensionsv1.CustomResourceDefinition
-	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".yaml") {
-			continue
-		}
-
-		path := filepath.Join(dir, file.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-
-		crd := &apiextensionsv1.CustomResourceDefinition{}
-		if err := yaml.Unmarshal(data, crd); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal CRD from %s: %w", path, err)
-		}
-
-		// If this is the XAccessPolicy CRD, activate v1alpha1 for CEL testing
-		if crd.Name == "xaccesspolicies.agentic.networking.x-k8s.io" {
-			for i, version := range crd.Spec.Versions {
-				if version.Name == "v1alpha1" {
-					crd.Spec.Versions[i].Served = true
-				}
-			}
-		}
-
-		crds = append(crds, crd)
-	}
-
-	return crds, nil
 }
 
 func ptrTo[T any](a T) *T {

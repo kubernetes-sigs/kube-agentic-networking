@@ -132,12 +132,9 @@ BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 .PHONY: generate
 generate: manifests deepcopy register clientsets ## Generate manifests, deepcopy code, and clientsets.
 
-# TODO: Remove the python post-processing patch once XAccessPolicy v1alpha1 is fully implemented
-# and flipped to `served: true` instead of v0alpha0.
 .PHONY: manifests
 manifests: controller-gen ## Generate CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./api/..." output:crd:artifacts:config=k8s/crds
-	python3 -c "p='k8s/crds/agentic.networking.x-k8s.io_xaccesspolicies.yaml'; text=open(p).read(); parts=text.split('  - name: v1alpha1'); parts[1]=parts[1].replace('    served: true', '    served: false', 1); open(p,'w').write('  - name: v1alpha1'.join(parts))" 
 
 .PHONY: deepcopy
 deepcopy: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
