@@ -42,8 +42,8 @@ spec:
       name: authorino
       namespace: e2e-test-ns
       port: 50051
-    externalAuthProtocol: GRPC
-    grpcAuthConfig: {}
+    protocol: GRPC
+    grpc: {}
   rules:
     - name: external-auth-for-tester-2-sa
       source:

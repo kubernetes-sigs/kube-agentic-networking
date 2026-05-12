@@ -151,8 +151,8 @@ spec:
       name: authorino-authorino-authorization
       namespace: authorino-operator
       port: 50051
-    externalAuthProtocol: GRPC
-    grpcAuthConfig: {}
+    protocol: GRPC
+    grpc: {}
   rules:
     - name: ext-authorizer-for-adk-agent-sa
       source:
