@@ -1,4 +1,4 @@
-apiVersion: agentic.networking.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: e2e-gateway-extauth-policy
@@ -8,17 +8,19 @@ spec:
   - group: gateway.networking.k8s.io
     kind: Gateway
     name: e2e-gateway
+  action: ExternalAuth
+  externalAuth:
+    backendRef:
+      kind: Service
+      name: authorino
+      namespace: e2e-test-ns
+      port: 50051
+    externalAuthProtocol: GRPC
+    grpcAuthConfig: {}
   rules:
   - name: ext-authz-rule
     source:
       type: ServiceAccount
-    authorization:
-      type: ExternalAuth
-      externalAuth:
-        backendRef:
-          kind: Service
-          name: authorino
-          namespace: e2e-test-ns
-          port: 50051
-        protocol: GRPC
-        grpc: {}
+      serviceAccount:
+        name: e2e-tester-sa
+        namespace: e2e-test-ns

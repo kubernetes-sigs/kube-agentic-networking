@@ -18,6 +18,7 @@ package translator
 
 import (
 	"fmt"
+	"sort"
 
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -31,8 +32,9 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
-	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0/helpers"
+	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+	helpersv1alpha1 "sigs.k8s.io/kube-agentic-networking/pkg/helpers"
 )
 
 // buildGatewayLevelRBACFilters finds all AccessPolicies targeting the Gateway and translates them into HTTP filters.
@@ -42,7 +44,14 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
 	}
 	var filters []*hcm.HttpFilter
+	var extAuthPolicy *agenticv1alpha1.XAccessPolicy
 	for i, policy := range gwPolicies {
+		if policy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
+			if extAuthPolicy != nil {
+				continue // Keep only the oldest ExternalAuth policy
+			}
+			extAuthPolicy = policy
+		}
 		// Build the RBAC config for this policy
 		rbacProto := t.buildRBACConfigWithCommonPolicies(policy)
 		rbacAny, err := anypb.New(rbacProto)
@@ -132,7 +141,14 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 		return nil, err
 	}
 
+	var extAuthPolicy *agenticv1alpha1.XAccessPolicy
 	for i, policy := range backendPolicies {
+		if policy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
+			if extAuthPolicy != nil {
+				continue // Keep only the oldest ExternalAuth policy
+			}
+			extAuthPolicy = policy
+		}
 		// Envoy's per-cluster configuration requires an RBACPerRoute message containing
 		// RBAC rules derived from AccessPolicy resources targeting this backend.
 		rbacConfig := t.buildRBACConfigWithCommonPolicies(policy)
@@ -155,7 +171,7 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 
 // buildRBACConfigWithCommonPolicies generates an RBAC config for an AccessPolicy.
 // It includes the common policies needed for MCP session management to avoid blocking basic operations.
-func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
+func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
 	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy)
 
 	// Add common policies to avoid blocking basic MCP operations.
@@ -171,17 +187,17 @@ func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv0al
 // It returns only accepted policies.
 // TODO: Indexing AccessPolicies by their target refs for more efficient lookups.
 // https://github.com/kubernetes-sigs/kube-agentic-networking/issues/168
-func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name string) ([]*agenticv0alpha0.XAccessPolicy, error) {
+func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name string) ([]*agenticv1alpha1.XAccessPolicy, error) {
 	// List all AccessPolicies in the target's namespace.
 	allAccessPolicies, err := t.accessPolicyLister.XAccessPolicies(namespace).List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AccessPolicies in namespace %s: %w", namespace, err)
 	}
 
-	var policies []*agenticv0alpha0.XAccessPolicy
+	var policies []*agenticv1alpha1.XAccessPolicy
 	for _, accessPolicy := range allAccessPolicies {
 		// Only consider policies that have been accepted by the controller.
-		if !helpers.IsXAccessPolicyAccepted(accessPolicy) {
+		if !helpersv1alpha1.IsXAccessPolicyAccepted(accessPolicy) {
 			continue
 		}
 
@@ -193,6 +209,11 @@ func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name st
 		}
 	}
 
+	// Sort policies by creation timestamp (oldest first)
+	sort.Slice(policies, func(i, j int) bool {
+		return policies[i].CreationTimestamp.Time.Before(policies[j].CreationTimestamp.Time)
+	})
+
 	return policies, nil
 }
 
@@ -202,7 +223,7 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 	return fmt.Sprintf(constants.SpiffeIDFormat, trustDomain, namespace, saName)
 }
 
-func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.XAccessPolicy) *rbacv3.RBAC {
+func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
 
 	// Each AccessRule in the XAccessPolicy is translated into a named policy within the Envoy RBAC filter.
@@ -234,22 +255,12 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 
 		if rule.Authorization != nil {
 			switch rule.Authorization.Type {
-			case agenticv0alpha0.AuthorizationRuleTypeInlineTools:
-				if permission := translateInlineToolsToRBACPermission(rule.Authorization.Tools); permission != nil {
+			case agenticv1alpha1.AuthorizationRuleTypeInline:
+				// TODO: Only MCP is currently supported. Add support for more generic inline auth in the future
+				if permission := t.translateMCPToRBACPermission(&rule.Authorization.MCP); permission != nil {
 					rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
 				}
-			case agenticv0alpha0.AuthorizationRuleTypeExternalAuth:
-				if rule.Authorization.ExternalAuth != nil {
-					hash, err := externalAuthUniqueID(rule.Authorization.ExternalAuth)
-					if err != nil {
-						klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
-						continue
-					}
-					rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash) // a maximum of one ExternalAuth rule per policy is allowed, so we can safely set the shadow rule stat prefix at the RBAC config level
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
-					addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
-				}
-			case agenticv0alpha0.AuthorizationRuleTypeCEL:
+			case agenticv1alpha1.AuthorizationRuleTypeCEL:
 				if rule.Authorization.CEL != nil {
 					ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
 					if err != nil {
@@ -262,26 +273,164 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 			}
 		}
 
-		// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
-		// If authorization is omitted or unsupported, we default to a "Disallow tool call" permission.
-		if len(rbacPolicy.GetPermissions()) == 0 {
-			rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowToolCallPermission()}
+		// Handle ExternalAuth at policy level
+		if accessPolicy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth && accessPolicy.Spec.ExternalAuth != nil {
+			hash, err := externalAuthUniqueID(accessPolicy.Spec.ExternalAuth)
+			if err != nil {
+				klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
+				continue
+			}
+			rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash)
+			
+			// Ensure permissions is never empty for shadow rule too.
+			if len(rbacPolicy.GetPermissions()) == 0 {
+				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowAllMCPTrafficPermission()}
+			}
+			
+			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
+		} else {
+			// Action is Allow
+			// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
+			if len(rbacPolicy.GetPermissions()) == 0 {
+				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowAllMCPTrafficPermission()}
+			}
+			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
 		}
-
-		addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
 	}
 
 	return rbacConfig
 }
 
+func buildDisallowAllMCPTrafficPermission() *rbacconfigv3.Permission {
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_NotRule{
+			NotRule: &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_SourcedMetadata{
+					SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+						MetadataMatcher: &matcherv3.MetadataMatcher{
+							Filter: constants.MCPProxyFilterName,
+							Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+							Value: &matcherv3.ValueMatcher{
+								MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (t *Translator) translateMCPToRBACPermission(mcp *agenticv1alpha1.MCPAttributes) *rbacconfigv3.Permission {
+	if mcp == nil || len(mcp.Methods) == 0 {
+		return buildDisallowAllMCPTrafficPermission()
+	}
+
+	var methodPermissions []*rbacconfigv3.Permission
+	for _, method := range mcp.Methods {
+		methodPermissions = append(methodPermissions, translateMCPMethodToRBACPermission(method))
+	}
+
+	if len(methodPermissions) == 1 {
+		return methodPermissions[0]
+	}
+
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_OrRules{
+			OrRules: &rbacconfigv3.Permission_Set{
+				Rules: methodPermissions,
+			},
+		},
+	}
+}
+
+func translateMCPMethodToRBACPermission(method agenticv1alpha1.MCPMethod) *rbacconfigv3.Permission {
+	// Match method name
+	methodMatcher := &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_SourcedMetadata{
+			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+				MetadataMatcher: &matcherv3.MetadataMatcher{
+					Filter: constants.MCPProxyFilterName,
+					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+					Value:  buildMCPMethodStringMatcher(string(method.Name)),
+				},
+			},
+		},
+	}
+
+	if len(method.Params) == 0 {
+		return methodMatcher
+	}
+
+	// Match params (assuming they are values for "name")
+	var paramMatchers []*matcherv3.ValueMatcher
+	for _, param := range method.Params {
+		paramMatchers = append(paramMatchers, &matcherv3.ValueMatcher{
+			MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+				StringMatch: &matcherv3.StringMatcher{
+					MatchPattern: &matcherv3.StringMatcher_Exact{Exact: string(param)},
+				},
+			},
+		})
+	}
+
+	var paramsMatcher *matcherv3.ValueMatcher
+	if len(paramMatchers) == 1 {
+		paramsMatcher = paramMatchers[0]
+	} else {
+		paramsMatcher = &matcherv3.ValueMatcher{
+			MatchPattern: &matcherv3.ValueMatcher_OrMatch{OrMatch: &matcherv3.OrMatcher{ValueMatchers: paramMatchers}},
+		}
+	}
+
+	paramPermission := &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_SourcedMetadata{
+			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+				MetadataMatcher: &matcherv3.MetadataMatcher{
+					Filter: constants.MCPProxyFilterName,
+					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "params"}}, {Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "name"}}},
+					Value:  paramsMatcher,
+				},
+			},
+		},
+	}
+
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_AndRules{
+			AndRules: &rbacconfigv3.Permission_Set{
+				Rules: []*rbacconfigv3.Permission{methodMatcher, paramPermission},
+			},
+		},
+	}
+}
+
+func buildMCPMethodStringMatcher(name string) *matcherv3.ValueMatcher {
+	if name == "tools" || name == "prompts" || name == "resources" {
+		return &matcherv3.ValueMatcher{
+			MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+				StringMatch: &matcherv3.StringMatcher{
+					MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: name + "/"},
+				},
+			},
+		}
+	}
+	return &matcherv3.ValueMatcher{
+		MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+			StringMatch: &matcherv3.StringMatcher{
+				MatchPattern: &matcherv3.StringMatcher_Exact{Exact: name},
+			},
+		},
+	}
+}
+
 // ruleSourceToPrincipalName converts an AccessRule source into a SPIFFE ID string.
-func (t *Translator) ruleSourceToPrincipalName(policyNamespace string, source agenticv0alpha0.Source) string {
+func (t *Translator) ruleSourceToPrincipalName(policyNamespace string, source agenticv1alpha1.AccessRuleSource) string {
 	switch source.Type {
-	case agenticv0alpha0.AuthorizationSourceTypeSPIFFE:
+	case agenticv1alpha1.AuthorizationSourceTypeSPIFFE:
 		if source.SPIFFE != nil {
 			return string(*source.SPIFFE)
 		}
-	case agenticv0alpha0.AuthorizationSourceTypeServiceAccount:
+	case agenticv1alpha1.AuthorizationSourceTypeServiceAccount:
 		if source.ServiceAccount != nil {
 			ns := source.ServiceAccount.Namespace
 			if ns == "" {
@@ -327,52 +476,7 @@ func buildDisallowToolCallPermission() *rbacconfigv3.Permission {
 	}
 }
 
-func translateInlineToolsToRBACPermission(tools []string) *rbacconfigv3.Permission {
-	if len(tools) == 0 {
-		return buildDisallowToolCallPermission()
-	}
 
-	var toolValueMatchers []*matcherv3.ValueMatcher
-	for _, tool := range tools {
-		toolValueMatchers = append(toolValueMatchers, &matcherv3.ValueMatcher{
-			MatchPattern: &matcherv3.ValueMatcher_StringMatch{
-				StringMatch: &matcherv3.StringMatcher{
-					MatchPattern: &matcherv3.StringMatcher_Exact{Exact: tool},
-				},
-			},
-		})
-	}
-
-	var toolsMatcher *matcherv3.ValueMatcher
-	if len(toolValueMatchers) == 1 {
-		toolsMatcher = toolValueMatchers[0]
-	} else {
-		toolsMatcher = &matcherv3.ValueMatcher{
-			MatchPattern: &matcherv3.ValueMatcher_OrMatch{OrMatch: &matcherv3.OrMatcher{ValueMatchers: toolValueMatchers}},
-		}
-	}
-
-	return &rbacconfigv3.Permission{
-		Rule: &rbacconfigv3.Permission_AndRules{
-			AndRules: &rbacconfigv3.Permission_Set{
-				Rules: []*rbacconfigv3.Permission{
-					buildToolsCallMethodPermission(),
-					{
-						Rule: &rbacconfigv3.Permission_SourcedMetadata{
-							SourcedMetadata: &rbacconfigv3.SourcedMetadata{
-								MetadataMatcher: &matcherv3.MetadataMatcher{
-									Filter: constants.MCPProxyFilterName,
-									Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "params"}}, {Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "name"}}},
-									Value:  toolsMatcher,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
 
 // buildAllowMCPSessionClosePolicy creates the RBAC policy that allows agents to close MCP sessions.
 func buildAllowMCPSessionClosePolicy() *rbacconfigv3.Policy {

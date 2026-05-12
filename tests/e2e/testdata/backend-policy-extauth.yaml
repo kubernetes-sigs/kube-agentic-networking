@@ -1,13 +1,14 @@
-apiVersion: agentic.networking.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
-  name: e2e-backend-combined-policy
+  name: e2e-backend-allow-policy
   namespace: e2e-test-ns
 spec:
   targetRefs:
     - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: e2e-mcp-backend
+  action: Allow
   rules:
     - name: inline-tools-for-tester-sa
       source:
@@ -16,23 +17,37 @@ spec:
           name: e2e-tester-sa
           namespace: e2e-test-ns
       authorization:
-        type: InlineTools
-        tools:
-          - "echo"
-          - "get-sum"
+        type: Inline
+        mcp:
+          methods:
+            - name: tools/call
+              params:
+                - "echo"
+                - "get-sum"
+---
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
+kind: XAccessPolicy
+metadata:
+  name: e2e-backend-extauth-policy
+  namespace: e2e-test-ns
+spec:
+  targetRefs:
+    - group: agentic.networking.x-k8s.io
+      kind: XBackend
+      name: e2e-mcp-backend
+  action: ExternalAuth
+  externalAuth:
+    backendRef:
+      kind: Service
+      name: authorino
+      namespace: e2e-test-ns
+      port: 50051
+    externalAuthProtocol: GRPC
+    grpcAuthConfig: {}
+  rules:
     - name: external-auth-for-tester-2-sa
       source:
         type: ServiceAccount
         serviceAccount:
           name: e2e-tester-2-sa
           namespace: e2e-test-ns
-      authorization:
-        type: ExternalAuth
-        externalAuth:
-          backendRef:
-            kind: Service
-            name: authorino
-            namespace: e2e-test-ns
-            port: 50051
-          protocol: GRPC
-          grpc: {}

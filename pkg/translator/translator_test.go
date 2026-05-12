@@ -44,6 +44,7 @@ import (
 	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/fake"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
@@ -101,7 +102,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 		gw         *gatewayv1.Gateway
 		backend    *agenticv0alpha0.XBackend
 		routes     []*gatewayv1.HTTPRoute
-		policies   []*agenticv0alpha0.XAccessPolicy
+		policies   []*agenticv1alpha1.XAccessPolicy
 		mcpSvc     *corev1.Service
 		secrets    []runtime.Object
 		configMaps []runtime.Object
@@ -114,7 +115,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			routes: []*gatewayv1.HTTPRoute{
 				newTestHTTPRoute("httproute-local-mcp", ns, "agentic-net-gateway", "local-mcp-backend"),
 			},
-			policies: []*agenticv0alpha0.XAccessPolicy{
+			policies: []*agenticv1alpha1.XAccessPolicy{
 				newTestAccessPolicy("auth-policy-local-mcp", ns, "local-mcp-backend", "XBackend", "spiffe://cluster.local/ns/quickstart-ns/sa/adk-agent-sa"),
 			},
 			mcpSvc: newTestService("local-mcp-backend-svc", ns, 3001),
@@ -176,7 +177,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			routes: []*gatewayv1.HTTPRoute{
 				newTestHTTPRoute("multi-policy-route", ns, "multi-policy-gw", "multi-policy-backend"),
 			},
-			policies: []*agenticv0alpha0.XAccessPolicy{
+			policies: []*agenticv1alpha1.XAccessPolicy{
 				newTestAccessPolicy("gw-policy", ns, "multi-policy-gw", "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 				newTestAccessPolicy("backend-policy", ns, "multi-policy-backend", "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2"),
 			},
@@ -407,7 +408,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			routes: []*gatewayv1.HTTPRoute{
 				newTestHTTPRoute("cert-only-route", ns, "cert-only-gw", "cert-only-backend"),
 			},
-			policies: []*agenticv0alpha0.XAccessPolicy{
+			policies: []*agenticv1alpha1.XAccessPolicy{
 				newTestAccessPolicy("cert-only-policy", ns, "cert-only-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 			},
 			mcpSvc: newTestService("cert-only-backend-svc", ns, 3001),
@@ -490,7 +491,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			routes: []*gatewayv1.HTTPRoute{
 				newTestHTTPRoute("cert-ca-route", ns, "cert-ca-gw", "cert-ca-backend"),
 			},
-			policies: []*agenticv0alpha0.XAccessPolicy{
+			policies: []*agenticv1alpha1.XAccessPolicy{
 				newTestAccessPolicy("cert-ca-policy", ns, "cert-ca-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 			},
 			mcpSvc: newTestService("cert-ca-backend-svc", ns, 3001),
@@ -576,7 +577,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			routes: []*gatewayv1.HTTPRoute{
 				newTestHTTPRoute("ca-only-route", ns, "ca-only-gw", "ca-only-backend"),
 			},
-			policies: []*agenticv0alpha0.XAccessPolicy{
+			policies: []*agenticv1alpha1.XAccessPolicy{
 				newTestAccessPolicy("ca-only-policy", ns, "ca-only-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 			},
 			mcpSvc: newTestService("ca-only-backend-svc", ns, 3001),
@@ -658,7 +659,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			routes: []*gatewayv1.HTTPRoute{
 				newTestHTTPRoute("per-port-ca-route", ns, "per-port-ca-gw", "per-port-ca-backend"),
 			},
-			policies: []*agenticv0alpha0.XAccessPolicy{
+			policies: []*agenticv1alpha1.XAccessPolicy{
 				newTestAccessPolicy("per-port-ca-policy", ns, "per-port-ca-backend", "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 			},
 			mcpSvc: newTestService("per-port-ca-backend-svc", ns, 3001),
@@ -769,7 +770,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				gwInformerFactory.Gateway().V1().Gateways().Lister(),
 				gwInformerFactory.Gateway().V1().HTTPRoutes().Lister(),
 				nil, // referenceGrantLister
-				agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Lister(),
+				agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister(),
 				agenticInformerFactory.Agentic().V0alpha0().XBackends().Lister(),
 			)
 
@@ -785,7 +786,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				_ = agenticInformerFactory.Agentic().V0alpha0().XBackends().Informer().GetIndexer().Add(tc.backend)
 			}
 			for _, p := range tc.policies {
-				_ = agenticInformerFactory.Agentic().V0alpha0().XAccessPolicies().Informer().GetIndexer().Add(p)
+				_ = agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Add(p)
 			}
 			for _, obj := range tc.secrets {
 				if secret, ok := obj.(*corev1.Secret); ok {

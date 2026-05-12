@@ -185,7 +185,7 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
    Your `auth-policy-local-mcp` section should look like this:
 
    ```yaml
-   apiVersion: agentic.networking.x-k8s.io/v0alpha0
+   apiVersion: agentic.networking.x-k8s.io/v1alpha1
    kind: XAccessPolicy
    metadata:
      name: auth-policy-local-mcp
@@ -201,10 +201,13 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
            serviceAccount:
              name: adk-agent-sa
          authorization:
-           type: InlineTools
-           tools:
-             - "get-tiny-image"
-             - "echo" # Now allowed!
+           type: Inline
+           mcp:
+             methods:
+               - name: tools/call
+                 params:
+                   - "get-tiny-image"
+                   - "echo" # Now allowed!
    ```
 
 2. **Apply the updated policy**:
