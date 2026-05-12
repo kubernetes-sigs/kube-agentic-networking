@@ -36,9 +36,9 @@ import (
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
-	helpersv1alpha1 "sigs.k8s.io/kube-agentic-networking/pkg/helpers"
 	agenticinformersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+	helpersv1alpha1 "sigs.k8s.io/kube-agentic-networking/pkg/helpers"
 	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
 
@@ -262,8 +262,6 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 	return shouldAccept
 }
 
-
-
 // seniorPoliciesAtLimit returns true if the number of policies with higher seniority
 // targeting the same resource has already reached the configured maximum limit.
 func (c *Controller) seniorPoliciesAtLimit(policy *agenticv1alpha1.XAccessPolicy, allPoliciesForTarget []*agenticv1alpha1.XAccessPolicy) bool {
@@ -374,4 +372,3 @@ func (c *Controller) rejectPolicyForAllTargets(ctx context.Context, policy *agen
 		}
 	}
 }
-

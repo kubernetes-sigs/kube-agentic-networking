@@ -653,35 +653,6 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 	}, nil
 }
 
-func (t *Translator) isAccessPolicyAttachedToGateway(ap *v1alpha1.XAccessPolicy, gateway *gatewayv1.Gateway) bool {
-	for _, targetRef := range ap.Spec.TargetRefs {
-		if (targetRef.Group == "" || targetRef.Group == gatewayv1.GroupName) && targetRef.Kind == "Gateway" && string(targetRef.Name) == gateway.Name {
-			return true
-		}
-	}
-	routes := t.getHTTPRoutesForGateway(gateway)
-	for _, targetRef := range ap.Spec.TargetRefs {
-		if targetRef.Group == v0alpha0.GroupName && targetRef.Kind == "XBackend" {
-			for _, route := range routes {
-				for _, rule := range route.Spec.Rules {
-					for _, beRef := range rule.BackendRefs {
-						if beRef.Group != nil && *beRef.Group == v0alpha0.GroupName && beRef.Kind != nil && *beRef.Kind == "XBackend" {
-							ns := route.Namespace
-							if beRef.Namespace != nil {
-								ns = string(*beRef.Namespace)
-							}
-							if ns == ap.Namespace && string(beRef.Name) == string(targetRef.Name) {
-								return true
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return false
-}
-
 // buildDownstreamTLSContext configures TLS for the downstream (client-to-gateway) connection.
 func buildDownstreamTLSContext(lis gatewayv1.Listener, gateway *gatewayv1.Gateway) (*anypb.Any, error) {
 	certRef, caRef, hasMultipleCerts, hasMultipleCAs := extractCertificateRefs(gateway, lis)

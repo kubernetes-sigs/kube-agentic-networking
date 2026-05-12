@@ -72,8 +72,8 @@ func TestMain(m *testing.M) {
 				},
 				CleanUpAfterUse: true,
 			},
-			ErrorIfCRDPathMissing: true,
-			DownloadBinaryAssets:  true,
+			ErrorIfCRDPathMissing:       true,
+			DownloadBinaryAssets:        true,
 			DownloadBinaryAssetsVersion: k8sVersion,
 		}
 

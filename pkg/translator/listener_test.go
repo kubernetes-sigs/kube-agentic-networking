@@ -608,7 +608,6 @@ func TestBuildExtAuthzFiltersOldestFirst(t *testing.T) {
 	}
 }
 
-
 func TestValidateListeners(t *testing.T) {
 	ns := "test-ns"
 	gwName := "test-gw"

@@ -8,6 +8,7 @@ spec:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: e2e-gateway
+  action: Allow
   rules:
     - name: allow-echo
       source:

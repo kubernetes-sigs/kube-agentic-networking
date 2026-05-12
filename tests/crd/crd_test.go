@@ -59,8 +59,8 @@ func TestCRDValidation(t *testing.T) {
 				},
 				CleanUpAfterUse: true,
 			},
-			ErrorIfCRDPathMissing: true,
-			DownloadBinaryAssets:  true,
+			ErrorIfCRDPathMissing:       true,
+			DownloadBinaryAssets:        true,
 			DownloadBinaryAssetsVersion: k8sVersion,
 		}
 

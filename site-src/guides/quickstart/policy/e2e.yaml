@@ -48,6 +48,7 @@ spec:
     - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: local-mcp-backend
+  action: Allow
   rules:
     - name: tools-for-adk-agent-sa
       source:
@@ -74,6 +75,7 @@ spec:
     - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
+  action: Allow
   rules:
     - name: tools-for-adk-agent-sa
       source:

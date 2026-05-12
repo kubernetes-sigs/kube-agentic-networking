@@ -281,12 +281,12 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 				continue
 			}
 			rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash)
-			
+
 			// Ensure permissions is never empty for shadow rule too.
 			if len(rbacPolicy.GetPermissions()) == 0 {
 				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowAllMCPTrafficPermission()}
 			}
-			
+
 			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 		} else {
 			// Action is Allow
@@ -464,19 +464,6 @@ func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, poli
 	}
 	rbacConfig.ShadowRules.Policies[policyName] = policy
 }
-
-// buildDisallowToolCallPermission returns a permission that matches anything EXCEPT tool calls.
-// This is used to satisfy Envoy RBAC's requirement that the permissions list must have
-// at least one item (min_items: 1) while effectively denying tool access.
-func buildDisallowToolCallPermission() *rbacconfigv3.Permission {
-	return &rbacconfigv3.Permission{
-		Rule: &rbacconfigv3.Permission_NotRule{
-			NotRule: buildToolsCallMethodPermission(),
-		},
-	}
-}
-
-
 
 // buildAllowMCPSessionClosePolicy creates the RBAC policy that allows agents to close MCP sessions.
 func buildAllowMCPSessionClosePolicy() *rbacconfigv3.Policy {

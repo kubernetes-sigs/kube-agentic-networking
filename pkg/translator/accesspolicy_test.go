@@ -617,7 +617,6 @@ func TestFindAccessPoliciesForTargetSorting(t *testing.T) {
 	}
 }
 
-
 func TestConvertSAtoSPIFFEID(t *testing.T) {
 	tests := []struct {
 		trustDomain string
@@ -660,7 +659,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: func() *agenticv1alpha1.XAccessPolicy {
 				p := newTestAccessPolicy("policy-1", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
 				p.Spec.Rules[0].Authorization = &agenticv1alpha1.AuthorizationRule{
-					Type:  agenticv1alpha1.AuthorizationRuleTypeInline,
+					Type: agenticv1alpha1.AuthorizationRuleTypeInline,
 					MCP: agenticv1alpha1.MCPAttributes{
 						Methods: []agenticv1alpha1.MCPMethod{
 							{
@@ -684,7 +683,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: func() *agenticv1alpha1.XAccessPolicy {
 				p := newTestAccessPolicy("policy-2", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
 				p.Spec.Rules[0].Authorization = &agenticv1alpha1.AuthorizationRule{
-					Type:  agenticv1alpha1.AuthorizationRuleTypeInline,
+					Type: agenticv1alpha1.AuthorizationRuleTypeInline,
 					MCP: agenticv1alpha1.MCPAttributes{
 						Methods: []agenticv1alpha1.MCPMethod{},
 					},
@@ -724,7 +723,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 								},
 							},
 							Authorization: &agenticv1alpha1.AuthorizationRule{
-								Type:  agenticv1alpha1.AuthorizationRuleTypeInline,
+								Type: agenticv1alpha1.AuthorizationRuleTypeInline,
 								MCP: agenticv1alpha1.MCPAttributes{
 									Methods: []agenticv1alpha1.MCPMethod{
 										{
@@ -745,7 +744,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 								}(),
 							},
 							Authorization: &agenticv1alpha1.AuthorizationRule{
-								Type:  agenticv1alpha1.AuthorizationRuleTypeInline,
+								Type: agenticv1alpha1.AuthorizationRuleTypeInline,
 								MCP: agenticv1alpha1.MCPAttributes{
 									Methods: []agenticv1alpha1.MCPMethod{
 										{
@@ -786,7 +785,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 								},
 							},
 							Authorization: &agenticv1alpha1.AuthorizationRule{
-								Type:  agenticv1alpha1.AuthorizationRuleTypeInline,
+								Type: agenticv1alpha1.AuthorizationRuleTypeInline,
 								MCP: agenticv1alpha1.MCPAttributes{
 									Methods: []agenticv1alpha1.MCPMethod{
 										{
@@ -843,7 +842,6 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			},
 			expectShadowStatPrefix: true,
 		},
-
 	}
 
 	for _, tc := range tests {
@@ -860,8 +858,6 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 		})
 	}
 }
-
-
 
 func TestBuildAllowMCPSessionClosePolicy(t *testing.T) {
 	policy := buildAllowMCPSessionClosePolicy()
