@@ -182,17 +182,14 @@ type AuthorizationRule struct {
 
 	// CEL specifies a CEL expression for authorization.
 	// +optional
-	CEL *CELRule `json:"cel,omitempty"`
+	CEL *AccessPolicyCELRule `json:"cel,omitempty"`
 }
 
-// CELRule specifies a CEL expression for authorization.
-type CELRule struct {
+// AccessPolicyCELRule specifies a CEL expression for authorization.
+type AccessPolicyCELRule struct {
 	// Expression is the CEL expression to evaluate.
 	// +required
 	Expression string `json:"expression"`
-	// Message is the custom error message to return if the expression evaluates to false.
-	// +optional
-	Message string `json:"message,omitempty"`
 }
 
 // MCPAttributes defines the protocol-specific attributes for MCP authorization.

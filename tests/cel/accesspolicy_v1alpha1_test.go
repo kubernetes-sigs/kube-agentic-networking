@@ -223,7 +223,7 @@ func TestValidateXAccessPolicyV1Alpha1(t *testing.T) {
 			mutate: func(p *v1alpha1.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v1alpha1.AuthorizationRule{
 					Type: v1alpha1.AuthorizationRuleTypeCEL,
-					CEL: &v1alpha1.CELRule{
+					CEL: &v1alpha1.AccessPolicyCELRule{
 						Expression: "request.mcp.tool_name.startsWith('verify_')",
 					},
 				}
@@ -243,7 +243,7 @@ func TestValidateXAccessPolicyV1Alpha1(t *testing.T) {
 			mutate: func(p *v1alpha1.XAccessPolicy) {
 				p.Spec.Rules[0].Authorization = &v1alpha1.AuthorizationRule{
 					Type: v1alpha1.AuthorizationRuleTypeInline,
-					CEL: &v1alpha1.CELRule{
+					CEL: &v1alpha1.AccessPolicyCELRule{
 						Expression: "true",
 					},
 				}

@@ -306,6 +306,9 @@ func TestTranslateListenerToFilterChain(t *testing.T) {
 func TestBuildHTTPFilters(t *testing.T) {
 	ns := "test-ns"
 	gwName := "test-gw"
+	now := metav1.Now()
+	past := metav1.NewTime(now.Add(-1 * time.Hour))
+	future := metav1.NewTime(now.Add(1 * time.Hour))
 
 	tests := []struct {
 		name     string
@@ -391,12 +394,29 @@ func TestBuildHTTPFilters(t *testing.T) {
 				newTestHTTPRoute("route-1", ns, gwName, "backend-1"),
 			},
 			policies: []runtime.Object{
-				newTestAccessPolicy("gw-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
-				newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2"),
-				newTestAccessPolicy("be-policy-1", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns3/sa/sa3"),
-				newTestAccessPolicy("be-policy-2", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns4/sa/sa4"),
+				func() *agenticv1alpha1.XAccessPolicy {
+					p := newTestAccessPolicy("gw-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.CreationTimestamp = past
+					return p
+				}(),
+				func() *agenticv1alpha1.XAccessPolicy {
+					p := newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.CreationTimestamp = now
+					return p
+				}(),
+				func() *agenticv1alpha1.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-1", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns3/sa/sa3")
+					p.CreationTimestamp = past
+					return p
+				}(),
+				func() *agenticv1alpha1.XAccessPolicy {
+					p := newTestAccessPolicy("be-policy-2", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns4/sa/sa4")
+					p.CreationTimestamp = now
+					return p
+				}(),
 				func() *agenticv1alpha1.XAccessPolicy {
 					p := newTestAccessPolicy("ext-auth-policy-1", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+					p.CreationTimestamp = future
 					p.Spec.Rules[0].Name = "ext-rule-1"
 					p.Spec.Action = agenticv1alpha1.ActionTypeExternalAuth
 					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
@@ -409,6 +429,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 				}(),
 				func() *agenticv1alpha1.XAccessPolicy {
 					p := newTestAccessPolicy("ext-auth-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.CreationTimestamp = future
 					p.Spec.Rules[0].Name = "ext-rule-2"
 					p.Spec.Action = agenticv1alpha1.ActionTypeExternalAuth
 					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
@@ -421,6 +442,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 				}(),
 				func() *agenticv1alpha1.XAccessPolicy {
 					p := newTestAccessPolicy("ext-auth-policy-3", ns, "backend-1", "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2")
+					p.CreationTimestamp = future
 					p.Spec.Rules[0].Name = "ext-rule-1"
 					p.Spec.Action = agenticv1alpha1.ActionTypeExternalAuth
 					p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{ // same ExternalAuth values as ext-auth-policy-2

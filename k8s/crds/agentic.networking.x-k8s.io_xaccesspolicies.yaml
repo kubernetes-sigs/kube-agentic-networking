@@ -1083,10 +1083,6 @@ spec:
                             expression:
                               description: Expression is the CEL expression to evaluate.
                               type: string
-                            message:
-                              description: Message is the custom error message to
-                                return if the expression evaluates to false.
-                              type: string
                           required:
                           - expression
                           type: object
