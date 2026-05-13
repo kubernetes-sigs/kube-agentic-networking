@@ -116,6 +116,7 @@ func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *ag
 					Name:  gatewayv1.ObjectName(targetName),
 				},
 			}},
+			Action: agenticv1alpha1.ActionTypeAllow,
 			Rules: []agenticv1alpha1.AccessRule{{
 				Name: "rule-1",
 				Source: agenticv1alpha1.AccessRuleSource{

@@ -70,10 +70,11 @@ var (
 )
 
 type expectedRule struct {
-	principal       string
-	permissions     []string
-	isExternalAuth  bool
-	hasCelCondition bool
+	principal           string
+	permissions         []string
+	isExternalAuth      bool
+	hasCelCondition     bool
+	expectAnyPermission bool
 }
 
 func TestBuildGatewayLevelRBACFilters(t *testing.T) {
@@ -110,7 +111,6 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			gatewaysToCheck: map[string][]string{
 				gwName: {
 					fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
-					fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2),
 				},
 			},
 		},
@@ -136,7 +136,8 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 								},
 							},
 						},
-						Rules: []agenticv1alpha1.AccessRule{{Name: "rule-name"}},
+						Action: agenticv1alpha1.ActionTypeAllow,
+						Rules:  []agenticv1alpha1.AccessRule{{Name: "rule-name"}},
 					},
 					Status: acceptedStatus,
 				},
@@ -206,6 +207,7 @@ func TestBuildBackendLevelRBACFilters(t *testing.T) {
 	}
 }
 
+// TODO: this test need to change, we should measure max policies as CR policies limit and not rbac filters limit.
 func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 	ns := "test-ns"
 	gwName := "test-gw"
@@ -237,7 +239,7 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 				newTestAccessPolicy("policy-1", ns, "backend-1", "XBackend", "principal-1"),
 				newTestAccessPolicy("policy-2", ns, "backend-1", "XBackend", "principal-2"),
 			},
-			want: 2,
+			want: 1,
 		},
 		{
 			name: "two routes, multiple backends, max policies is 3",
@@ -252,7 +254,7 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 				newTestAccessPolicy("p4", ns, "backend-2", "XBackend", "pr4"),
 				newTestAccessPolicy("p5", ns, "backend-2", "XBackend", "pr5"),
 			},
-			want: 3,
+			want: 1,
 		},
 		{
 			name: "policies targeting multiple backends",
@@ -286,7 +288,7 @@ func TestCalculateMaxBackendRBACFilters(t *testing.T) {
 				},
 				newTestAccessPolicy("p1", ns, "backend-1", "XBackend", "pr1"),
 			},
-			want: 2, // backend-1 has 2 policies, backend-2 has 1 policy
+			want: 1, // backend-1 has 2 policies (merged), backend-2 has 1 policy
 		},
 	}
 
@@ -366,7 +368,6 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			backendsToCheck: map[string][]string{
 				beName: {
 					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
-					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2),
 				},
 			},
 		},
@@ -392,7 +393,8 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 								},
 							},
 						},
-						Rules: []agenticv1alpha1.AccessRule{{Name: "rule-name"}},
+						Action: agenticv1alpha1.ActionTypeAllow,
+						Rules:  []agenticv1alpha1.AccessRule{{Name: "rule-name"}},
 					},
 					Status: acceptedStatus,
 				},
@@ -692,8 +694,9 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			}(),
 			expectedRules: map[string]expectedRule{
 				"rule-1": {
-					principal:   "spiffe://example.com/ns/default/sa/caller",
-					permissions: []string{},
+					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
 				},
 			},
 		},
@@ -702,8 +705,9 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			accessPolicy: newTestAccessPolicy("policy-3", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller"),
 			expectedRules: map[string]expectedRule{
 				"rule-1": {
-					principal:   "spiffe://example.com/ns/default/sa/caller",
-					permissions: []string{},
+					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
 				},
 			},
 		},
@@ -832,12 +836,17 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					},
 				},
 			},
-			expectedRules: map[string]expectedRule{},
+			expectedRules: map[string]expectedRule{
+				"rule-ext-auth": {
+					permissions:         []string{},
+					expectAnyPermission: true,
+				},
+			},
 			expectedShadowRules: map[string]expectedRule{
 				"rule-ext-auth": {
-					principal:      "spiffe://example.com/ns/default/sa/caller",
-					permissions:    []string{},
-					isExternalAuth: false,
+					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
 				},
 			},
 			expectShadowStatPrefix: true,
@@ -972,15 +981,9 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 		return
 	}
 
-	if len(expected.permissions) == 0 {
-		// Verify it's a "Disallow all MCP traffic" permission (NotRule of present method)
-		notRule := rbacPolicy.GetPermissions()[0].GetNotRule()
-		if notRule == nil {
-			t.Fatal("expected NotRule for empty tools list")
-		}
-		methodRule := notRule.GetSourcedMetadata()
-		if methodRule == nil || !methodRule.GetMetadataMatcher().GetValue().GetPresentMatch() {
-			t.Errorf("expected 'disallow all MCP traffic' permission for empty tools list")
+	if expected.expectAnyPermission {
+		if len(rbacPolicy.GetPermissions()) != 1 || !rbacPolicy.GetPermissions()[0].GetAny() {
+			t.Errorf("expected 'Any' permission for omitted authorization")
 		}
 		return
 	}

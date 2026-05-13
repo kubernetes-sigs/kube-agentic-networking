@@ -242,6 +242,25 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 			klog.InfoS("Rejecting AccessPolicy: exceeded limit for target", "accesspolicy", klog.KObj(policy), "target", targetRef.Name, "limit", constants.MaxAccessPoliciesPerTarget)
 			break
 		}
+
+		if policy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
+			hasSeniorExtAuth := false
+			for _, p := range policies {
+				if p.Name == policy.Name {
+					continue
+				}
+				if p.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth && isMoreSenior(p, policy) {
+					hasSeniorExtAuth = true
+					break
+				}
+			}
+			if hasSeniorExtAuth {
+				shouldAccept = false
+				failureMessage = fmt.Sprintf("An older ExternalAuth AccessPolicy already exists for target %s", targetRef.Name)
+				klog.InfoS("Rejecting AccessPolicy: conflicted ExternalAuth action for target", "accesspolicy", klog.KObj(policy), "target", targetRef.Name)
+				break
+			}
+		}
 	}
 
 	// 3. Update status for all targets based on the overall result.

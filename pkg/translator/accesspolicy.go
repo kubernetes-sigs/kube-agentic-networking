@@ -43,23 +43,48 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 	if err != nil {
 		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
 	}
+
 	var filters []*hcm.HttpFilter
 	var extAuthPolicy *agenticv1alpha1.XAccessPolicy
-	for i, policy := range gwPolicies {
+	var allowPolicies []*agenticv1alpha1.XAccessPolicy
+
+	for _, policy := range gwPolicies {
 		if policy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
-			if extAuthPolicy != nil {
-				continue // Keep only the oldest ExternalAuth policy
+			if extAuthPolicy == nil {
+				extAuthPolicy = policy
 			}
-			extAuthPolicy = policy
+		} else if policy.Spec.Action == agenticv1alpha1.ActionTypeAllow {
+			allowPolicies = append(allowPolicies, policy)
 		}
-		// Build the RBAC config for this policy
-		rbacProto := t.buildRBACConfigWithCommonPolicies(policy)
+	}
+
+	filterIndex := 1
+
+	// 1. Handle ExternalAuth policy (at most one)
+	if extAuthPolicy != nil {
+		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy)
 		rbacAny, err := anypb.New(rbacProto)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, &hcm.HttpFilter{
-			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, i+1),
+			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, filterIndex),
+			ConfigType: &hcm.HttpFilter_TypedConfig{
+				TypedConfig: rbacAny,
+			},
+		})
+		filterIndex++
+	}
+
+	// 2. Handle all Allow policies (merged into one filter)
+	if len(allowPolicies) > 0 {
+		rbacProto := t.mergeAllowPoliciesToRBAC(allowPolicies)
+		rbacAny, err := anypb.New(rbacProto)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, &hcm.HttpFilter{
+			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, filterIndex),
 			ConfigType: &hcm.HttpFilter_TypedConfig{
 				TypedConfig: rbacAny,
 			},
@@ -115,14 +140,31 @@ func (t *Translator) calculateMaxBackendRBACFilters(gateway *gatewayv1.Gateway) 
 
 	maxCount := 0
 
-	// 3. For each backend, count its accepted policies.
+	// 3. For each backend, count its accepted policies after merging.
 	for beKey := range backendNames {
 		policies, err := t.findAccessPoliciesForTarget(agenticv0alpha0.GroupName, "XBackend", beKey.Namespace, beKey.Name)
 		if err != nil {
 			klog.Errorf("Failed to count policies for backend %s: %v", beKey, err)
 			continue
 		}
-		count := len(policies)
+
+		var hasAllow, hasExtAuth bool
+		for _, p := range policies {
+			if p.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
+				hasExtAuth = true
+			} else if p.Spec.Action == agenticv1alpha1.ActionTypeAllow {
+				hasAllow = true
+			}
+		}
+
+		count := 0
+		if hasExtAuth {
+			count++
+		}
+		if hasAllow {
+			count++
+		}
+
 		if count > maxCount {
 			maxCount = count
 		}
@@ -142,27 +184,46 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 	}
 
 	var extAuthPolicy *agenticv1alpha1.XAccessPolicy
-	for i, policy := range backendPolicies {
-		if policy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
-			if extAuthPolicy != nil {
-				continue // Keep only the oldest ExternalAuth policy
-			}
-			extAuthPolicy = policy
-		}
-		// Envoy's per-cluster configuration requires an RBACPerRoute message containing
-		// RBAC rules derived from AccessPolicy resources targeting this backend.
-		rbacConfig := t.buildRBACConfigWithCommonPolicies(policy)
-		rbacPerRouteProto := &rbacv3.RBACPerRoute{
-			Rbac: rbacConfig,
-		}
+	var allowPolicies []*agenticv1alpha1.XAccessPolicy
 
-		// Marshal the RBAC config into an Any proto.
+	for _, policy := range backendPolicies {
+		if policy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
+			if extAuthPolicy == nil {
+				extAuthPolicy = policy
+			}
+		} else if policy.Spec.Action == agenticv1alpha1.ActionTypeAllow {
+			allowPolicies = append(allowPolicies, policy)
+		}
+	}
+
+	filterIndex := 1
+
+	// 1. Handle ExternalAuth policy (at most one)
+	if extAuthPolicy != nil {
+		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy)
+		rbacPerRouteProto := &rbacv3.RBACPerRoute{
+			Rbac: rbacProto,
+		}
 		rbacAny, err := anypb.New(rbacPerRouteProto)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal RBACPerRoute proto: %w", err)
 		}
+		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, filterIndex)
+		perFilterConfig[filterName] = rbacAny
+		filterIndex++
+	}
 
-		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
+	// 2. Handle all Allow policies (merged into one filter)
+	if len(allowPolicies) > 0 {
+		rbacProto := t.mergeAllowPoliciesToRBAC(allowPolicies)
+		rbacPerRouteProto := &rbacv3.RBACPerRoute{
+			Rbac: rbacProto,
+		}
+		rbacAny, err := anypb.New(rbacPerRouteProto)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal RBACPerRoute proto: %w", err)
+		}
+		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, filterIndex)
 		perFilterConfig[filterName] = rbacAny
 	}
 
@@ -176,6 +237,68 @@ func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv1al
 
 	// Add common policies to avoid blocking basic MCP operations.
 	// These are added to the 'Rules' section which is where allowed traffic is defined.
+	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
+	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
+	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
+
+	return rbacConfig
+}
+
+func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
+	rbacConfig := &rbacv3.RBAC{}
+
+	for _, policy := range policies {
+		for _, rule := range policy.Spec.Rules {
+			policyName := rule.Name
+			source := t.ruleSourceToPrincipalName(policy.Namespace, rule.Source)
+
+			var principalIDs []*rbacconfigv3.Principal
+			if source != "" {
+				principalIDs = append(principalIDs, &rbacconfigv3.Principal{
+					Identifier: &rbacconfigv3.Principal_Authenticated_{
+						Authenticated: &rbacconfigv3.Principal_Authenticated{
+							PrincipalName: &matcherv3.StringMatcher{
+								MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
+							},
+						},
+					},
+				})
+			}
+			if len(principalIDs) == 0 {
+				principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
+			}
+
+			rbacPolicy := &rbacconfigv3.Policy{
+				Principals: principalIDs,
+			}
+
+			if rule.Authorization != nil {
+				switch rule.Authorization.Type {
+				case agenticv1alpha1.AuthorizationRuleTypeInline:
+					if permission := t.translateMCPToRBACPermission(&rule.Authorization.MCP); permission != nil {
+						rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
+					}
+				case agenticv1alpha1.AuthorizationRuleTypeCEL:
+					if rule.Authorization.CEL != nil {
+						ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
+						if err != nil {
+							klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
+							continue
+						}
+						rbacPolicy.Condition = ast.Expr()
+						rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
+					}
+				}
+			}
+
+			if len(rbacPolicy.GetPermissions()) == 0 {
+				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
+			}
+
+			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
+		}
+	}
+
 	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
 	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
 	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
@@ -209,8 +332,14 @@ func (t *Translator) findAccessPoliciesForTarget(group, kind, namespace, name st
 		}
 	}
 
-	// Sort policies by creation timestamp (oldest first)
+	// Sort policies by action first (ExternalAuth before Allow), then creation timestamp (oldest first). Break ties by name for deterministic output.
 	sort.Slice(policies, func(i, j int) bool {
+		if policies[i].Spec.Action != policies[j].Spec.Action {
+			return policies[i].Spec.Action == agenticv1alpha1.ActionTypeExternalAuth
+		}
+		if policies[i].CreationTimestamp.Time.Equal(policies[j].CreationTimestamp.Time) {
+			return policies[i].Name < policies[j].Name
+		}
 		return policies[i].CreationTimestamp.Time.Before(policies[j].CreationTimestamp.Time)
 	})
 
@@ -283,16 +412,24 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 			rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash)
 
 			// Ensure permissions is never empty for shadow rule too.
+			// Spec guidance: If omitted, all access from the specified source is allowed.
 			if len(rbacPolicy.GetPermissions()) == 0 {
-				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowAllMCPTrafficPermission()}
+				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
 			}
 
 			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
+			// Ensure the regular Rules section transparently allows all traffic through so that secondary policies evaluate non-matching streams.
+			allowAllPolicy := &rbacconfigv3.Policy{
+				Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
+				Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+			}
+			addPolicyToRBACRules(rbacConfig, policyName, allowAllPolicy)
 		} else {
 			// Action is Allow
 			// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
+			// Spec guidance: If omitted, all access from the specified source is allowed.
 			if len(rbacPolicy.GetPermissions()) == 0 {
-				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowAllMCPTrafficPermission()}
+				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
 			}
 			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
 		}
@@ -301,29 +438,9 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	return rbacConfig
 }
 
-func buildDisallowAllMCPTrafficPermission() *rbacconfigv3.Permission {
-	return &rbacconfigv3.Permission{
-		Rule: &rbacconfigv3.Permission_NotRule{
-			NotRule: &rbacconfigv3.Permission{
-				Rule: &rbacconfigv3.Permission_SourcedMetadata{
-					SourcedMetadata: &rbacconfigv3.SourcedMetadata{
-						MetadataMatcher: &matcherv3.MetadataMatcher{
-							Filter: constants.MCPProxyFilterName,
-							Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
-							Value: &matcherv3.ValueMatcher{
-								MatchPattern: &matcherv3.ValueMatcher_PresentMatch{PresentMatch: true},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
 func (t *Translator) translateMCPToRBACPermission(mcp *agenticv1alpha1.MCPAttributes) *rbacconfigv3.Permission {
 	if mcp == nil || len(mcp.Methods) == 0 {
-		return buildDisallowAllMCPTrafficPermission()
+		return buildAnyPermission()
 	}
 
 	var methodPermissions []*rbacconfigv3.Permission

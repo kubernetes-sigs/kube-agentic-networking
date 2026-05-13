@@ -73,6 +73,38 @@ func TestIsPolicyUnderTargetLimit(t *testing.T) {
 			wantAccepted: true,
 		},
 		{
+			name: "external auth conflict - secondary policy rejected",
+			existing: []runtime.Object{
+				&agenticv1alpha1.XAccessPolicy{
+					ObjectMeta: metav1.ObjectMeta{Name: "ext-auth-senior", Namespace: ns, CreationTimestamp: earlier},
+					Spec: agenticv1alpha1.AccessPolicySpec{
+						Action: agenticv1alpha1.ActionTypeExternalAuth,
+						TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{{
+							LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+								Group: gwapiv1.Group(agenticv0alpha0.GroupName),
+								Kind:  "XBackend",
+								Name:  "target-a",
+							},
+						}},
+					},
+				},
+			},
+			currentPolicy: &agenticv1alpha1.XAccessPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "ext-auth-junior", Namespace: ns, CreationTimestamp: now},
+				Spec: agenticv1alpha1.AccessPolicySpec{
+					Action: agenticv1alpha1.ActionTypeExternalAuth,
+					TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{{
+						LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+							Group: gwapiv1.Group(agenticv0alpha0.GroupName),
+							Kind:  "XBackend",
+							Name:  "target-a",
+						},
+					}},
+				},
+			},
+			wantAccepted: false,
+		},
+		{
 			name: "over limit - rejected",
 			existing: []runtime.Object{
 				&agenticv1alpha1.XAccessPolicy{ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: ns, CreationTimestamp: earlier}, Spec: agenticv1alpha1.AccessPolicySpec{TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{{LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{Group: gwapiv1.Group(agenticv0alpha0.GroupName), Kind: "XBackend", Name: "target-a"}}}}},

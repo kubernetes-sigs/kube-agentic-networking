@@ -24,6 +24,21 @@ spec:
               params:
                 - "echo"
                 - "get-sum"
+    - name: inline-tools-for-tester-2-sa
+      source:
+        type: ServiceAccount
+        serviceAccount:
+          name: e2e-tester-2-sa
+          namespace: e2e-test-ns
+      authorization:
+        type: Inline
+        mcp:
+          methods:
+            - name: tools/call
+              params:
+                - "echo"
+                - "get-sum"
+                - "get-env"
 ---
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy

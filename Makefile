@@ -103,7 +103,7 @@ test-gateway-api-conformance: ## Run full Gateway API conformance tests includin
 .PHONY: test-e2e-only
 test-e2e-only: ## Run E2E tests against the current cluster without setup.
 	@echo "...Running E2E tests against cluster: $$(kubectl config current-context)"
-	cd tests && go clean -testcache && go test -v -parallel=2 ./e2e/...
+	cd tests && go clean -testcache && go test -v ./e2e/...
 
 .PHONY: verify
 verify: ## Run go vet

@@ -18,9 +18,15 @@ spec:
     protocol: GRPC
     grpc: {}
   rules:
-  - name: ext-authz-rule
+  - name: ext-authz-rule-1
     source:
       type: ServiceAccount
       serviceAccount:
         name: e2e-tester-sa
+        namespace: e2e-test-ns
+  - name: ext-authz-rule-2
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: e2e-tester-2-sa
         namespace: e2e-test-ns
