@@ -145,6 +145,36 @@ func TestEnsureService(t *testing.T) {
 		}
 	})
 
+	t.Run("service exists, avoids duplicate Get calls", func(t *testing.T) {
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      nodeID,
+				Namespace: "test-ns",
+			},
+			Spec: corev1.ServiceSpec{
+				Type: corev1.ServiceTypeLoadBalancer,
+			},
+		}
+		client := fake.NewClientset(svc)
+		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
+
+		_, err := rm.ensureService(context.Background())
+		if err == nil {
+			t.Fatal("expected error as service has no LoadBalancer address")
+		}
+
+		actions := client.Actions()
+		getCount := 0
+		for _, action := range actions {
+			if action.GetVerb() == "get" && action.GetResource().Resource == "services" {
+				getCount++
+			}
+		}
+		if getCount != 1 {
+			t.Errorf("expected 1 Get call for services, got %d", getCount)
+		}
+	})
+
 	t.Run("service exists and has LoadBalancer IP, returns IP", func(t *testing.T) {
 		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
@@ -200,6 +230,60 @@ func TestEnsureService(t *testing.T) {
 		}
 		if address != "envoy.example.com" {
 			t.Errorf("ensureService() = %s, want %s", address, "envoy.example.com")
+		}
+	})
+}
+
+func TestEnsureServiceExists(t *testing.T) {
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gw",
+			Namespace: "test-ns",
+		},
+	}
+	nodeID := proxyName(gw.Namespace, gw.Name)
+
+	t.Run("service not found, creates and returns service", func(t *testing.T) {
+		client := fake.NewClientset()
+		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
+
+		svc, err := rm.ensureServiceExists(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if svc == nil {
+			t.Fatal("expected non-nil service")
+		}
+		if svc.Name != nodeID {
+			t.Errorf("expected service name %s, got %s", nodeID, svc.Name)
+		}
+
+		// Verify service was created
+		_, err = client.CoreV1().Services("test-ns").Get(context.Background(), nodeID, metav1.GetOptions{})
+		if err != nil {
+			t.Errorf("failed to get created service: %v", err)
+		}
+	})
+
+	t.Run("service exists, returns existing service", func(t *testing.T) {
+		existingSvc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      nodeID,
+				Namespace: "test-ns",
+			},
+		}
+		client := fake.NewClientset(existingSvc)
+		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
+
+		svc, err := rm.ensureServiceExists(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if svc == nil {
+			t.Fatal("expected non-nil service")
+		}
+		if svc.Name != nodeID {
+			t.Errorf("expected service name %s, got %s", nodeID, svc.Name)
 		}
 	})
 }

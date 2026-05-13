@@ -1,0 +1,21 @@
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
+kind: XAccessPolicy
+metadata:
+  name: test-access-policy
+  namespace: agentic-conformance-infra
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: conformance-primary
+  rules:
+    - name: allow-get-sum
+      source:
+        type: ServiceAccount
+        serviceAccount:
+          name: default
+          namespace: agentic-conformance-infra
+      authorization:
+        type: InlineTools
+        tools:
+          - "get-sum"

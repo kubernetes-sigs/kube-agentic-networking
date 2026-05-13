@@ -17,3 +17,4 @@ bin/
 
 # Cache files
 cache/
+go.work

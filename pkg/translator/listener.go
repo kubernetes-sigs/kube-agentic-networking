@@ -19,17 +19,12 @@ package translator
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
-	"time"
 
-	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
-	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
-	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
-	tlsinspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	udpproxy "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/udp/udp_proxy/v3"
@@ -41,8 +36,8 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,12 +48,6 @@ import (
 
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
-)
-
-const (
-	uriTimeout = 5 * time.Second
-
-	wellknownJWTAuthnFilter = "envoy.filters.http.jwt_authn"
 )
 
 type listenerConditions map[gatewayv1.SectionName][]metav1.Condition
@@ -166,64 +155,156 @@ func (t *Translator) validateCertificateRefs(gateway *gatewayv1.Gateway, listene
 	}
 
 	for _, ref := range listener.TLS.CertificateRefs {
-		group := ""
-		if ref.Group != nil {
-			group = string(*ref.Group)
+		if cond := t.validateCertificateRef(gateway, ref); cond != nil {
+			return cond
 		}
-		kind := "Secret"
-		if ref.Kind != nil {
-			kind = string(*ref.Kind)
-		}
+	}
 
-		if (group != "" && group != "core") || kind != "Secret" {
-			return &metav1.Condition{
-				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:             metav1.ConditionFalse,
-				Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
-				Message:            fmt.Sprintf("Unsupported certificate reference group %q kind %q. Only core/Secret is supported.", group, kind),
-				ObservedGeneration: gateway.Generation,
-			}
-		}
+	return nil
+}
 
-		ns := gateway.Namespace
-		if ref.Namespace != nil {
-			ns = string(*ref.Namespace)
-		}
+func (t *Translator) validateCertificateRef(gateway *gatewayv1.Gateway, ref gatewayv1.SecretObjectReference) *metav1.Condition {
+	group := ""
+	if ref.Group != nil {
+		group = string(*ref.Group)
+	}
+	kind := "Secret"
+	if ref.Kind != nil {
+		kind = string(*ref.Kind)
+	}
 
-		// Check if secret exists
-		_, err := t.secretLister.Secrets(ns).Get(string(ref.Name))
-		if err != nil {
-			reason := string(gatewayv1.ListenerReasonInvalidCertificateRef)
-			message := fmt.Sprintf("Failed to get Secret %s/%s: %v", ns, ref.Name, err)
-			if apierrors.IsNotFound(err) {
-				message = fmt.Sprintf("Secret %s/%s not found", ns, ref.Name)
-			}
-			return &metav1.Condition{
-				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:             metav1.ConditionFalse,
-				Reason:             reason,
-				Message:            message,
-				ObservedGeneration: gateway.Generation,
-			}
+	if (group != "" && group != "core") || kind != "Secret" {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Unsupported certificate reference group %q kind %q. Only core/Secret is supported.", group, kind),
+			ObservedGeneration: gateway.Generation,
 		}
+	}
 
-		// Check if cross-namespace reference is allowed by ReferenceGrant
-		if ns == gateway.Namespace {
-			continue
+	ns := gateway.Namespace
+	if ref.Namespace != nil {
+		ns = string(*ref.Namespace)
+	}
+
+	// Check if secret exists
+	secret, err := t.secretLister.Secrets(ns).Get(string(ref.Name))
+	if err != nil {
+		reason := string(gatewayv1.ListenerReasonInvalidCertificateRef)
+		message := fmt.Sprintf("Failed to get Secret %s/%s: %v", ns, ref.Name, err)
+		if apierrors.IsNotFound(err) {
+			message = fmt.Sprintf("Secret %s/%s not found", ns, ref.Name)
 		}
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             reason,
+			Message:            message,
+			ObservedGeneration: gateway.Generation,
+		}
+	}
 
-		if !AllowedByReferenceGrant(
-			gateway.Namespace, "gateway.networking.k8s.io", "Gateway",
-			ns, "", "Secret", string(ref.Name),
-			t.referenceGrantLister,
-		) {
-			return &metav1.Condition{
-				Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-				Status:             metav1.ConditionFalse,
-				Reason:             string(gatewayv1.ListenerReasonRefNotPermitted),
-				Message:            fmt.Sprintf("Reference to Secret %s/%s not permitted by ReferenceGrant", ns, ref.Name),
-				ObservedGeneration: gateway.Generation,
-			}
+	certBytes, hasCert := secret.Data[corev1.TLSCertKey]
+	keyBytes, hasKey := secret.Data[corev1.TLSPrivateKeyKey]
+	if !hasCert || !hasKey {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Secret %s/%s missing keys %s or %s", ns, ref.Name, corev1.TLSCertKey, corev1.TLSPrivateKeyKey),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	block, _ := pem.Decode(certBytes)
+	if block == nil {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Secret %s/%s contains invalid PEM data in %s", ns, ref.Name, corev1.TLSCertKey),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	// Basic validation that the private key is also present and decodeable
+	if block, _ := pem.Decode(keyBytes); block == nil {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message:            fmt.Sprintf("Secret %s/%s contains invalid PEM data in %s", ns, ref.Name, corev1.TLSPrivateKeyKey),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	// Check if cross-namespace reference is allowed by ReferenceGrant
+	if ns != gateway.Namespace && !AllowedByReferenceGrant(
+		gateway.Namespace, "gateway.networking.k8s.io", "Gateway",
+		ns, "", "Secret", string(ref.Name),
+		t.referenceGrantLister,
+	) {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonRefNotPermitted),
+			Message:            fmt.Sprintf("Reference to Secret %s/%s not permitted by ReferenceGrant", ns, ref.Name),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	return nil
+}
+
+func (t *Translator) validateCACertificateRef(gateway *gatewayv1.Gateway, caRef gatewayv1.ObjectReference) *metav1.Condition {
+	ns := gateway.Namespace
+	if caRef.Namespace != nil {
+		ns = string(*caRef.Namespace)
+	}
+	configMapName := string(caRef.Name)
+
+	group := string(caRef.Group)
+	kind := string(caRef.Kind)
+	if (group != "" && group != "core") || kind != "ConfigMap" {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCACertificateKind),
+			Message:            fmt.Sprintf("Unsupported CA certificate reference group %q kind %q. Only ConfigMap is supported.", group, kind),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	if ns != gateway.Namespace && !AllowedByReferenceGrant(gateway.Namespace, gatewayv1.GroupName, "Gateway", ns, "", "ConfigMap", configMapName, t.referenceGrantLister) {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonRefNotPermitted),
+			Message:            fmt.Sprintf("Reference to ConfigMap %s/%s not permitted by ReferenceGrant", ns, configMapName),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	cm, err := t.configMapLister.ConfigMaps(ns).Get(configMapName)
+	if err != nil {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCACertificateRef),
+			Message:            fmt.Sprintf("Failed to get configmap %s: %v", configMapName, err),
+			ObservedGeneration: gateway.Generation,
+		}
+	}
+
+	_, hasCA := cm.Data[corev1.ServiceAccountRootCAKey]
+	if !hasCA {
+		return &metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalidCACertificateRef),
+			Message:            fmt.Sprintf("ConfigMap %s missing key %s", configMapName, corev1.ServiceAccountRootCAKey),
+			ObservedGeneration: gateway.Generation,
 		}
 	}
 
@@ -256,7 +337,7 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 			filterChain.FilterChainMatch.ServerNames = []string{string(*lis.Hostname)}
 		}
 
-		tlsContext, err := buildDownstreamTLSContext()
+		tlsContext, err := buildDownstreamTLSContext(lis, gateway)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS context for listener %s: %w", lis.Name, err)
 		}
@@ -274,79 +355,6 @@ func (t *Translator) translateListenerToFilterChain(lis gatewayv1.Listener, rout
 }
 
 // buildLocalReplyConfig constructs the local reply configuration for 403 responses
-func buildLocalReplyConfig() *hcm.LocalReplyConfig {
-	return &hcm.LocalReplyConfig{
-		Mappers: []*hcm.ResponseMapper{
-			{
-				// Use an access-log style filter to identify the responses we want to remap.
-				// The AND filter ensures both conditions must hold:
-				// 1) Status code equals the runtime-configurable value (default 403).
-				// 2) The "WWW-Authenticate" header is NOT present so we don't catch
-				//    upstream authentication failures (which include that header).
-				Filter: &accesslogv3.AccessLogFilter{
-					FilterSpecifier: &accesslogv3.AccessLogFilter_AndFilter{
-						AndFilter: &accesslogv3.AndFilter{
-							Filters: []*accesslogv3.AccessLogFilter{
-								{
-									FilterSpecifier: &accesslogv3.AccessLogFilter_StatusCodeFilter{
-										StatusCodeFilter: &accesslogv3.StatusCodeFilter{
-											Comparison: &accesslogv3.ComparisonFilter{
-												Op: accesslogv3.ComparisonFilter_EQ,
-												Value: &corev3.RuntimeUInt32{
-													DefaultValue: 403,
-												},
-											},
-										},
-									},
-								},
-								// MCP servers typically return 403 with a "WWW-Authenticate" header when
-								// the client fails to authenticate. We only want to remap our custom 403s,
-								// so require that header to be absent.
-								// https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#protected-resource-metadata-discovery-requirements
-								{
-									FilterSpecifier: &accesslogv3.AccessLogFilter_HeaderFilter{
-										HeaderFilter: &accesslogv3.HeaderFilter{
-											Header: &routev3.HeaderMatcher{
-												Name:                 "WWW-Authenticate",
-												HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: false},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				// TODO: https://github.com/kubernetes-sigs/kube-agentic-networking/issues/169
-				// NOTE: Temporary workaround: Agent SDKs incorrectly treat a 403 in a way that
-				// prevents proper client-side error handling. To remain compatible until all SDKs
-				// are fixed, set the HTTP status code to 200 and encode a JSON-RPC error body.
-				// See the linked SDK improvement below for context.
-				// https://github.com/modelcontextprotocol/python-sdk/commit/2fe56e56de2aff8fcb964ff7e26e7c6df4d14653
-				// Change the HTTP status code back to 403 when the commit above is released in all Agent SDKs.
-				StatusCode: wrapperspb.UInt32(200),
-				// Override the body format to JSON-RPC 2.0.
-				BodyFormatOverride: &corev3.SubstitutionFormatString{
-					Format: &corev3.SubstitutionFormatString_JsonFormat{
-						JsonFormat: &structpb.Struct{
-							Fields: map[string]*structpb.Value{
-								"jsonrpc": structpb.NewStringValue("2.0"),
-								"id":      structpb.NewStringValue("%DYNAMIC_METADATA(mcp_proxy:id)%"),
-								"error": structpb.NewStructValue(&structpb.Struct{
-									Fields: map[string]*structpb.Value{
-										"code":    structpb.NewNumberValue(403),
-										"message": structpb.NewStringValue("Access to this tool is forbidden."),
-									},
-								}),
-							},
-						},
-					},
-					ContentType: "application/json",
-				},
-			},
-		},
-	}
-}
 
 func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName string, gateway *gatewayv1.Gateway) (*listener.FilterChain, error) {
 	httpFilters, err := t.buildHTTPFilters(gateway)
@@ -543,22 +551,6 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	return filters, nil
 }
 
-func buildMCPFilter() (*hcm.HttpFilter, error) {
-	mcpProto := &mcpv3.Mcp{}
-	mcpAny, err := anypb.New(mcpProto)
-	if err != nil {
-		klog.Errorf("Failed to marshal mcp config: %v", err)
-		return nil, err
-	}
-
-	return &hcm.HttpFilter{
-		Name: "envoy.filters.http.mcp",
-		ConfigType: &hcm.HttpFilter_TypedConfig{
-			TypedConfig: mcpAny,
-		},
-	}, nil
-}
-
 func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
 	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
 	if err != nil {
@@ -608,7 +600,7 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 			Path: []*matcherv3.MetadataMatcher_PathSegment{
 				{
 					Segment: &matcherv3.MetadataMatcher_PathSegment_Key{
-						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", externalAuthzShadowRulePrefix, extAuthzUniqueID),
+						Key: fmt.Sprintf("%s_%s_shadow_effective_policy_id", constants.ExternalAuthzShadowRulePrefix, extAuthzUniqueID),
 					},
 				},
 			},
@@ -617,8 +609,8 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 			},
 		},
 		MetadataContextNamespaces: []string{
-			mcpProxyFilterName,
-			wellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
+			constants.MCPProxyFilterName,
+			constants.WellknownJWTAuthnFilter, // Although we don't directly depend on the JWT authn filter, we propagate metadata that it generates for use in ext_authz, in case the filter is set by the user.
 		},
 	}
 	backendRef := extAuthz.BackendRef
@@ -659,7 +651,7 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 						HttpUpstreamType: &corev3.HttpUri_Cluster{
 							Cluster: clusterName,
 						},
-						Timeout: durationpb.New(uriTimeout),
+						Timeout: durationpb.New(constants.URITimeout),
 					},
 					PathPrefix: config.Path,
 				},
@@ -727,55 +719,45 @@ func (t *Translator) isAccessPolicyAttachedToGateway(ap *v0alpha0.XAccessPolicy,
 	return false
 }
 
-func buildRouterFilter() (*hcm.HttpFilter, error) {
-	routerProto := &routerv3.Router{}
-	routerAny, err := anypb.New(routerProto)
-	if err != nil {
-		klog.Errorf("Failed to marshal router config: %v", err)
-		return nil, err
+// buildDownstreamTLSContext configures TLS for the downstream (client-to-gateway) connection.
+func buildDownstreamTLSContext(lis gatewayv1.Listener, gateway *gatewayv1.Gateway) (*anypb.Any, error) {
+	certRef, caRef, hasMultipleCerts, hasMultipleCAs := extractCertificateRefs(gateway, lis)
+	if certRef != nil && hasMultipleCerts {
+		klog.Warningf("Gateway %s/%s, listener %s has multiple certificateRefs, only the first one will be used and the rest will be ignored", gateway.Namespace, gateway.Name, lis.Name)
+	}
+	if caRef != nil && hasMultipleCAs {
+		klog.Warningf("Gateway %s/%s, listener %s has multiple CACertificateRefs, only the first one will be used and the rest will be ignored", gateway.Namespace, gateway.Name, lis.Name)
 	}
 
-	return &hcm.HttpFilter{
-		Name: wellknown.Router,
-		ConfigType: &hcm.HttpFilter_TypedConfig{
-			TypedConfig: routerAny,
-		},
-	}, nil
-}
-
-// TODO: We may want to optimize this in the future by supporting both listener's TLS config and the shared TLS context.
-// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/94
-func buildDownstreamTLSContext() (*anypb.Any, error) {
 	tlsContext := &tlsv3.DownstreamTlsContext{
-		CommonTlsContext: &tlsv3.CommonTlsContext{
-			TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{
-				{
-					Name: constants.SpiffeIdentitySdsConfigName,
-					SdsConfig: &corev3.ConfigSource{
-						ResourceApiVersion: corev3.ApiVersion_V3,
-						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
-							PathConfigSource: &corev3.PathConfigSource{
-								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeIdentitySdsFileName),
-							},
-						},
-					},
-				},
-			},
-			ValidationContextType: &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
-				ValidationContextSdsSecretConfig: &tlsv3.SdsSecretConfig{
-					Name: constants.SpiffeTrustSdsConfigName,
-					SdsConfig: &corev3.ConfigSource{
-						ResourceApiVersion: corev3.ApiVersion_V3,
-						ConfigSourceSpecifier: &corev3.ConfigSource_PathConfigSource{
-							PathConfigSource: &corev3.PathConfigSource{
-								Path: fmt.Sprintf("%s/%s", constants.EnvoySdsMountPath, constants.SpiffeTrustSdsFileName),
-							},
-						},
-					},
-				},
-			},
-		},
+		CommonTlsContext:         &tlsv3.CommonTlsContext{},
 		RequireClientCertificate: wrapperspb.Bool(true),
+	}
+
+	commonTLS := tlsContext.GetCommonTlsContext()
+
+	// 1. Server Certificate
+	var serverSecretName string
+	if certRef != nil {
+		serverSecretName = fmt.Sprintf("%s-%s", gateway.Namespace, certRef.Name)
+		commonTLS.TlsCertificateSdsSecretConfigs = []*tlsv3.SdsSecretConfig{
+			newAdsSdsSecretConfig(serverSecretName),
+		}
+	} else {
+		commonTLS.TlsCertificateSdsSecretConfigs = []*tlsv3.SdsSecretConfig{
+			newPathSdsSecretConfig(constants.SpiffeIdentitySdsConfigName, constants.SpiffeIdentitySdsFileName),
+		}
+	}
+
+	// 2. Client Validation
+	if caRef != nil {
+		commonTLS.ValidationContextType = &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
+			ValidationContextSdsSecretConfig: newAdsSdsSecretConfig(fmt.Sprintf("%s-%s", gateway.Namespace, caRef.Name)),
+		}
+	} else {
+		commonTLS.ValidationContextType = &tlsv3.CommonTlsContext_ValidationContextSdsSecretConfig{
+			ValidationContextSdsSecretConfig: newPathSdsSecretConfig(constants.SpiffeTrustSdsConfigName, constants.SpiffeTrustSdsFileName),
+		}
 	}
 
 	anyObj, err := anypb.New(tlsContext)
@@ -783,44 +765,6 @@ func buildDownstreamTLSContext() (*anypb.Any, error) {
 		return nil, err
 	}
 	return anyObj, nil
-}
-
-func createEnvoyAddress(port uint32) *corev3.Address {
-	return &corev3.Address{
-		Address: &corev3.Address_SocketAddress{
-			SocketAddress: &corev3.SocketAddress{
-				Protocol: corev3.SocketAddress_TCP,
-				Address:  "0.0.0.0",
-				PortSpecifier: &corev3.SocketAddress_PortValue{
-					PortValue: port,
-				},
-			},
-		},
-	}
-}
-
-func createListenerFilters() []*listener.ListenerFilter {
-	tlsInspectorConfig, _ := anypb.New(&tlsinspector.TlsInspector{})
-	return []*listener.ListenerFilter{
-		{
-			Name: wellknown.TlsInspector,
-			ConfigType: &listener.ListenerFilter_TypedConfig{
-				TypedConfig: tlsInspectorConfig,
-			},
-		},
-	}
-}
-
-func toEnvoyExactStringMatchers(s []string) []*matcherv3.StringMatcher {
-	var matchers []*matcherv3.StringMatcher
-	for _, str := range s {
-		matchers = append(matchers, &matcherv3.StringMatcher{
-			MatchPattern: &matcherv3.StringMatcher_Exact{
-				Exact: str,
-			},
-		})
-	}
-	return matchers
 }
 
 func externalAuthUniqueID(externalAuth *gatewayv1.HTTPExternalAuthFilter) (string, error) {

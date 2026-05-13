@@ -28,7 +28,7 @@ import (
 )
 
 // GroupName specifies the group name used to register the objects.
-const GroupName = "agentic.prototype.x-k8s.io"
+const GroupName = "agentic.networking.x-k8s.io"
 
 // GroupVersion specifies the group and the version used to register the objects.
 var GroupVersion = v1.GroupVersion{Group: GroupName, Version: "v0alpha0"}

@@ -14,7 +14,7 @@ spec:
           from: Same
 ---
 # Define a Backend resource for server1, which runs in the K8s cluster.
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XBackend
 metadata:
   name: local-mcp-backend
@@ -26,7 +26,7 @@ spec:
     path: /mcp
 ---
 # Define a Backend resource for mcp.deepwiki.com.
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XBackend
 metadata:
   name: remote-mcp-backend
@@ -37,7 +37,7 @@ spec:
     port: 443
     path: /mcp
 ---
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XAccessPolicy
 metadata:
   name: auth-policy-local-mcp
@@ -45,7 +45,7 @@ metadata:
 spec:
   # AuthPolicy targets a single HTTPRoute.
   targetRefs:
-    - group: agentic.prototype.x-k8s.io
+    - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: local-mcp-backend
   rules:
@@ -61,14 +61,14 @@ spec:
           - "get-sum"
           - "get-tiny-image"
 ---
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XAccessPolicy
 metadata:
   name: auth-policy-remote-mcp
   namespace: quickstart-ns
 spec:
   targetRefs:
-    - group: agentic.prototype.x-k8s.io
+    - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
   rules:
@@ -105,7 +105,7 @@ spec:
               replacePrefixMatch: /mcp
       backendRefs:
         - name: local-mcp-backend # local mcp backend running in the Kubernetes cluster
-          group: agentic.prototype.x-k8s.io
+          group: agentic.networking.x-k8s.io
           kind: XBackend
           namespace: quickstart-ns
 ---
@@ -131,6 +131,6 @@ spec:
               replacePrefixMatch: /mcp
       backendRefs:
         - name: remote-mcp-backend # remote mcp server
-          group: agentic.prototype.x-k8s.io
+          group: agentic.networking.x-k8s.io
           kind: XBackend
           namespace: quickstart-ns

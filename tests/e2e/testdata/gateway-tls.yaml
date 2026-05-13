@@ -1,0 +1,28 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: e2e-gateway
+  namespace: e2e-test-ns
+spec:
+  gatewayClassName: kube-agentic-networking
+  listeners:
+  - name: https-listener
+    port: 10001
+    protocol: HTTPS
+    allowedRoutes:
+      namespaces:
+        from: Same
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: gateway-server-cert
+        kind: Secret
+        group: ""
+  tls:
+    frontend:
+      default:
+        validation:
+          caCertificateRefs:
+          - name: gateway-client-ca
+            kind: ConfigMap
+            group: ""

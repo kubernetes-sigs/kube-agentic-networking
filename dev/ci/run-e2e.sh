@@ -21,127 +21,20 @@ set -o pipefail
 # Configuration
 CLUSTER_NAME="kan-e2e"
 E2E_NAMESPACE="e2e-test-ns"
-SYSTEM_NAMESPACE="agentic-net-system"
 
-# Find the repository root
-REPO_ROOT=$(git rev-parse --show-toplevel)
-cd "${REPO_ROOT}"
+
+# Source common library relative to this script
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Main execution logic
 main() {
-  header "Creating kind cluster"
-  # Ensure we start with a clean state (helpful for local debugging)
-  kind delete cluster --name "${CLUSTER_NAME}" || true
-  kind create cluster --name "${CLUSTER_NAME}" --config dev/ci/kind-config.yaml --wait 5m
-
-  # MetalLB enables Kind clusters to provide external IPs for LoadBalancer services.
-  # Kind (Kubernetes in Docker) does not come with a native LoadBalancer provider.
-  # Without MetalLB (or a similar tool), any Kubernetes Service of type LoadBalancer (which
-  # is typically used to expose the Gateway) would remain in a <pending> state forever, and
-  # the tests would fail.
-  header "Installing MetalLB"
-  source dev/ci/lib.sh
-  install_metallb
-
-  header "Building controller image"
-  # These must match the image used in k8s/deploy/deployment.yaml
-  REGISTRY="us-central1-docker.pkg.dev/k8s-staging-images/agentic-net"
-  IMAGE_NAME="agentic-networking-controller"
-  TAG="main"
-
-  # Use the common make rule to build and load the image.
-  # We override TAG to ensure the local image matches the deployment manifest.
-  make build REGISTRY="${REGISTRY}" IMAGE_NAME="${IMAGE_NAME}" TAG="${TAG}" EXTRA_BUILD_OPT="--label runnumber=${BUILD_ID:-0}"
-
-  header "Loading controller image into cluster"
-  kind load docker-image "${REGISTRY}/${IMAGE_NAME}:${TAG}" --name "${CLUSTER_NAME}"
-
-  header "Installing Gateway API CRDs"
-  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
-
-  header "Installing Project CRDs"
-  kubectl apply -f k8s/crds/
-
-  # Create namespace and CA secret before deploying the controller so the pod
-  # can start immediately (it requires the CA pool secret as a volume).
-  header "Creating agentic-net-system namespace"
-  kubectl create namespace "${SYSTEM_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
-
-  header "Creating agentic identity CA"
-  go run ./cmd/agentic-net-tool -- make-ca-pool-secret --ca-id=v1 --namespace="${SYSTEM_NAMESPACE}" --name=agentic-identity-ca-pool
-
-  header "Deploying Controller"
-  kubectl apply -f k8s/deploy/deployment.yaml
-
-  header "Waiting for controller to be ready"
-  kubectl wait --for=condition=available --timeout=300s deployment/agentic-net-controller -n "${SYSTEM_NAMESPACE}"
+  setup_cluster_with_controller "${CLUSTER_NAME}"
 
   header "Running E2E tests"
   # Requirements: K8s v1.35+, PodCertificateRequest/ClusterTrustBundle enabled, and KAN Controller running with --enable-agentic-identity-signer=true.
   cd tests && go clean -testcache && go test -v -parallel=2 ./e2e/...
 }
 
-# Function to print a prominent header
-header() {
-  local title=$1
-  echo ""
-  echo "================================================================================"
-  echo "  ${title}"
-  echo "================================================================================"
-  echo ""
-}
-
-# Function to dump logs on failure
-cleanup() {
-  local status=$?
-  if [ "${status}" -ne 0 ]; then
-    header "Tests failed, dumping logs..."
-
-    header "Cluster-wide Resources"
-    kubectl get all -A || true
-
-    header "Cluster Events"
-    kubectl get events -A || true
-
-    header "Controller Description"
-    kubectl describe deployment agentic-net-controller -n "${SYSTEM_NAMESPACE}" || true
-
-    header "Controller logs (last 200 lines)"
-    kubectl logs deployment/agentic-net-controller -n "${SYSTEM_NAMESPACE}" --all-containers --tail=200 || true
-
-    header "E2E Test Namespace Resources"
-    kubectl get all -n "${E2E_NAMESPACE}" || true
-
-    header "Gateway Resources"
-    kubectl get gateway -n "${E2E_NAMESPACE}" -o yaml || true
-
-    header "Access Policies"
-    kubectl get xaccesspolicies -n "${E2E_NAMESPACE}" || true
-
-    header "Backend Resources"
-    kubectl get xbackends -n "${E2E_NAMESPACE}" || true
-
-    header "Pods in E2E namespace"
-    kubectl get pods -n "${E2E_NAMESPACE}" -o wide || true
-
-    header "Pod Certificate Requests"
-    kubectl get podcertificaterequests -n "${E2E_NAMESPACE}" -o yaml || true
-
-    header "Cluster Trust Bundles"
-    kubectl get clustertrustbundles || true
-
-    header "Tester Pod YAML"
-    kubectl get pod e2e-tester -n "${E2E_NAMESPACE}" -o yaml || true
-
-    header "MCP Server Logs"
-    kubectl logs -n "${E2E_NAMESPACE}" -l app=mcp-everything --tail=100 || true
-
-    header "Envoy Proxy Logs"
-    kubectl logs -n "${E2E_NAMESPACE}" -l "gateway.networking.k8s.io/gateway-name=e2e-gateway" --all-containers --tail=100 || true
-  fi
-  exit "${status}"
-}
-
-# Register the cleanup trap and run main
-trap cleanup EXIT
+# Register the diagnostics trap and run main
+trap 'dump_diagnostics "${CLUSTER_NAME}" "${SYSTEM_NAMESPACE}" "${E2E_NAMESPACE}" "e2e-tester" "gateway.networking.k8s.io/gateway-name=e2e-gateway"' EXIT
 main "$@"

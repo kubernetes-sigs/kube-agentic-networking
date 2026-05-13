@@ -68,9 +68,10 @@ var (
 )
 
 type expectedRule struct {
-	principal      string
-	permissions    []string
-	isExternalAuth bool
+	principal       string
+	permissions     []string
+	isExternalAuth  bool
+	hasCelCondition bool
 }
 
 func TestBuildGatewayLevelRBACFilters(t *testing.T) {
@@ -447,9 +448,9 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 
 	expectedPolicies := []string{
 		"custom-rule",
-		allowMCPSessionClosePolicyName,
-		allowAnyoneToInitializeAndListToolsPolicyName,
-		allowHTTPGet,
+		constants.AllowMCPSessionClosePolicyName,
+		constants.AllowAnyoneToInitializeAndListToolsPolicyName,
+		constants.AllowHTTPGetPolicyName,
 	}
 
 	for _, p := range expectedPolicies {
@@ -719,18 +720,53 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			expectedRules: map[string]expectedRule{
 				"rule-ext-auth": {
 					principal:      "spiffe://example.com/ns/default/sa/caller",
-					permissions:    []string{toolsCallMethod},
+					permissions:    []string{constants.ToolsCallMethod},
 					isExternalAuth: true,
 				},
 			},
 			expectedShadowRules: map[string]expectedRule{
 				"rule-ext-auth": {
 					principal:      "spiffe://example.com/ns/default/sa/caller",
-					permissions:    []string{toolsCallMethod},
+					permissions:    []string{constants.ToolsCallMethod},
 					isExternalAuth: true,
 				},
 			},
 			expectShadowStatPrefix: true,
+		},
+		{
+			name: "one rule with CEL",
+			accessPolicy: func() *agenticv0alpha0.XAccessPolicy {
+				p := newTestAccessPolicy("policy-cel", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
+				p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+					Type: agenticv0alpha0.AuthorizationRuleTypeCEL,
+					CEL: &agenticv0alpha0.CELRule{
+						Expression: "request.mcp.tool_name.startsWith('verify_')",
+						Message:    "Agent is restricted to verification tools.",
+					},
+				}
+				return p
+			}(),
+			expectedRules: map[string]expectedRule{
+				"rule-1": {
+					principal:       "spiffe://example.com/ns/default/sa/caller",
+					hasCelCondition: true,
+					permissions:     []string{constants.ToolsCallMethod},
+				},
+			},
+		},
+		{
+			name: "one rule with invalid CEL",
+			accessPolicy: func() *agenticv0alpha0.XAccessPolicy {
+				p := newTestAccessPolicy("policy-cel-invalid", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller")
+				p.Spec.Rules[0].Authorization = &agenticv0alpha0.AuthorizationRule{
+					Type: agenticv0alpha0.AuthorizationRuleTypeCEL,
+					CEL: &agenticv0alpha0.CELRule{
+						Expression: "request.mcp.tool_name.startsWith(",
+					},
+				}
+				return p
+			}(),
+			expectedRules: map[string]expectedRule{},
 		},
 	}
 
@@ -806,7 +842,7 @@ func TestBuildAllowAnyoneToInitializeAndListToolsPolicy(t *testing.T) {
 		t.Errorf("principal should be ANY")
 	}
 	matcher := policy.GetPermissions()[0].GetAndRules().GetRules()[0].GetSourcedMetadata().GetMetadataMatcher()
-	if matcher.GetFilter() != mcpProxyFilterName || matcher.GetPath()[0].GetKey() != "method" {
+	if matcher.GetFilter() != constants.MCPProxyFilterName || matcher.GetPath()[0].GetKey() != "method" {
 		t.Errorf("policy incorrectly configured")
 	}
 	orMethods := matcher.GetValue().GetOrMatch()
@@ -882,6 +918,15 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 		}
 	}
 
+	// Verify CEL Condition
+	if expected.hasCelCondition {
+		if rbacPolicy.GetCondition() == nil {
+			t.Errorf("expected CEL condition but found none")
+		}
+	} else if rbacPolicy.GetCondition() != nil {
+		t.Errorf("did not expect CEL condition but found one")
+	}
+
 	// Verify Tools Permissions
 	if len(rbacPolicy.GetPermissions()) == 0 {
 		t.Errorf("expected permissions for tools, but found none")
@@ -895,20 +940,20 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 			t.Fatal("expected NotRule for empty tools list")
 		}
 		methodRule := notRule.GetSourcedMetadata()
-		if methodRule == nil || methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != toolsCallMethod {
+		if methodRule == nil || methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != constants.ToolsCallMethod {
 			t.Errorf("expected 'disallow tools/call' permission for empty tools list")
 		}
 		return
 	}
 
-	if expected.isExternalAuth {
+	if expected.isExternalAuth || expected.hasCelCondition {
 		if len(rbacPolicy.GetPermissions()) != 1 {
-			t.Errorf("expected 1 permission for external auth, got %d", len(rbacPolicy.GetPermissions()))
+			t.Errorf("expected 1 permission for external auth or CEL, got %d", len(rbacPolicy.GetPermissions()))
 			return
 		}
 		methodRule := rbacPolicy.GetPermissions()[0].GetSourcedMetadata()
-		if methodRule == nil || methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != toolsCallMethod {
-			t.Errorf("expected tools/call method permission for external auth")
+		if methodRule == nil || methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != constants.ToolsCallMethod {
+			t.Errorf("expected tools/call method permission for external auth or CEL")
 		}
 		return
 	}
@@ -922,8 +967,8 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 
 	// Rule 1: method must be tools/call
 	methodRule := andRules.GetRules()[0].GetSourcedMetadata()
-	if methodRule == nil || methodRule.GetMetadataMatcher() == nil || methodRule.GetMetadataMatcher().GetFilter() != mcpProxyFilterName {
-		t.Errorf("first AND rule should be sourced metadata from %s", mcpProxyFilterName)
+	if methodRule == nil || methodRule.GetMetadataMatcher() == nil || methodRule.GetMetadataMatcher().GetFilter() != constants.MCPProxyFilterName {
+		t.Errorf("first AND rule should be sourced metadata from %s", constants.MCPProxyFilterName)
 		return
 	}
 	// Verify Path ["method"]
@@ -931,8 +976,8 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 		t.Errorf("tools/call matcher should have path ['method']")
 	}
 	// Verify Value "tools/call"
-	if methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != toolsCallMethod {
-		t.Errorf("tools/call matcher should match exact string %q", toolsCallMethod)
+	if methodRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact() != constants.ToolsCallMethod {
+		t.Errorf("tools/call matcher should match exact string %q", constants.ToolsCallMethod)
 	}
 
 	// Rule 2: tool names match

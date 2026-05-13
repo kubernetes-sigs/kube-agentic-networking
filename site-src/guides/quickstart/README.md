@@ -185,7 +185,7 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
    Your `auth-policy-local-mcp` section should look like this:
 
    ```yaml
-   apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+   apiVersion: agentic.networking.x-k8s.io/v0alpha0
    kind: XAccessPolicy
    metadata:
      name: auth-policy-local-mcp

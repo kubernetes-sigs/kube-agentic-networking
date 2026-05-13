@@ -18,11 +18,9 @@ package translator
 
 import (
 	"fmt"
-	"time"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -32,13 +30,6 @@ import (
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
-)
-
-const (
-	// The timeout for new network connections to hosts in the cluster.
-	defaultConnectTimeout = 5 * time.Second
-	// Default service port when BackendRef.Port is not set.
-	defaultServicePort = 80
 )
 
 // routeBackend represents either an XBackend or a direct Service reference for HTTPRoute backendRefs.
@@ -159,7 +150,7 @@ func resolveServicePort(svc *corev1.Service, backendPort *gatewayv1.PortNumber) 
 	if len(svc.Spec.Ports) > 0 {
 		return svc.Spec.Ports[0].Port
 	}
-	return defaultServicePort
+	return constants.DefaultServicePort
 }
 
 func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Cluster, error) {
@@ -168,7 +159,7 @@ func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Clus
 	// Create the base cluster configuration.
 	cluster := &clusterv3.Cluster{
 		Name:           clusterName,
-		ConnectTimeout: durationpb.New(defaultConnectTimeout),
+		ConnectTimeout: durationpb.New(constants.DefaultConnectTimeout),
 	}
 
 	if backend.Spec.MCP.ServiceName != nil {
@@ -223,45 +214,4 @@ func buildClustersFromRouteBackends(backends []*routeBackend) ([]*clusterv3.Clus
 		clusters = append(clusters, cluster)
 	}
 	return clusters, nil
-}
-
-func convertServiceRefToCluster(ns, name string, port int32) *clusterv3.Cluster {
-	clusterName := fmt.Sprintf(constants.ClusterNameFormat, ns, name)
-	serviceFQDN := fmt.Sprintf("%s.%s.svc.cluster.local", name, ns)
-	cluster := &clusterv3.Cluster{
-		Name:                 clusterName,
-		ConnectTimeout:       durationpb.New(defaultConnectTimeout),
-		ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
-		//nolint:gosec // G115: port values are within valid uint32 bounds
-		LoadAssignment: createClusterLoadAssignment(clusterName, serviceFQDN, uint32(port)),
-	}
-	return cluster
-}
-
-func createClusterLoadAssignment(clusterName, serviceHost string, servicePort uint32) *endpointv3.ClusterLoadAssignment {
-	return &endpointv3.ClusterLoadAssignment{
-		ClusterName: clusterName,
-		Endpoints: []*endpointv3.LocalityLbEndpoints{
-			{
-				LbEndpoints: []*endpointv3.LbEndpoint{
-					{
-						HostIdentifier: &endpointv3.LbEndpoint_Endpoint{
-							Endpoint: &endpointv3.Endpoint{
-								Address: &corev3.Address{
-									Address: &corev3.Address_SocketAddress{
-										SocketAddress: &corev3.SocketAddress{
-											Address: serviceHost,
-											PortSpecifier: &corev3.SocketAddress_PortValue{
-												PortValue: servicePort,
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
 }

@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0/helpers"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
 
 // AccessPolicyTargetRefIndex is the index name for looking up AccessPolicies by target ref (namespace/name of XBackend).
@@ -78,6 +79,11 @@ func (c *Controller) onAccessPolicyAdd(obj interface{}) {
 		return
 	}
 
+	// Validate CEL expressions.
+	if !c.validateCELSpec(context.Background(), policy) {
+		return
+	}
+
 	c.enqueueGatewaysForAccessPolicy(policy)
 }
 
@@ -93,6 +99,11 @@ func (c *Controller) onAccessPolicyUpdate(old, newObj interface{}) {
 			if !c.isPolicyUnderTargetLimit(context.Background(), newPolicy) {
 				return
 			}
+		}
+
+		// Validate CEL expressions.
+		if !c.validateCELSpec(context.Background(), newPolicy) {
+			return
 		}
 
 		c.enqueueGatewaysForAccessPolicy(newPolicy)
@@ -248,6 +259,35 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 	}
 
 	return shouldAccept
+}
+
+// validateCELSpec validates that all CEL expressions in the policy are syntactically valid.
+// It returns true if all expressions are valid, false otherwise.
+// It also updates the policy status accordingly.
+func (c *Controller) validateCELSpec(ctx context.Context, policy *agenticv0alpha0.XAccessPolicy) bool {
+	if policy.Spec.Rules == nil {
+		return true
+	}
+
+	for _, rule := range policy.Spec.Rules {
+		if rule.Authorization != nil && rule.Authorization.Type == agenticv0alpha0.AuthorizationRuleTypeCEL && rule.Authorization.CEL != nil {
+			if _, err := translator.CompileCelExpression(rule.Authorization.CEL.Expression); err != nil {
+				msg := fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
+				c.rejectPolicyForAllTargets(ctx, policy, msg)
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func (c *Controller) rejectPolicyForAllTargets(ctx context.Context, policy *agenticv0alpha0.XAccessPolicy, message string) {
+	for _, targetRef := range policy.Spec.TargetRefs {
+		if err := c.updateAccessPolicyStatus(ctx, policy, targetRef, false, agenticv0alpha0.PolicyReasonInvalidCEL, message); err != nil {
+			runtime.HandleError(fmt.Errorf("failed to update AccessPolicy status: %w", err))
+		}
+	}
 }
 
 // seniorPoliciesAtLimit returns true if the number of policies with higher seniority

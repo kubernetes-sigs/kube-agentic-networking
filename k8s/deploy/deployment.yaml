@@ -24,10 +24,10 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses/status", "gateways/status", "httproutes/status"]
     verbs: ["update", "patch"]
-  - apiGroups: ["agentic.prototype.x-k8s.io"]
+  - apiGroups: ["agentic.networking.x-k8s.io"]
     resources: ["xbackends", "xaccesspolicies"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["agentic.prototype.x-k8s.io"]
+  - apiGroups: ["agentic.networking.x-k8s.io"]
     resources: ["xbackends/status", "xaccesspolicies/status"]
     verbs: ["update", "patch"]
   # Permissions for managing resources for Envoy deployment

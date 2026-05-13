@@ -82,6 +82,14 @@ func (r *ResourceManager) EnsureProxyExist(ctx context.Context) (string, error) 
 		return "", err
 	}
 
+	// Create the Service first to trigger LoadBalancer allocation early.
+	// The LoadBalancer allocation may take 3-5 minutes in e2e/conformance tests.
+	// The Deployment can take about 1-2 minutes to be ready, so we want to start
+	// LoadBalancer allocation as early as possible.
+	if _, err := r.ensureServiceExists(ctx); err != nil {
+		return "", err
+	}
+
 	if err := r.ensureDeployment(ctx); err != nil {
 		return "", err
 	}
@@ -169,8 +177,8 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	return fmt.Errorf("envoy deployment %s is not available yet", deployment.Name)
 }
 
-// ensureService ensures that the Service for the Envoy proxy exists and has a LoadBalancer address (IP or Hostname) assigned.
-func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
+// ensureServiceExists ensures that the Service for the Envoy proxy exists.
+func (r *ResourceManager) ensureServiceExists(ctx context.Context) (*corev1.Service, error) {
 	logger := klog.FromContext(ctx)
 	service := r.renderService()
 
@@ -180,24 +188,29 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 			logger.Info("Creating Envoy proxy service", "name", service.Name, "namespace", service.Namespace)
 			svc, err = r.client.CoreV1().Services(service.Namespace).Create(ctx, service, metav1.CreateOptions{})
 			if err != nil {
-				return "", fmt.Errorf("failed to create envoy service: %w", err)
+				return nil, fmt.Errorf("failed to create envoy service: %w", err)
 			}
-		} else {
-			return "", fmt.Errorf("failed to get envoy service: %w", err)
+			return svc, nil
 		}
+		return nil, fmt.Errorf("failed to get envoy service: %w", err)
 	}
+	return svc, nil
+}
 
-	svc, err = r.client.CoreV1().Services(service.Namespace).Get(ctx, service.Name, metav1.GetOptions{})
+// ensureService ensures that the Service for the Envoy proxy exists and has a LoadBalancer address (IP or Hostname) assigned.
+func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
+	logger := klog.FromContext(ctx)
+	svc, err := r.ensureServiceExists(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to refresh envoy service: %w", err)
+		return "", err
 	}
 
 	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
-		return "", fmt.Errorf("envoy service %s type is %s, expected %s", service.Name, svc.Spec.Type, corev1.ServiceTypeLoadBalancer)
+		return "", fmt.Errorf("envoy service %s type is %s, expected %s", svc.Name, svc.Spec.Type, corev1.ServiceTypeLoadBalancer)
 	}
 
 	if len(svc.Status.LoadBalancer.Ingress) == 0 {
-		return "", fmt.Errorf("loadbalancer address is not assigned yet for service %s", service.Name)
+		return "", fmt.Errorf("loadbalancer address is not assigned yet for service %s", svc.Name)
 	}
 
 	ingress := svc.Status.LoadBalancer.Ingress[0]
@@ -206,7 +219,7 @@ func (r *ResourceManager) ensureService(ctx context.Context) (string, error) {
 		address = ingress.Hostname
 	}
 	if address == "" {
-		return "", fmt.Errorf("loadbalancer IP or Hostname is not assigned yet for service %s", service.Name)
+		return "", fmt.Errorf("loadbalancer IP or Hostname is not assigned yet for service %s", svc.Name)
 	}
 
 	logger.Info("Envoy proxy service is ready with LoadBalancer address!", "address", address)

@@ -41,7 +41,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{
 				{
 					LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
-						Group: "agentic.prototype.x-k8s.io",
+						Group: "agentic.networking.x-k8s.io",
 						Kind:  "XBackend",
 						Name:  "my-backend",
 					},
@@ -76,14 +76,14 @@ func TestValidateXAccessPolicy(t *testing.T) {
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Group = "wrong.group"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
+			wantErrors: []string{"TargetRef must have group agentic.networking.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "invalid target kind",
 			mutate: func(p *v0alpha0.XAccessPolicy) {
 				p.Spec.TargetRefs[0].Kind = "WrongKind"
 			},
-			wantErrors: []string{"TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
+			wantErrors: []string{"TargetRef must have group agentic.networking.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"},
 		},
 		{
 			desc: "duplicate rule names",
@@ -135,7 +135,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 				for i := 0; i < 10; i++ {
 					p.Spec.TargetRefs = append(p.Spec.TargetRefs, gwapiv1.LocalPolicyTargetReferenceWithSectionName{
 						LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
-							Group: "agentic.prototype.x-k8s.io",
+							Group: "agentic.networking.x-k8s.io",
 							Kind:  "XBackend",
 							Name:  "my-backend",
 						},
@@ -195,7 +195,7 @@ func TestValidateXAccessPolicy(t *testing.T) {
 					},
 				}
 			},
-			wantErrors: []string{"only one of tools or externalAuth can be specified"},
+			wantErrors: []string{"only one of tools, externalAuth or cel can be specified"},
 		},
 		{
 			desc: "multiple ExternalAuth authorization rules specified",
@@ -230,6 +230,39 @@ func TestValidateXAccessPolicy(t *testing.T) {
 				})
 			},
 			wantErrors: []string{"a maximum of one rule per policy can specify 'ExternalAuth' authorization type"},
+		},
+		{
+			desc: "valid CEL authorization",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type: v0alpha0.AuthorizationRuleTypeCEL,
+					CEL: &v0alpha0.CELRule{
+						Expression: "request.mcp.tool_name.startsWith('verify_')",
+					},
+				}
+			},
+		},
+		{
+			desc: "missing cel field for CEL type",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type: v0alpha0.AuthorizationRuleTypeCEL,
+				}
+			},
+			wantErrors: []string{"cel must be specified when type is set to 'CEL'"},
+		},
+		{
+			desc: "multiple authorization types specified with CEL",
+			mutate: func(p *v0alpha0.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v0alpha0.AuthorizationRule{
+					Type:  v0alpha0.AuthorizationRuleTypeCEL,
+					Tools: []string{"tool-1"},
+					CEL: &v0alpha0.CELRule{
+						Expression: "true",
+					},
+				}
+			},
+			wantErrors: []string{"only one of tools, externalAuth or cel can be specified"},
 		},
 		{
 			desc: "heterogeneous target kinds",

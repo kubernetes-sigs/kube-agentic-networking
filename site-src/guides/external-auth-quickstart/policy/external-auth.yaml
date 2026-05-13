@@ -1,12 +1,12 @@
 # XAccessPolicy for remote MCP backend using external authorization
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XAccessPolicy
 metadata:
   name: auth-policy-remote-mcp
   namespace: quickstart-ns
 spec:
   targetRefs:
-    - group: agentic.prototype.x-k8s.io
+    - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
   rules:

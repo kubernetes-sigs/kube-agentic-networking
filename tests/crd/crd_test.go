@@ -28,12 +28,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/yaml"
 
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 )
 
 func TestCRDValidation(t *testing.T) {
@@ -44,22 +47,25 @@ func TestCRDValidation(t *testing.T) {
 	var kubectlLocation, kubeconfigLocation string
 
 	utilruntime.Must(v0alpha0.Install(scheme))
+	utilruntime.Must(v1alpha1.Install(scheme))
 	utilruntime.Must(corev1.AddToScheme(scheme))
 
 	k8sVersion := os.Getenv("K8S_VERSION")
 
 	t.Run("should be able to start test environment", func(_ *testing.T) {
+		// TODO: Revert to standard envtest.CRDInstallOptions{Paths: []string{...}} once XAccessPolicy v1alpha1 is fully implemented and flipped to `served: true` in manifests.
+		var crds []*apiextensionsv1.CustomResourceDefinition
+		crds, err = loadAndModifyCRDs(filepath.Join("..", "..", "k8s", "crds"))
+		if err != nil {
+			panic(fmt.Sprintf("Failed to load and modify CRDs: %v", err))
+		}
+
 		testEnv = &envtest.Environment{
 			Scheme:                      scheme,
+			CRDs:                        crds,
 			ErrorIfCRDPathMissing:       true,
 			DownloadBinaryAssets:        true,
 			DownloadBinaryAssetsVersion: k8sVersion,
-			CRDInstallOptions: envtest.CRDInstallOptions{
-				Paths: []string{
-					filepath.Join("..", "..", "k8s", "crds"),
-				},
-				CleanUpAfterUse: true,
-			},
 		}
 
 		_, err = testEnv.Start()
@@ -81,7 +87,8 @@ func TestCRDValidation(t *testing.T) {
 
 		apiResources, err := executeKubectlCommand(t, kubectlLocation, kubeconfigLocation, []string{"api-resources"})
 		require.NoError(t, err)
-		require.Contains(t, apiResources, "agentic.prototype.x-k8s.io/v0alpha0")
+		require.Contains(t, apiResources, "agentic.networking.x-k8s.io/v0alpha0")
+		require.Contains(t, apiResources, "agentic.networking.x-k8s.io/v1alpha1")
 	})
 
 	t.Run("should be able to install valid examples", func(t *testing.T) {
@@ -140,4 +147,42 @@ func getInvalidExamplesFiles(t *testing.T) ([]string, error) {
 		return nil
 	})
 	return files, err
+}
+
+func loadAndModifyCRDs(dir string) ([]*apiextensionsv1.CustomResourceDefinition, error) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var crds []*apiextensionsv1.CustomResourceDefinition
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".yaml") {
+			continue
+		}
+
+		path := filepath.Join(dir, file.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+
+		crd := &apiextensionsv1.CustomResourceDefinition{}
+		if err := yaml.Unmarshal(data, crd); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal CRD from %s: %w", path, err)
+		}
+
+		// If this is the XAccessPolicy CRD, activate v1alpha1 for testing validation
+		if crd.Name == "xaccesspolicies.agentic.networking.x-k8s.io" {
+			for i, version := range crd.Spec.Versions {
+				if version.Name == "v1alpha1" {
+					crd.Spec.Versions[i].Served = true
+				}
+			}
+		}
+
+		crds = append(crds, crd)
+	}
+
+	return crds, nil
 }

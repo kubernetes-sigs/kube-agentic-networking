@@ -32,7 +32,7 @@ type AccessPolicySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
-	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
+	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.networking.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.networking.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
 	// +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
 	TargetRefs []gwapiv1.LocalPolicyTargetReferenceWithSectionName `json:"targetRefs"`
 	// Rules defines a list of rules to be applied to the target.
@@ -131,7 +131,8 @@ type AuthorizationSourceServiceAccount struct {
 
 // +kubebuilder:validation:XValidation:message="tools must be specified when type is set to 'InlineTools'",rule="self.type == 'InlineTools' ? has(self.tools) : true"
 // +kubebuilder:validation:XValidation:message="externalAuth must be specified when type is set to 'ExternalAuth'",rule="self.type == 'ExternalAuth' ? has(self.externalAuth) : true"
-// +kubebuilder:validation:XValidation:message="only one of tools or externalAuth can be specified",rule="!(has(self.tools) && has(self.externalAuth))"
+// +kubebuilder:validation:XValidation:message="cel must be specified when type is set to 'CEL'",rule="self.type == 'CEL' ? has(self.cel) : true"
+// +kubebuilder:validation:XValidation:message="only one of tools, externalAuth or cel can be specified",rule="[has(self.tools), has(self.externalAuth), has(self.cel)].filter(x, x).size() <= 1"
 type AuthorizationRule struct {
 	// +unionDiscriminator
 	// +required
@@ -148,10 +149,24 @@ type AuthorizationRule struct {
 	//
 	// +optional
 	ExternalAuth *gwapiv1.HTTPExternalAuthFilter `json:"externalAuth,omitempty"`
+
+	// CEL specifies a CEL expression for authorization.
+	// +optional
+	CEL *CELRule `json:"cel,omitempty"`
+}
+
+// CELRule specifies a CEL expression for authorization.
+type CELRule struct {
+	// Expression is the CEL expression to evaluate.
+	// +required
+	Expression string `json:"expression"`
+	// Message is the custom error message to return if the expression evaluates to false.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // AuthorizationRuleType identifies a type of authorization rule.
-// +kubebuilder:validation:Enum=InlineTools;ExternalAuth
+// +kubebuilder:validation:Enum=InlineTools;ExternalAuth;CEL
 type AuthorizationRuleType string
 
 const (
@@ -162,6 +177,10 @@ const (
 	// AuthorizationRuleTypeExternalAuth is used to identify authorization rules
 	// evaluated by an external auth service.
 	AuthorizationRuleTypeExternalAuth AuthorizationRuleType = "ExternalAuth"
+
+	// AuthorizationRuleTypeCEL is used to identify authorization rules
+	// evaluated by a CEL expression.
+	AuthorizationRuleTypeCEL AuthorizationRuleType = "CEL"
 )
 
 const (
@@ -184,6 +203,10 @@ const (
 	// This reason is used with the "Accepted" condition when the policy
 	// was rejected because the maximum number of policies per target was exceeded.
 	PolicyLimitPerTargetExceeded gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
+
+	// This reason is used with the "Accepted" condition when the policy
+	// was rejected because it contains an invalid CEL expression.
+	PolicyReasonInvalidCEL gwapiv1.PolicyConditionReason = "InvalidCEL"
 )
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.
@@ -205,6 +228,7 @@ type AccessPolicyStatus struct {
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
 
 // XAccessPolicy is the Schema for the accesspolicies API.
 type XAccessPolicy struct {
