@@ -133,8 +133,8 @@ BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 generate: manifests deepcopy register clientsets ## Generate manifests, deepcopy code, and clientsets.
 
 .PHONY: manifests
-manifests: controller-gen ## Generate CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./api/..." output:crd:artifacts:config=k8s/crds
+manifests: ## Generate CustomResourceDefinition objects.
+	go run ./pkg/generator/main.go
 
 .PHONY: deepcopy
 deepcopy: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
