@@ -67,19 +67,19 @@ data:
               - set(attributes["security_rule.match"], true) where attributes["security_rule.name"] != nil and attributes["security_rule.name"] != ""
               - set(attributes["security_rule.match"], false) where attributes["security_rule.name"] == nil or attributes["security_rule.name"] == ""
 
-              # event.action: the enforcement decision.
-              # Named rule matched → enforcement allowed it (all policy rules are allow-type).
-              # No named rule matched (empty security_rule.name) → deny by default.
+              # event.action: the enforcement decision — only meaningful for tools/call.
+              # tools/list and initialize are unconditionally allowed by built-in rules
+              # and never evaluated by the shadow RBAC, so no authorization attributes apply.
               - set(attributes["event.action"], "allow") where attributes["security_rule.match"] == true
-              - set(attributes["event.action"], "deny") where attributes["security_rule.match"] == false
+              - set(attributes["event.action"], "deny") where attributes["security_rule.match"] == false and attributes["mcp.method.name"] == "tools/call"
 
               # event.outcome: outcome of the RBAC check itself (proposal 33: "outcome of the check itself").
               # The check always succeeds when security_rule.name is set (RBAC evaluated and returned a decision).
               # This is distinct from event.action (the decision) and from the HTTP response status.
               - set(attributes["event.outcome"], "success") where attributes["security_rule.name"] != nil and attributes["security_rule.name"] != ""
 
-              # Add event kind for security events (when we have RBAC evaluation)
-              - set(attributes["event.kind"], "event") where attributes["security_rule.name"] != nil
+              # Add event kind for security events only for tool calls (where RBAC evaluates)
+              - set(attributes["event.kind"], "event") where attributes["security_rule.name"] != nil and attributes["mcp.method.name"] == "tools/call"
 
               # Categorize as authorization events for tool calls
               - set(attributes["event.category"], ["authorization"]) where attributes["mcp.method.name"] == "tools/call"

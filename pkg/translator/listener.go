@@ -496,6 +496,70 @@ func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 					},
 				},
 			},
+			{
+				// mcp.tool.name: tool name extracted by ext_proc from the MCP JSON-RPC body.
+				// Set via ext_proc DynamicMetadata (mcp-audit namespace) per issue #710.
+				Tag: "mcp.tool.name",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Request_{
+								Request: &metadatav3.MetadataKind_Request{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.ext_proc",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "mcp-audit"}},
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "tool_name"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
+			{
+				// mcp.method.name: MCP method from the JSON-RPC body (e.g. tools/call, tools/list).
+				Tag: "mcp.method.name",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Request_{
+								Request: &metadatav3.MetadataKind_Request{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.ext_proc",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "mcp-audit"}},
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "method"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
+			{
+				// mcp.guardrail.decision: ext_proc guardrail decision (allowed/blocked).
+				Tag: "mcp.guardrail.decision",
+				Type: &tracingv3.CustomTag_Metadata_{
+					Metadata: &tracingv3.CustomTag_Metadata{
+						Kind: &metadatav3.MetadataKind{
+							Kind: &metadatav3.MetadataKind_Request_{
+								Request: &metadatav3.MetadataKind_Request{},
+							},
+						},
+						MetadataKey: &metadatav3.MetadataKey{
+							Key: "envoy.filters.http.ext_proc",
+							Path: []*metadatav3.MetadataKey_PathSegment{
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "mcp-audit"}},
+								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "decision"}},
+							},
+						},
+						DefaultValue: "",
+					},
+				},
+			},
 		},
 	}
 }

@@ -274,7 +274,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 		// Also add to shadow rules for observability
 		// Shadow rules emit dynamic metadata (shadow_engine_result, shadow_effective_policy_id)
 		// that custom tags can read for tracing, without affecting enforcement
-		addPolicyToRBACShadowRules(rbacConfig, policyName, policy)
+		addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 	}
 
 	// Note: there is no catch-all shadow rule. When no named shadow rule matches,
