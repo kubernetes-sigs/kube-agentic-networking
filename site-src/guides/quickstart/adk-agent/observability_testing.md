@@ -1,159 +1,126 @@
-# Deploy Steps: adk-trace-draft branch
+# Observability Testing: adk-trace-draft branch
 
 Run all commands from repo root unless noted otherwise.
 
-## 1. Build controller image
+## Prerequisites
+
+- Kind cluster `kan-quickstart` running with the quickstart deployed:
+  ```bash
+  site-src/guides/quickstart/run-quickstart.sh --ollama
+  ```
+- Ollama running on Mac (port 11434)
+
+## Phase 1: Build and patch controller with tracing
 
 ```bash
-docker build \
-  --build-arg GO_VERSION=$(cat .go-version) \
-  -t agentic-networking-controller:shadow-rules \
-  .
-```
+docker build --build-arg GO_VERSION=$(cat .go-version) -t agentic-networking-controller:trace-test .
+kind load docker-image agentic-networking-controller:trace-test --name kan-quickstart
 
-## 2. Load controller image into kind
-
-```bash
-kind load docker-image agentic-networking-controller:shadow-rules --name kan-quickstart
-```
-
-## 3. Update controller deployment and wait for rollout
-
-Use `rollout restart` rather than `set image` — kind caches images by digest, so `set image`
-with the same tag does not trigger a pod restart or pull the new image.
-
-```bash
-kubectl rollout restart deployment/agentic-net-controller -n agentic-net-system
+kubectl set image deployment/agentic-net-controller -n agentic-net-system \
+  manager=agentic-networking-controller:trace-test
 kubectl rollout status deployment/agentic-net-controller -n agentic-net-system
 ```
 
-## 4. Force gateway ConfigMap regeneration
-
-The controller only regenerates the Envoy bootstrap ConfigMap if it doesn't exist.
-Delete it, then annotate the Gateway to trigger reconciliation.
+## Phase 2: Deploy observability stack
 
 ```bash
-kubectl delete configmap envoy-proxy-3e11a0abd055 -n quickstart-ns
+kubectl apply -f site-src/guides/quickstart/adk-agent/otel-collector.yaml
+kubectl apply -f site-src/guides/quickstart/adk-agent/tempo.yaml
+kubectl apply -f site-src/guides/quickstart/adk-agent/grafana.yaml
+
+kubectl wait --for=condition=available --timeout=120s deployment/otel-collector -n quickstart-ns
+kubectl wait --for=condition=available --timeout=120s deployment/tempo -n quickstart-ns
+kubectl wait --for=condition=available --timeout=120s deployment/grafana -n quickstart-ns
+```
+
+## Phase 3: Regenerate gateway ConfigMap with OTel tracing
+
+The controller generates an Envoy bootstrap ConfigMap with OTel tracing configured.
+Since the ConfigMap is only created once, delete it and trigger reconciliation.
+
+```bash
+GATEWAY_DEPLOY=$(kubectl get deployment -n quickstart-ns \
+  -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" \
+  -o jsonpath='{.items[0].metadata.name}')
+
+kubectl delete configmap ${GATEWAY_DEPLOY} -n quickstart-ns
 
 kubectl annotate gateway agentic-net-gateway -n quickstart-ns \
   reconcile-trigger="$(date +%s)" --overwrite
 
-# Verify OTel tracing config is present
-kubectl get configmap envoy-proxy-3e11a0abd055 -n quickstart-ns \
+sleep 5
+kubectl get configmap ${GATEWAY_DEPLOY} -n quickstart-ns \
   -o jsonpath='{.data.envoy\.yaml}' | grep -A8 "tracing"
+
+# Restart gateway pod (bootstrap is static, requires restart)
+kubectl rollout restart deployment/${GATEWAY_DEPLOY} -n quickstart-ns
+kubectl rollout status deployment/${GATEWAY_DEPLOY} -n quickstart-ns
 ```
 
-## 5. Restart the gateway pod
-
-The bootstrap config (OTel tracer) is static — pod must restart to pick it up.
+## Phase 4: Build and patch agent
 
 ```bash
-kubectl rollout restart deployment/envoy-proxy-3e11a0abd055 -n quickstart-ns
-kubectl rollout status deployment/envoy-proxy-3e11a0abd055 -n quickstart-ns
-```
+docker build -t adk-agent:latest site-src/guides/quickstart/adk-agent/
+kind load docker-image adk-agent:latest --name kan-quickstart
 
-## 6. Build agent image
+kubectl set env deployment/adk-agent -n quickstart-ns \
+  HF_MODEL- HF_TOKEN- GEMINI_MODEL- GOOGLE_API_KEY- \
+  OLLAMA_BASE_URL="http://host.docker.internal:11434" \
+  OLLAMA_MODEL="qwen2.5:7b" \
+  ADK_ENABLE_OTEL=true
 
-```bash
-cd site-src/guides/quickstart/adk-agent
-docker build -t adk-agent:ej-test .
-cd -
-```
-
-## 7. Load agent image into kind
-
-```bash
-kind load docker-image adk-agent:ej-test --name kan-quickstart
-```
-
-## 8. Apply sidecar configs (with envsubst)
-
-IMPORTANT: sidecar-configs.yaml has template variables — always use envsubst.
-
-```bash
-GATEWAY_ADDRESS=$(kubectl get gateway agentic-net-gateway -n quickstart-ns \
-  -o jsonpath='{.status.addresses[0].value}')
-
-GATEWAY_SA=$(kubectl get sa -n quickstart-ns \
-  -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" \
-  -o jsonpath='{.items[0].metadata.name}')
-
-GATEWAY_SPIFFE_ID="spiffe://cluster.local/ns/quickstart-ns/sa/${GATEWAY_SA}"
-
-GATEWAY_ADDRESS="${GATEWAY_ADDRESS}" GATEWAY_SPIFFE_ID="${GATEWAY_SPIFFE_ID}" \
-  envsubst < site-src/guides/quickstart/adk-agent/sidecar/sidecar-configs.yaml \
-  | kubectl apply -f -
-```
-
-## 9. Apply agent deployment and restart
-
-```bash
-kubectl apply -f site-src/guides/quickstart/adk-agent/deployment.yaml
 kubectl rollout restart deployment/adk-agent -n quickstart-ns
 kubectl rollout status deployment/adk-agent -n quickstart-ns
 ```
 
-## 10. Deploy observability stack (OTel collector, Tempo, Grafana)
-
-Run from `site-src/guides/quickstart/adk-agent/`:
-
-```bash
-# Deploy Tempo
-kubectl apply -f tempo.yaml
-kubectl wait --for=condition=available --timeout=120s deployment/tempo -n quickstart-ns
-
-# Deploy Grafana
-kubectl apply -f grafana.yaml
-kubectl wait --for=condition=available --timeout=120s deployment/grafana -n quickstart-ns
-
-# Apply OTel collector config and restart to pick up changes
-kubectl apply -f otel-collector.yaml
-kubectl rollout restart deployment/otel-collector -n quickstart-ns
-kubectl rollout status deployment/otel-collector -n quickstart-ns
-```
-
 ## Span attributes
 
-These attributes appear on gateway `ingress` spans for `tools/call` requests. All four are derived
-in the OTel collector from `security_rule.name`, which Envoy emits via `shadow_effective_policy_id`.
+### Gateway ingress spans (tools/call requests)
 
-When a named shadow rule matches, Envoy sets `shadow_effective_policy_id` to the rule name.
-When no named rule matches, Envoy leaves it unset (empty string via custom tag default value).
-There is no catch-all shadow rule — a catch-all in a protobuf `map<string,Policy>` has no
-ordering guarantee and would randomly shadow named rules, causing all requests to appear unmatched.
+| Attribute | Values | Source |
+|---|---|---|
+| `security_rule.name` | named rule name, or `""` | Envoy shadow RBAC (`shadow_effective_policy_id`) |
+| `security_rule.match` | `true` / `false` | Derived in OTel collector |
+| `event.action` | `allow` / `deny` | Derived in OTel collector (only for `tools/call`) |
+| `event.outcome` | `success` | Derived in OTel collector |
+| `peer.spiffe.id` | SPIFFE ID | Envoy RBAC (`principal`) |
 
-| Attribute | Values | Source | Rationale |
+### Non-tool-call requests (initialize, tools/list, SSE)
+
+- `security_rule.match` = `false`
+- `event.action` is **not set** — these are unconditionally allowed by built-in rules, not authorization failures
+
+### Expected trace structure for a single tool call
+
+| Span | `security_rule.name` | `event.action` | Purpose |
 |---|---|---|---|
-| `security_rule.name` | named rule name, or `""` (absent) | Envoy shadow RBAC (`shadow_effective_policy_id`) | The name of the shadow rule that matched. Empty when no named rule matched. |
-| `security_rule.match` | `true` / `false` | Derived in collector | `true` if `security_rule.name` is non-empty (a named rule matched); `false` if empty (no rule matched → default deny). |
-| `event.action` | `allow` / `deny` | Derived in collector | The enforcement decision. Named rule matched → `allow` (all policy rules are allow-type). No named rule matched → `deny` (deny by default). |
-| `event.outcome` | `success` | Derived in collector | Outcome of the RBAC check itself (not the HTTP response). Always `success` when `security_rule.name` is set, meaning RBAC evaluated and returned a decision. |
+| ingress | `""` | *(not set)* | MCP session setup (initialize) |
+| ingress | `""` | *(not set)* | Tool discovery (tools/list) |
+| ingress | `tools-for-adk-agent-sa` | `allow` | Tool invocation (tools/call) |
+| ingress | `""` | *(not set)* | MCP protocol overhead |
 
 ## Verify
 
 ```bash
-# All pods running
 kubectl get pods -n quickstart-ns
 
-# Envoy sidecar resolving gateway address (not literal ${GATEWAY_ADDRESS})
-kubectl logs -n quickstart-ns deployment/adk-agent -c envoy --tail=10 | grep "DNS resolution"
+# Agent tool call spans
+kubectl logs deployment/adk-agent -n quickstart-ns -c adk-agent --tail=30 | grep "tool_call"
 
-# Gateway has OTel tracing config
-kubectl get configmap envoy-proxy-3e11a0abd055 -n quickstart-ns \
+# Gateway OTel config
+GATEWAY_DEPLOY=$(kubectl get deployment -n quickstart-ns \
+  -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl get configmap ${GATEWAY_DEPLOY} -n quickstart-ns \
   -o jsonpath='{.data.envoy\.yaml}' | grep -c "otel"
 
-# Access Grafana
-kubectl port-forward -n quickstart-ns svc/grafana 3000:3000
-# http://localhost:3000  (admin/admin)
+# Access UIs
+kubectl port-forward -n quickstart-ns svc/grafana 3000:3000 &
+kubectl port-forward -n quickstart-ns service/adk-agent-svc 8081:80 &
 
-# Access Tempo directly
-kubectl port-forward -n quickstart-ns svc/tempo 3200:3200
-# http://localhost:3200
-
-# Search for traces in Grafana:
-#   Explore → Tempo datasource → search by:
-#   - Service name: adk-agent or envoy-gateway-quickstart-ns/agentic-net-gateway
-#   - Tag: security_rule.name=tools-for-adk-agent-sa
-#   - Tag: security_rule.match=true/false
-#   - Tag: event.action=allow/deny
+# Agent UI: http://localhost:8081/dev-ui/?app=mcp_agent
+# Grafana:  http://localhost:3000 (admin/admin)
+#   Explore → Tempo → Service: envoy-gateway-quickstart-ns/agentic-net-gateway
+#   Tag: security_rule.name=tools-for-adk-agent-sa
+#   Tag: event.action=allow
 ```
