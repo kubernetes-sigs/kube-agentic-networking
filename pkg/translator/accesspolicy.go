@@ -27,7 +27,6 @@ import (
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -58,35 +57,32 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 		}
 	}
 
-	filterIndex := 1
-
 	// 1. Handle ExternalAuth policy (at most one)
 	if extAuthPolicy != nil {
 		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy)
-		rbacAny, err := anypb.New(rbacProto)
+		rbacTypedConfig, err := anypb.New(rbacProto)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, &hcm.HttpFilter{
-			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, filterIndex),
+			Name: constants.GatewayExtAuthRBACFilterName,
 			ConfigType: &hcm.HttpFilter_TypedConfig{
-				TypedConfig: rbacAny,
+				TypedConfig: rbacTypedConfig,
 			},
 		})
-		filterIndex++
 	}
 
 	// 2. Handle all Allow policies (merged into one filter)
 	if len(allowPolicies) > 0 {
 		rbacProto := t.mergeAllowPoliciesToRBAC(allowPolicies)
-		rbacAny, err := anypb.New(rbacProto)
+		rbacTypedConfig, err := anypb.New(rbacProto)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, &hcm.HttpFilter{
-			Name: fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, filterIndex),
+			Name: constants.GatewayAllowRBACFilterName,
 			ConfigType: &hcm.HttpFilter_TypedConfig{
-				TypedConfig: rbacAny,
+				TypedConfig: rbacTypedConfig,
 			},
 		})
 	}
@@ -96,81 +92,29 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 
 // buildBackendLevelRBACFilters creates placeholder RBAC filters for backends.
 // These will be overridden at the cluster level by actual policies.
-func (t *Translator) buildBackendLevelRBACFilters(count int) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildBackendLevelRBACFilters() ([]*hcm.HttpFilter, error) {
 	var filters []*hcm.HttpFilter
 	rbacProto := &rbacv3.RBAC{}
-	rbacAny, err := anypb.New(rbacProto)
+	rbacTypedConfig, err := anypb.New(rbacProto)
 	if err != nil {
 		return nil, err
 	}
 
-	for i := 0; i < count; i++ {
-		filters = append(filters, &hcm.HttpFilter{
-			Name: fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1),
-			ConfigType: &hcm.HttpFilter_TypedConfig{
-				TypedConfig: rbacAny,
-			},
-		})
-	}
+	filters = append(filters, &hcm.HttpFilter{
+		Name: constants.BackendExtAuthRBACFilterName,
+		ConfigType: &hcm.HttpFilter_TypedConfig{
+			TypedConfig: rbacTypedConfig,
+		},
+	})
+
+	filters = append(filters, &hcm.HttpFilter{
+		Name: constants.BackendAllowRBACFilterName,
+		ConfigType: &hcm.HttpFilter_TypedConfig{
+			TypedConfig: rbacTypedConfig,
+		},
+	})
+
 	return filters, nil
-}
-
-// calculateMaxBackendRBACFilters determines the maximum number of backend-level RBAC filters
-// needed for a Gateway by inspecting all reachable XBackends.
-func (t *Translator) calculateMaxBackendRBACFilters(gateway *gatewayv1.Gateway) int {
-	// 1. Identify all HTTPRoutes targeting this Gateway.
-	routes := t.getHTTPRoutesForGateway(gateway)
-
-	// 2. Identify all unique XBackends referenced by these routes.
-	backendNames := make(map[types.NamespacedName]struct{})
-	for _, route := range routes {
-		for _, rule := range route.Spec.Rules {
-			for _, beRef := range rule.BackendRefs {
-				if beRef.Group != nil && *beRef.Group == agenticv0alpha0.GroupName &&
-					beRef.Kind != nil && *beRef.Kind == "XBackend" {
-					ns := route.Namespace
-					if beRef.Namespace != nil {
-						ns = string(*beRef.Namespace)
-					}
-					backendNames[types.NamespacedName{Namespace: ns, Name: string(beRef.Name)}] = struct{}{}
-				}
-			}
-		}
-	}
-
-	maxCount := 0
-
-	// 3. For each backend, count its accepted policies after merging.
-	for beKey := range backendNames {
-		policies, err := t.findAccessPoliciesForTarget(agenticv0alpha0.GroupName, "XBackend", beKey.Namespace, beKey.Name)
-		if err != nil {
-			klog.Errorf("Failed to count policies for backend %s: %v", beKey, err)
-			continue
-		}
-
-		var hasAllow, hasExtAuth bool
-		for _, p := range policies {
-			if p.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth {
-				hasExtAuth = true
-			} else if p.Spec.Action == agenticv1alpha1.ActionTypeAllow {
-				hasAllow = true
-			}
-		}
-
-		count := 0
-		if hasExtAuth {
-			count++
-		}
-		if hasAllow {
-			count++
-		}
-
-		if count > maxCount {
-			maxCount = count
-		}
-	}
-
-	return maxCount
 }
 
 // buildBackendLevelRBACOverrides creates the TypedPerFilterConfig for a cluster, specifically for the RBAC filter overrides.
@@ -196,21 +140,17 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 		}
 	}
 
-	filterIndex := 1
-
 	// 1. Handle ExternalAuth policy (at most one)
 	if extAuthPolicy != nil {
 		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy)
 		rbacPerRouteProto := &rbacv3.RBACPerRoute{
 			Rbac: rbacProto,
 		}
-		rbacAny, err := anypb.New(rbacPerRouteProto)
+		rbacTypedConfig, err := anypb.New(rbacPerRouteProto)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal RBACPerRoute proto: %w", err)
 		}
-		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, filterIndex)
-		perFilterConfig[filterName] = rbacAny
-		filterIndex++
+		perFilterConfig[constants.BackendExtAuthRBACFilterName] = rbacTypedConfig
 	}
 
 	// 2. Handle all Allow policies (merged into one filter)
@@ -219,12 +159,11 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 		rbacPerRouteProto := &rbacv3.RBACPerRoute{
 			Rbac: rbacProto,
 		}
-		rbacAny, err := anypb.New(rbacPerRouteProto)
+		rbacTypedConfig, err := anypb.New(rbacPerRouteProto)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal RBACPerRoute proto: %w", err)
 		}
-		filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, filterIndex)
-		perFilterConfig[filterName] = rbacAny
+		perFilterConfig[constants.BackendAllowRBACFilterName] = rbacTypedConfig
 	}
 
 	return perFilterConfig, nil

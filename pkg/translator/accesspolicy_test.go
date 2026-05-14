@@ -17,7 +17,6 @@ limitations under the License.
 package translator
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -27,8 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
-	gatewayinformers "sigs.k8s.io/gateway-api/pkg/client/informers/externalversions"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
@@ -99,7 +96,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 				newTestAccessPolicy("gw-policy", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 			},
 			gatewaysToCheck: map[string][]string{
-				gwName: {fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1)},
+				gwName: {constants.GatewayAllowRBACFilterName},
 			},
 		},
 		{
@@ -109,9 +106,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 				newTestAccessPolicy("gw-policy-2", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns2/sa/sa2"),
 			},
 			gatewaysToCheck: map[string][]string{
-				gwName: {
-					fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
-				},
+				gwName: {constants.GatewayAllowRBACFilterName},
 			},
 		},
 		{
@@ -143,8 +138,8 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 				},
 			},
 			gatewaysToCheck: map[string][]string{
-				gwName:     {fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1)},
-				"other-gw": {fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1)},
+				gwName:     {constants.GatewayAllowRBACFilterName},
+				"other-gw": {constants.GatewayAllowRBACFilterName},
 			},
 		},
 	}
@@ -184,19 +179,19 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 
 func TestBuildBackendLevelRBACFilters(t *testing.T) {
 	tr := &Translator{}
-	filters, err := tr.buildBackendLevelRBACFilters(5)
+	filters, err := tr.buildBackendLevelRBACFilters()
 	if err != nil {
 		t.Fatalf("Failed to build filters: %v", err)
 	}
 
-	if len(filters) != 5 {
-		t.Errorf("Expected 5 filters, got %d", len(filters))
+	if len(filters) != 2 {
+		t.Errorf("Expected 2 filters, got %d", len(filters))
 	}
 
+	expectedNames := []string{constants.BackendExtAuthRBACFilterName, constants.BackendAllowRBACFilterName}
 	for i, f := range filters {
-		expectedName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
-		if f.GetName() != expectedName {
-			t.Errorf("Filter %d: expected name %s, got %s", i, expectedName, f.GetName())
+		if f.GetName() != expectedNames[i] {
+			t.Errorf("Filter %d: expected name %s, got %s", i, expectedNames[i], f.GetName())
 		}
 
 		// Verify it's an RBAC filter
@@ -204,133 +199,6 @@ func TestBuildBackendLevelRBACFilters(t *testing.T) {
 		if err := f.GetTypedConfig().UnmarshalTo(rbac); err != nil {
 			t.Errorf("Filter %d: failed to unmarshal to RBAC: %v", i, err)
 		}
-	}
-}
-
-// TODO: this test need to change, we should measure max policies as CR policies limit and not rbac filters limit.
-func TestCalculateMaxBackendRBACFilters(t *testing.T) {
-	ns := "test-ns"
-	gwName := "test-gw"
-
-	tests := []struct {
-		name     string
-		routes   []*gatewayv1.HTTPRoute
-		policies []*agenticv1alpha1.XAccessPolicy
-		want     int
-	}{
-		{
-			name:   "no routes, no policies",
-			routes: []*gatewayv1.HTTPRoute{},
-			want:   0,
-		},
-		{
-			name: "one route, no policies",
-			routes: []*gatewayv1.HTTPRoute{
-				newTestHTTPRoute("route-1", ns, gwName, "backend-1"),
-			},
-			want: 0,
-		},
-		{
-			name: "one route, two policies",
-			routes: []*gatewayv1.HTTPRoute{
-				newTestHTTPRoute("route-1", ns, gwName, "backend-1"),
-			},
-			policies: []*agenticv1alpha1.XAccessPolicy{
-				newTestAccessPolicy("policy-1", ns, "backend-1", "XBackend", "principal-1"),
-				newTestAccessPolicy("policy-2", ns, "backend-1", "XBackend", "principal-2"),
-			},
-			want: 1,
-		},
-		{
-			name: "two routes, multiple backends, max policies is 3",
-			routes: []*gatewayv1.HTTPRoute{
-				newTestHTTPRoute("route-1", ns, gwName, "backend-1"),
-				newTestHTTPRoute("route-2", ns, gwName, "backend-2"),
-			},
-			policies: []*agenticv1alpha1.XAccessPolicy{
-				newTestAccessPolicy("p1", ns, "backend-1", "XBackend", "pr1"),
-				newTestAccessPolicy("p2", ns, "backend-1", "XBackend", "pr2"),
-				newTestAccessPolicy("p3", ns, "backend-2", "XBackend", "pr3"),
-				newTestAccessPolicy("p4", ns, "backend-2", "XBackend", "pr4"),
-				newTestAccessPolicy("p5", ns, "backend-2", "XBackend", "pr5"),
-			},
-			want: 1,
-		},
-		{
-			name: "policies targeting multiple backends",
-			routes: []*gatewayv1.HTTPRoute{
-				newTestHTTPRoute("route-1", ns, gwName, "backend-1"),
-				newTestHTTPRoute("route-2", ns, gwName, "backend-2"),
-			},
-			policies: []*agenticv1alpha1.XAccessPolicy{
-				{
-					ObjectMeta: metav1.ObjectMeta{Name: "shared-policy", Namespace: ns},
-					Spec: agenticv1alpha1.AccessPolicySpec{
-						TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
-							{
-								LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
-									Group: gatewayv1.Group(agenticv0alpha0.GroupName),
-									Kind:  gatewayv1.Kind("XBackend"),
-									Name:  "backend-1",
-								},
-							},
-							{
-								LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
-									Group: gatewayv1.Group(agenticv0alpha0.GroupName),
-									Kind:  gatewayv1.Kind("XBackend"),
-									Name:  "backend-2",
-								},
-							},
-						},
-						Rules: []agenticv1alpha1.AccessRule{{Name: "rule-1"}},
-					},
-					Status: acceptedStatus,
-				},
-				newTestAccessPolicy("p1", ns, "backend-1", "XBackend", "pr1"),
-			},
-			want: 1, // backend-1 has 2 policies (merged), backend-2 has 1 policy
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Setup fakes
-			gwObjs := make([]runtime.Object, len(tt.routes))
-			for i, r := range tt.routes {
-				gwObjs[i] = r
-			}
-			gwClient := gatewayclient.NewSimpleClientset(gwObjs...)
-			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
-			routeLister := gwInformerFactory.Gateway().V1().HTTPRoutes().Lister()
-			for _, r := range tt.routes {
-				_ = gwInformerFactory.Gateway().V1().HTTPRoutes().Informer().GetIndexer().Add(r)
-			}
-
-			agenticObjs := make([]runtime.Object, len(tt.policies))
-			for i, p := range tt.policies {
-				agenticObjs[i] = p
-			}
-			agenticClient := agenticclient.NewSimpleClientset(agenticObjs...)
-			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
-			policyLister := agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
-			for _, p := range tt.policies {
-				_ = agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Add(p)
-			}
-
-			tr := &Translator{
-				httprouteLister:    routeLister,
-				accessPolicyLister: policyLister,
-			}
-
-			gw := &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns},
-			}
-
-			got := tr.calculateMaxBackendRBACFilters(gw)
-			if got != tt.want {
-				t.Errorf("calculateMaxBackendRBACFilters() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -356,7 +224,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 				newTestAccessPolicy("be-policy", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns1/sa/sa1"),
 			},
 			backendsToCheck: map[string][]string{
-				beName: {fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1)},
+				beName: {constants.BackendAllowRBACFilterName},
 			},
 		},
 		{
@@ -366,9 +234,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 				newTestAccessPolicy("be-policy-2", ns, beName, "XBackend", "spiffe://cluster.local/ns/ns2/sa/sa2"),
 			},
 			backendsToCheck: map[string][]string{
-				beName: {
-					fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
-				},
+				beName: {constants.BackendAllowRBACFilterName},
 			},
 		},
 		{
@@ -400,8 +266,8 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 				},
 			},
 			backendsToCheck: map[string][]string{
-				beName:          {fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1)},
-				"other-backend": {fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1)},
+				beName:          {constants.BackendAllowRBACFilterName},
+				"other-backend": {constants.BackendAllowRBACFilterName},
 			},
 		},
 	}

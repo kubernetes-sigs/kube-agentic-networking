@@ -447,10 +447,8 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 3. Add Backend-level RBAC filters.
-	// We build only placeholder filters for backends that have policies at this stage.
-	// These will be overridden at the cluster/route level.
-	backendRBACFiltersCount := t.calculateMaxBackendRBACFilters(gateway)
-	backendRBACFilters, err := t.buildBackendLevelRBACFilters(backendRBACFiltersCount)
+	// We always build exactly two placeholder filters for backends.
+	backendRBACFilters, err := t.buildBackendLevelRBACFilters()
 	if err != nil {
 		return nil, err
 	}
@@ -467,18 +465,47 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 		return nil, err
 	}
 
-	// Compose the list at the end to ensure the correct order.
-	// IMPORTANT: Order matters here!
-	// 1. The MCP filter must come first to populate metadata for RBAC.
-	// 2. Gateway-level RBAC filters must come before backend-level RBAC filters.
-	// 3. Backend-level RBAC filters must come before the ext_authz filter to ensure evaluation of RBAC shadow rules that trigger ext_authz.
-	// 4. Ext_authz filter must come before router filter to enforce access control before routing.
-	// 5. Router filter must come last to handle routing after all other filters have processed the request.
+	// Separate Gateway filters by purpose
+	var gatewayExtAuthFilter, gatewayAllowFilter *hcm.HttpFilter
+	for _, f := range gatewayRBACFilters {
+		if f.GetName() == constants.GatewayExtAuthRBACFilterName {
+			gatewayExtAuthFilter = f
+		} else if f.GetName() == constants.GatewayAllowRBACFilterName {
+			gatewayAllowFilter = f
+		}
+	}
+
+	// Separate Backend filters by purpose
+	var backendExtAuthFilter, backendAllowFilter *hcm.HttpFilter
+	for _, f := range backendRBACFilters {
+		if f.GetName() == constants.BackendExtAuthRBACFilterName {
+			backendExtAuthFilter = f
+		} else if f.GetName() == constants.BackendAllowRBACFilterName {
+			backendAllowFilter = f
+		}
+	}
+
+	// Compose the list in strict order:
+	// 1. MCP (must be first to populate metadata for RBAC)
+	// 2. ExternalAuthRBAC triggers (shadowRules, Gateway then Backend)
+	// 3. ExtAuthz (must be between triggers and allows)
+	// 4. Allows (Gateway then Backend)
+	// 5. Router (must be last)
 	var filters []*hcm.HttpFilter
 	filters = append(filters, mcpFilter)
-	filters = append(filters, gatewayRBACFilters...)
-	filters = append(filters, backendRBACFilters...)
+	if gatewayExtAuthFilter != nil {
+		filters = append(filters, gatewayExtAuthFilter)
+	}
+	if backendExtAuthFilter != nil {
+		filters = append(filters, backendExtAuthFilter)
+	}
 	filters = append(filters, extAuthzFilters...)
+	if gatewayAllowFilter != nil {
+		filters = append(filters, gatewayAllowFilter)
+	}
+	if backendAllowFilter != nil {
+		filters = append(filters, backendAllowFilter)
+	}
 	filters = append(filters, routerFilter)
 
 	return filters, nil

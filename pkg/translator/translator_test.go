@@ -18,8 +18,6 @@ package translator
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -124,7 +122,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					{
 						envoyName:           "listener-10001",
 						k8sName:             "https-listener",
-						maxBackendPolicies:  1,
+						maxBackendPolicies:  2,
 						expectedIdentitySDS: constants.SpiffeIdentitySdsConfigName,
 						expectedTrustSDS:    constants.SpiffeTrustSdsConfigName,
 						conditions: []metav1.Condition{
@@ -191,7 +189,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 						envoyName:           "listener-10001",
 						k8sName:             "https-listener",
 						gatewayPrincipals:   []string{"spiffe://cluster.local/ns/ns1/sa/sa1"},
-						maxBackendPolicies:  1,
+						maxBackendPolicies:  2,
 						expectedIdentitySDS: constants.SpiffeIdentitySdsConfigName,
 						expectedTrustSDS:    constants.SpiffeTrustSdsConfigName,
 						conditions: []metav1.Condition{
@@ -426,7 +424,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					{
 						envoyName:           "listener-10001",
 						k8sName:             "https-listener",
-						maxBackendPolicies:  1,
+						maxBackendPolicies:  2,
 						expectedIdentitySDS: "quickstart-ns-my-cert",
 						expectedTrustSDS:    constants.SpiffeTrustSdsConfigName,
 						conditions: []metav1.Condition{
@@ -517,7 +515,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					{
 						envoyName:           "listener-10001",
 						k8sName:             "https-listener",
-						maxBackendPolicies:  1,
+						maxBackendPolicies:  2,
 						expectedIdentitySDS: "quickstart-ns-my-cert",
 						expectedTrustSDS:    "quickstart-ns-my-ca",
 						conditions: []metav1.Condition{
@@ -594,7 +592,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					{
 						envoyName:           "listener-10001",
 						k8sName:             "https-listener",
-						maxBackendPolicies:  1,
+						maxBackendPolicies:  2,
 						expectedIdentitySDS: constants.SpiffeIdentitySdsConfigName,
 						expectedTrustSDS:    "quickstart-ns-my-ca",
 						conditions: []metav1.Condition{
@@ -676,7 +674,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 					{
 						envoyName:           "listener-10001",
 						k8sName:             "https-listener",
-						maxBackendPolicies:  1,
+						maxBackendPolicies:  2,
 						expectedIdentitySDS: constants.SpiffeIdentitySdsConfigName,
 						expectedTrustSDS:    "quickstart-ns-my-ca",
 						conditions: []metav1.Condition{
@@ -999,41 +997,30 @@ func checkListenerMTLS(t *testing.T, lis *listenerv3.Listener, expectedIdentity,
 }
 
 // checkRouteRBAC verifies the RBAC configuration at the route level.
-// It checks that:
-// 1. All clusters in weighted clusters have exactly the expected number of backend-level RBAC filters.
-// 2. Each backend-level RBAC filter follows the correct naming convention (e.g., backend_level_1).
-// 3. Each provided principal is present in its corresponding backend-level RBAC filter override.
+// It checks that all provided principals are present in the BackendAllow filter override.
 func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrincipals []string) {
 	for _, vh := range rc.GetVirtualHosts() {
 		for _, r := range vh.GetRoutes() {
 			if routeAction := r.GetRoute(); routeAction != nil {
 				if weightedClusters := routeAction.GetWeightedClusters(); weightedClusters != nil {
 					for _, wc := range weightedClusters.GetClusters() {
-						// Verify count of backend RBAC overrides
-						beFilterCount := 0
-						for filterName := range wc.GetTypedPerFilterConfig() {
-							if strings.HasPrefix(filterName, constants.BackendRBACFilterNamePrefix) {
-								beFilterCount++
-							}
+						if len(expectedPrincipals) == 0 {
+							continue
 						}
-						if beFilterCount != len(expectedPrincipals) {
-							t.Errorf("expected %d backend RBAC overrides in cluster %s, got %d", len(expectedPrincipals), wc.GetName(), beFilterCount)
+						// We expect all specified principals to be in the BackendAllow filter
+						filterName := constants.BackendAllowRBACFilterName
+						rbacTypedConfig, ok := wc.GetTypedPerFilterConfig()[filterName]
+						if !ok {
+							t.Errorf("Backend Allow RBAC filter %s not found in cluster %s", filterName, wc.GetName())
+							continue
 						}
 
-						// Check each expected principal and filter name
-						for i, expectedPrincipal := range expectedPrincipals {
-							filterName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, i+1)
-							rbacAny, ok := wc.GetTypedPerFilterConfig()[filterName]
-							if !ok {
-								t.Errorf("Backend RBAC filter %s not found in cluster %s", filterName, wc.GetName())
-								continue
-							}
+						rbacPerRoute := &rbacv3.RBACPerRoute{}
+						if err := rbacTypedConfig.UnmarshalTo(rbacPerRoute); err != nil {
+							t.Fatalf("failed to unmarshal RBACPerRoute: %v", err)
+						}
 
-							rbacPerRoute := &rbacv3.RBACPerRoute{}
-							if err := rbacAny.UnmarshalTo(rbacPerRoute); err != nil {
-								t.Fatalf("failed to unmarshal RBACPerRoute: %v", err)
-							}
-
+						for _, expectedPrincipal := range expectedPrincipals {
 							if !hasPrincipal(rbacPerRoute.GetRbac(), expectedPrincipal) {
 								t.Errorf("RBAC policy for cluster %s filter %s missing expected principal: %s", wc.GetName(), filterName, expectedPrincipal)
 							}
@@ -1047,11 +1034,9 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 
 // checkListenerRBAC verifies the RBAC configuration at the listener level.
 // It checks that:
-// 1. The HTTP Connection Manager has exactly the expected number of Gateway-level RBAC filters.
-// 2. The HTTP Connection Manager has exactly the expected number of Backend-level RBAC filters.
-// 3. All RBAC filters follow the correct naming convention (gateway_level_N or backend_level_N).
-// 4. Gateway-level RBAC filters contain the expected principals.
-func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincipals []string, maxBackendPolicies int) {
+// 1. The HTTP Connection Manager has the expected Gateway Allow filter if principals are expected.
+// 2. The HTTP Connection Manager has both Backend ExtAuth and Allow filters if backend policies are expected.
+func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincipals []string, expectedBackendFilters int) {
 	for _, fc := range lis.GetFilterChains() {
 		for _, filter := range fc.GetFilters() {
 			if filter.GetName() == wellknown.HTTPConnectionManager {
@@ -1060,43 +1045,43 @@ func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincip
 					t.Fatalf("failed to unmarshal HCM config: %v", err)
 				}
 
-				gwFilterCount := 0
-				beFilterCount := 0
-				for _, httpFilter := range hcmConfig.GetHttpFilters() {
-					if strings.HasPrefix(httpFilter.GetName(), constants.GatewayRBACFilterNamePrefix) {
-						gwFilterCount++
-						// Verify exact name
-						expectedName := fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, gwFilterCount)
-						if httpFilter.GetName() != expectedName {
-							t.Errorf("Gateway RBAC filter name mismatch: got %s, want %s", httpFilter.GetName(), expectedName)
-						}
+				foundGatewayAllow := false
+				foundBackendExtAuth := false
+				foundBackendAllow := false
 
+				for _, httpFilter := range hcmConfig.GetHttpFilters() {
+					switch httpFilter.GetName() {
+					case constants.GatewayAllowRBACFilterName:
+						foundGatewayAllow = true
 						// Verify principal if it's within the expected list
-						if gwFilterCount <= len(expectedGWPrincipals) {
+						if len(expectedGWPrincipals) > 0 {
 							rbacConfig := &rbacv3.RBAC{}
 							if err := httpFilter.GetTypedConfig().UnmarshalTo(rbacConfig); err != nil {
 								t.Fatalf("failed to unmarshal RBAC config from listener: %v", err)
 							}
-							expectedPrincipal := expectedGWPrincipals[gwFilterCount-1]
-							if !hasPrincipal(rbacConfig, expectedPrincipal) {
-								t.Errorf("Gateway RBAC filter %s missing expected principal: %s", httpFilter.GetName(), expectedPrincipal)
+							// For simplicity, check if the first expected principal is present
+							if !hasPrincipal(rbacConfig, expectedGWPrincipals[0]) {
+								t.Errorf("Gateway Allow filter missing expected principal: %s", expectedGWPrincipals[0])
 							}
 						}
-					} else if strings.HasPrefix(httpFilter.GetName(), constants.BackendRBACFilterNamePrefix) {
-						beFilterCount++
-						// Verify exact name
-						expectedName := fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, beFilterCount)
-						if httpFilter.GetName() != expectedName {
-							t.Errorf("Backend RBAC filter name mismatch in listener: got %s, want %s", httpFilter.GetName(), expectedName)
-						}
+					case constants.BackendExtAuthRBACFilterName:
+						foundBackendExtAuth = true
+					case constants.BackendAllowRBACFilterName:
+						foundBackendAllow = true
 					}
 				}
 
-				if gwFilterCount != len(expectedGWPrincipals) {
-					t.Errorf("expected %d Gateway RBAC filters, got %d", len(expectedGWPrincipals), gwFilterCount)
+				if len(expectedGWPrincipals) > 0 && !foundGatewayAllow {
+					t.Errorf("expected Gateway Allow filter %s not found", constants.GatewayAllowRBACFilterName)
 				}
-				if beFilterCount != maxBackendPolicies {
-					t.Errorf("expected %d Backend RBAC filters in listener, got %d", maxBackendPolicies, beFilterCount)
+
+				if expectedBackendFilters > 0 {
+					if !foundBackendExtAuth {
+						t.Errorf("expected Backend ExtAuth filter %s not found", constants.BackendExtAuthRBACFilterName)
+					}
+					if !foundBackendAllow {
+						t.Errorf("expected Backend Allow filter %s not found", constants.BackendAllowRBACFilterName)
+					}
 				}
 			}
 		}

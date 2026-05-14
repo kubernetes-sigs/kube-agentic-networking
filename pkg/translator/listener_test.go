@@ -17,7 +17,6 @@ limitations under the License.
 package translator
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -321,6 +320,8 @@ func TestBuildHTTPFilters(t *testing.T) {
 			policies: []runtime.Object{},
 			expected: []string{
 				"envoy.filters.http.mcp",
+				constants.BackendExtAuthRBACFilterName,
+				constants.BackendAllowRBACFilterName,
 				"envoy.filters.http.router",
 			},
 		},
@@ -332,7 +333,9 @@ func TestBuildHTTPFilters(t *testing.T) {
 			},
 			expected: []string{
 				"envoy.filters.http.mcp",
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
+				constants.BackendExtAuthRBACFilterName,
+				constants.GatewayAllowRBACFilterName,
+				constants.BackendAllowRBACFilterName,
 				"envoy.filters.http.router",
 			},
 		},
@@ -347,7 +350,8 @@ func TestBuildHTTPFilters(t *testing.T) {
 			},
 			expected: []string{
 				"envoy.filters.http.mcp",
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1),
+				constants.BackendExtAuthRBACFilterName,
+				constants.BackendAllowRBACFilterName,
 				"envoy.filters.http.router",
 			},
 		},
@@ -381,8 +385,10 @@ func TestBuildHTTPFilters(t *testing.T) {
 			},
 			expected: []string{
 				"envoy.filters.http.mcp",
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1),
+				constants.GatewayExtAuthRBACFilterName,
+				constants.BackendExtAuthRBACFilterName,
 				"envoy.filters.http.ext_authz",
+				constants.BackendAllowRBACFilterName,
 				"envoy.filters.http.router",
 			},
 		},
@@ -454,11 +460,11 @@ func TestBuildHTTPFilters(t *testing.T) {
 			},
 			expected: []string{
 				"envoy.filters.http.mcp",
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 1), // ext-auth-policy-1
-				fmt.Sprintf("%s%d", constants.GatewayRBACFilterNamePrefix, 2), // merged allows (gw-policy-1, gw-policy-2)
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 1), // ext-auth-policy-3
-				fmt.Sprintf("%s%d", constants.BackendRBACFilterNamePrefix, 2), // merged allows (be-policy-1, be-policy-2)
-				"envoy.filters.http.ext_authz",                                // ext-auth-policy-1, ext-auth-policy-3
+				constants.GatewayExtAuthRBACFilterName,
+				constants.BackendExtAuthRBACFilterName,
+				"envoy.filters.http.ext_authz",
+				constants.GatewayAllowRBACFilterName,
+				constants.BackendAllowRBACFilterName,
 				"envoy.filters.http.router",
 			},
 		},
