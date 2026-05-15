@@ -89,6 +89,8 @@ func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 				Match:                  routeMatch,
 				RequestHeadersToAdd:    headersToAdd,
 				RequestHeadersToRemove: headersToRemove,
+				// Sets the span name for gateway traces; also used by the OTel
+				// collector transform to identify gateway spans by name.
 				Decorator: &routev3.Decorator{
 					Operation: "ingress",
 				},
