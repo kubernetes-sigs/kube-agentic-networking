@@ -40,6 +40,7 @@ ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 AGENT_NAME = "multi_mcp_agent"
 AGENT_SYSTEM = "huggingface"
 
+# Default to Hugging Face mode if provided, then Gemini, then Ollama
 if hf_model:
     logger.info(f"Using Hugging Face model: {hf_model}")
     model = LiteLlm(model=hf_model)
@@ -48,9 +49,11 @@ elif gemini_model:
     logger.info(f"Using Gemini model: {gemini_model}")
     model = gemini_model
 else:
+    # Use Ollama (either custom URL or default host.docker.internal)
     AGENT_SYSTEM = "ollama"
     base_url = ollama_base_url or "http://host.docker.internal:11434"
 
+    # LiteLLM requires OPENAI_API_KEY even for Ollama's openai-compatible endpoint
     if not os.environ.get("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = "ollama"
         logger.info("Setting OPENAI_API_KEY to dummy value for Ollama compatibility")
@@ -128,6 +131,7 @@ def _init_mcp(name: str, mcp_type: str) -> McpToolset:
     return toolset
 
 
+# Initialize MCP connections through the Envoy sidecar
 local_mcp = _init_mcp("local_mcp", "local")
 remote_mcp = _init_mcp("remote_mcp", "remote")
 
