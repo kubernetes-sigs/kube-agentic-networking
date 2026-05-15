@@ -182,8 +182,8 @@ create_kind_cluster() {
 
 install_metallb_step() {
   info "Step 1.5/9: Installing MetalLB..."
-  source dev/ci/lib.sh
-  install_metallb
+  # Subshell prevents lib.sh functions from overwriting this script's identically named functions.
+  (source dev/ci/lib.sh && install_metallb)
 }
 
 
