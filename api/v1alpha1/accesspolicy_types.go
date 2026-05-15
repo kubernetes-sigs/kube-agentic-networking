@@ -60,13 +60,15 @@ type AccessPolicySpec struct {
 	ExternalAuth *gwapiv1.HTTPExternalAuthFilter `json:"externalAuth,omitempty"`
 
 	// Rules defines a list of rules to be applied to the target.
-	// An AccessPolicy must have at least one rule.
-	// +required
-	// +kubebuilder:validation:MinItems=1
+	// The interpretation of these rules depends on the Action:
+	// - For ActionTypeAllow: A request is allowed if it matches any of the rules.
+	// - For ActionTypeExternalAuth: A request is delegated to the external authorizer if it matches any of the rules.
+	// If omitted, the policy applies to all traffic (equivalent to matching any request).
+	// +optional
 	// +kubebuilder:validation:MaxItems=10
 	// +listType=atomic
 	// +kubebuilder:validation:XValidation:rule="self.all(r, self.filter(x, x.name == r.name).size() == 1)",message="AccessRule names must be unique"
-	Rules []AccessRule `json:"rules"`
+	Rules []AccessRule `json:"rules,omitempty"`
 }
 
 // AccessPolicyActionType identifies a type of action for access policy.
@@ -79,6 +81,16 @@ const (
 
 	// ActionTypeExternalAuth is used to identify that the request should be delegated to an external auth service if rules match.
 	ActionTypeExternalAuth AccessPolicyActionType = "ExternalAuth"
+)
+
+// +kubebuilder:validation:Enum=SKIP_BASE_PROTOCOL_METHODS;MATCH_BASE_PROTOCOL_METHODS
+type MCPBaseProtocolMethodsOption string
+
+const (
+	// SKIP_BASE_PROTOCOL_METHODS skips matching on the base MCP protocol methods.
+	SKIP_BASE_PROTOCOL_METHODS MCPBaseProtocolMethodsOption = "SKIP_BASE_PROTOCOL_METHODS"
+	// MATCH_BASE_PROTOCOL_METHODS matches on the base MCP protocol methods.
+	MATCH_BASE_PROTOCOL_METHODS MCPBaseProtocolMethodsOption = "MATCH_BASE_PROTOCOL_METHODS"
 )
 
 // AccessRule specifies an authorization rule for a specified target.
@@ -204,6 +216,18 @@ type MCPAttributes struct {
 	// +listType=map
 	// +listMapKey=name
 	Methods []MCPMethod `json:"methods,omitempty"`
+
+	// MCPBaseProtocolMethodsOption specifies whether to match on base MCP protocol methods.
+	// Optional. If specified, matches on the MCP protocol’s non-access specific methods namely:
+	// * initialize
+	// * completion/
+	// * logging/
+	// * notifications/
+	// * ping
+	// Defaults to SKIP_BASE_PROTOCOL_METHODS if not specified
+	// +optional
+	// +kubebuilder:default=SKIP_BASE_PROTOCOL_METHODS
+	MCPBaseProtocolMethodsOption MCPBaseProtocolMethodsOption `json:"mcpBaseProtocolMethodsOption,omitempty"`
 }
 
 // MCPMethod defines a specific MCP method and its associated parameters.

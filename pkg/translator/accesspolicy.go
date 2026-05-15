@@ -172,15 +172,7 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 // buildRBACConfigWithCommonPolicies generates an RBAC config for an AccessPolicy.
 // It includes the common policies needed for MCP session management to avoid blocking basic operations.
 func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
-	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy)
-
-	// Add common policies to avoid blocking basic MCP operations.
-	// These are added to the 'Rules' section which is where allowed traffic is defined.
-	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
-
-	return rbacConfig
+	return t.translateAccessPolicyToRBAC(accessPolicy)
 }
 
 func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
@@ -238,10 +230,6 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 		}
 	}
 
-	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
-
 	return rbacConfig
 }
 
@@ -293,6 +281,34 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 
 func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
+
+	if len(accessPolicy.Spec.Rules) == 0 {
+		if accessPolicy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth && accessPolicy.Spec.ExternalAuth != nil {
+			hash, err := externalAuthUniqueID(accessPolicy.Spec.ExternalAuth)
+			if err != nil {
+				klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
+				return rbacConfig
+			}
+			rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash)
+
+			rbacPolicy := &rbacconfigv3.Policy{
+				Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
+				Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+			}
+
+			policyName := accessPolicy.Name // Use policy name as rule name
+
+			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
+
+			// Ensure the regular Rules section transparently allows all traffic through so that secondary policies evaluate non-matching streams.
+			allowAllPolicy := &rbacconfigv3.Policy{
+				Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
+				Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+			}
+			addPolicyToRBACRules(rbacConfig, policyName, allowAllPolicy)
+		}
+		return rbacConfig
+	}
 
 	// Each AccessRule in the XAccessPolicy is translated into a named policy within the Envoy RBAC filter.
 	for _, rule := range accessPolicy.Spec.Rules {
@@ -378,13 +394,24 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 }
 
 func (t *Translator) translateMCPToRBACPermission(mcp *agenticv1alpha1.MCPAttributes) *rbacconfigv3.Permission {
-	if mcp == nil || len(mcp.Methods) == 0 {
+	if mcp == nil {
 		return buildAnyPermission()
 	}
 
 	var methodPermissions []*rbacconfigv3.Permission
 	for _, method := range mcp.Methods {
 		methodPermissions = append(methodPermissions, translateMCPMethodToRBACPermission(method))
+	}
+
+	if mcp.MCPBaseProtocolMethodsOption == agenticv1alpha1.MATCH_BASE_PROTOCOL_METHODS {
+		methodPermissions = append(methodPermissions, buildBaseProtocolMethodsPermission())
+	}
+
+	if len(methodPermissions) == 0 {
+		// If both methods and base protocol methods are empty/skipped, we fall back to allowing anything
+		// to maintain backward compatibility for policies that don't specify methods.
+		// TODO: Re-evaluate this default if strict explicit allow is required when `mcp` is present but empty.
+		return buildAnyPermission()
 	}
 
 	if len(methodPermissions) == 1 {
@@ -395,6 +422,32 @@ func (t *Translator) translateMCPToRBACPermission(mcp *agenticv1alpha1.MCPAttrib
 		Rule: &rbacconfigv3.Permission_OrRules{
 			OrRules: &rbacconfigv3.Permission_Set{
 				Rules: methodPermissions,
+			},
+		},
+	}
+}
+
+func buildBaseProtocolMethodsPermission() *rbacconfigv3.Permission {
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_SourcedMetadata{
+			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+				MetadataMatcher: &matcherv3.MetadataMatcher{
+					Filter: constants.MCPProxyFilterName,
+					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+					Value: &matcherv3.ValueMatcher{
+						MatchPattern: &matcherv3.ValueMatcher_OrMatch{
+							OrMatch: &matcherv3.OrMatcher{
+								ValueMatchers: []*matcherv3.ValueMatcher{
+									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "initialize"}}}},
+									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: "completion/"}}}},
+									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: "logging/"}}}},
+									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: "notifications/"}}}},
+									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "ping"}}}},
+								},
+							},
+						},
+					},
+				},
 			},
 		},
 	}

@@ -310,7 +310,17 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 	tr := &Translator{}
 	policy := &agenticv1alpha1.XAccessPolicy{
 		Spec: agenticv1alpha1.AccessPolicySpec{
-			Rules: []agenticv1alpha1.AccessRule{{Name: "custom-rule"}},
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "custom-rule",
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP: agenticv1alpha1.MCPAttributes{
+							MCPBaseProtocolMethodsOption: agenticv1alpha1.MATCH_BASE_PROTOCOL_METHODS,
+						},
+					},
+				},
+			},
 		},
 	}
 
@@ -318,15 +328,59 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 
 	expectedPolicies := []string{
 		"custom-rule",
-		constants.AllowMCPSessionClosePolicyName,
-		constants.AllowAnyoneToInitializeAndListToolsPolicyName,
-		constants.AllowHTTPGetPolicyName,
 	}
 
-	for _, p := range expectedPolicies {
-		if _, ok := rbac.GetRules().GetPolicies()[p]; !ok {
-			t.Errorf("Expected policy %s not found", p)
-		}
+	if len(rbac.GetRules().GetPolicies()) != len(expectedPolicies) {
+		t.Errorf("Expected %d policies, got %d", len(expectedPolicies), len(rbac.GetRules().GetPolicies()))
+	}
+
+	rbacPolicy := rbac.GetRules().GetPolicies()["custom-rule"]
+	if rbacPolicy == nil {
+		t.Fatal("Expected policy 'custom-rule' not found")
+	}
+
+	permissions := rbacPolicy.GetPermissions()
+	if len(permissions) != 1 {
+		t.Errorf("Expected 1 permission, got %d", len(permissions))
+	}
+}
+
+func TestBuildRBACConfigWithoutCommonPolicies(t *testing.T) {
+	tr := &Translator{}
+	policy := &agenticv1alpha1.XAccessPolicy{
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "custom-rule",
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP:  agenticv1alpha1.MCPAttributes{
+							// Defaults to SKIP_BASE_PROTOCOL_METHODS
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rbac := tr.buildRBACConfigWithCommonPolicies(policy)
+
+	expectedPolicies := []string{
+		"custom-rule",
+	}
+
+	if len(rbac.GetRules().GetPolicies()) != len(expectedPolicies) {
+		t.Errorf("Expected %d policies, got %d", len(expectedPolicies), len(rbac.GetRules().GetPolicies()))
+	}
+
+	rbacPolicy := rbac.GetRules().GetPolicies()["custom-rule"]
+	if rbacPolicy == nil {
+		t.Fatal("Expected policy 'custom-rule' not found")
+	}
+
+	permissions := rbacPolicy.GetPermissions()
+	if len(permissions) != 1 || !permissions[0].GetAny() {
+		t.Errorf("Expected 'Any' permission for empty methods and skipped base methods")
 	}
 }
 
@@ -711,6 +765,34 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			expectedShadowRules: map[string]expectedRule{
 				"rule-ext-auth": {
 					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
+				},
+			},
+			expectShadowStatPrefix: true,
+		},
+		{
+			name: "external authz with empty rules",
+			accessPolicy: &agenticv1alpha1.XAccessPolicy{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "policy-ext-auth-empty-rules"},
+				Spec: agenticv1alpha1.AccessPolicySpec{
+					Action: agenticv1alpha1.ActionTypeExternalAuth,
+					ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc",
+						},
+					},
+				},
+			},
+			expectedRules: map[string]expectedRule{
+				"policy-ext-auth-empty-rules": {
+					permissions:         []string{},
+					expectAnyPermission: true,
+				},
+			},
+			expectedShadowRules: map[string]expectedRule{
+				"policy-ext-auth-empty-rules": {
 					permissions:         []string{},
 					expectAnyPermission: true,
 				},

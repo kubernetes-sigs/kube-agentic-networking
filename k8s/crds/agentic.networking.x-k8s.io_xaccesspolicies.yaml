@@ -1067,7 +1067,10 @@ spec:
               rules:
                 description: |-
                   Rules defines a list of rules to be applied to the target.
-                  An AccessPolicy must have at least one rule.
+                  The interpretation of these rules depends on the Action:
+                  - For ActionTypeAllow: A request is allowed if it matches any of the rules.
+                  - For ActionTypeExternalAuth: A request is delegated to the external authorizer if it matches any of the rules.
+                  If omitted, the policy applies to all traffic (equivalent to matching any request).
                 items:
                   description: AccessRule specifies an authorization rule for a specified
                     target.
@@ -1092,6 +1095,21 @@ spec:
                             If omitted, the policy does not check MCP-level parameters, allowing all MCP traffic that
                             successfully passes through the matched HTTP routing envelope.
                           properties:
+                            mcpBaseProtocolMethodsOption:
+                              default: SKIP_BASE_PROTOCOL_METHODS
+                              description: |-
+                                MCPBaseProtocolMethodsOption specifies whether to match on base MCP protocol methods.
+                                Optional. If specified, matches on the MCP protocol’s non-access specific methods namely:
+                                * initialize
+                                * completion/
+                                * logging/
+                                * notifications/
+                                * ping
+                                Defaults to SKIP_BASE_PROTOCOL_METHODS if not specified
+                              enum:
+                              - SKIP_BASE_PROTOCOL_METHODS
+                              - MATCH_BASE_PROTOCOL_METHODS
+                              type: string
                             methods:
                               description: |-
                                 Methods is a list of specific MCP functional methods to match.
@@ -1236,7 +1254,6 @@ spec:
                   - source
                   type: object
                 maxItems: 10
-                minItems: 1
                 type: array
                 x-kubernetes-list-type: atomic
                 x-kubernetes-validations:
@@ -1311,7 +1328,6 @@ spec:
                   rule: self.all(ref, ref.kind == self[0].kind)
             required:
             - action
-            - rules
             - targetRefs
             type: object
             x-kubernetes-validations:
