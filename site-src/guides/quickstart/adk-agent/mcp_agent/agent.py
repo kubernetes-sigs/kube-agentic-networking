@@ -22,8 +22,6 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnecti
 import contextvars
 
 from opentelemetry import trace, context
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-
 from .genai_spans import GenAISpanHelper
 
 logging.basicConfig(
@@ -68,21 +66,18 @@ else:
     )
 
 tracer = trace.get_tracer(__name__)
-propagator = TraceContextTextMapPropagator()
 genai_helper = GenAISpanHelper(tracer)
 
-# ContextVar-based span tracking for trace context propagation across async boundaries.
-# When ADK calls a tool at runtime, before_tool_callback creates a gen_ai.tool.call span
-# and attaches it to the current context. The httpx instrumentation then injects traceparent
-# from this active span into the outgoing HTTP request. The gateway extracts traceparent and
-# creates its ingress span as a child — linking agent tool call → gateway under the same trace.
+# Tracks the active tool call span across async boundaries so httpx instrumentation
+# can inject the correct traceparent into outgoing requests to the gateway.
 _active_tool_span: contextvars.ContextVar = contextvars.ContextVar("_active_tool_span", default=None)
 
 
 def _before_tool_callback(tool, args, tool_context):
-    """Create a gen_ai.tool.call span before each MCP tool invocation.
+    """Create a gen_ai.tool.call span and attach it to the current context.
 
-    Signature: (tool: BaseTool, args: dict, tool_context: ToolContext) -> Optional[dict]
+    ADK's httpx instrumentation reads the active span to inject traceparent,
+    linking this agent span to the gateway's ingress span in the same trace.
     """
     tool_name = getattr(tool, "name", str(tool))
     span = tracer.start_span(
@@ -104,10 +99,7 @@ def _before_tool_callback(tool, args, tool_context):
 
 
 def _after_tool_callback(tool, args, tool_context, tool_response):
-    """End the gen_ai.tool.call span after the MCP tool completes.
-
-    Signature: (tool: BaseTool, args: dict, tool_context: ToolContext, tool_response: dict) -> Optional[dict]
-    """
+    """End the gen_ai.tool.call span after the MCP tool completes."""
     entry = _active_tool_span.get()
     if entry is None:
         return None

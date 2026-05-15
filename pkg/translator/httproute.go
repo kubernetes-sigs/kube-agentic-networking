@@ -89,7 +89,6 @@ func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 				Match:                  routeMatch,
 				RequestHeadersToAdd:    headersToAdd,
 				RequestHeadersToRemove: headersToRemove,
-				// Set the tracing operation name to "ingress" for gateway-level spans
 				Decorator: &routev3.Decorator{
 					Operation: "ingress",
 				},

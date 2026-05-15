@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Grafana deployment for visualizing traces collected by the observability stack.
+# Pre-configured with Tempo as the default datasource for querying distributed traces.
+# Access via: kubectl port-forward svc/grafana 3000:3000 -n quickstart-ns
+
 ---
+# Datasource provisioning: auto-configures Tempo as the trace backend
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -39,6 +44,7 @@ data:
             enabled: true
 
 ---
+# Grafana server configuration: anonymous admin access for local quickstart use
 apiVersion: v1
 kind: ConfigMap
 metadata:

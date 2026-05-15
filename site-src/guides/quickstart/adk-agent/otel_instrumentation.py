@@ -46,37 +46,16 @@ def setup_otel_tracing(service_name: str = "adk-agent"):
     )
     trace.set_tracer_provider(tracer_provider)
 
-    # Set W3C Trace Context as the global propagator
-    # This ensures trace context is extracted from incoming requests
-    # and propagated to outgoing requests automatically
     from opentelemetry import propagate
     propagate.set_global_textmap(TraceContextTextMapPropagator())
 
-    # Instrument httpx to automatically propagate trace context in HTTP requests
-    # Use request_hook to ensure context is properly set before each request
-    def request_hook(span, request):
-        """Hook to ensure trace context is active when making requests."""
-        # The span is already created by httpx instrumentation
-        # Just log for debugging
-        logger.debug(f"HTTPX request: {request.method} {request.url} in span {span.get_span_context().span_id}")
-
-    HTTPXClientInstrumentor().instrument(request_hook=request_hook)
-    logger.info("HTTPX instrumented for automatic trace context propagation")
-
+    HTTPXClientInstrumentor().instrument()
     LoggingInstrumentor().instrument(set_logging_format=True)
 
-    logger.info("OpenTelemetry tracing configured with W3C Trace Context propagation")
-
+    logger.info("OpenTelemetry tracing configured")
     return tracer_provider
 
 
 def instrument_fastapi(app):
-    """Instrument a FastAPI application with OpenTelemetry.
-
-    This automatically:
-    - Extracts trace context from incoming HTTP headers (traceparent, tracestate)
-    - Creates spans for each request
-    - Propagates trace context to child operations
-    """
+    """Instrument a FastAPI application with OpenTelemetry."""
     FastAPIInstrumentor.instrument_app(app)
-    logger.info("FastAPI instrumented for distributed tracing")

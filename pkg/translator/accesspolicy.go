@@ -268,23 +268,9 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv0alpha0.X
 			rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildDisallowToolCallPermission()}
 		}
 
-		// Add to regular rules for enforcement
 		addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
-
-		// Also add to shadow rules for observability
-		// Shadow rules emit dynamic metadata (shadow_engine_result, shadow_effective_policy_id)
-		// that custom tags can read for tracing, without affecting enforcement
 		addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 	}
-
-	// Note: there is no catch-all shadow rule. When no named shadow rule matches,
-	// Envoy leaves shadow_effective_policy_id unset (empty string via the custom tag default).
-	// The OTel collector derives security_rule.match=false from an empty security_rule.name.
-	//
-	// A catch-all was previously attempted but is not viable: Envoy evaluates shadow rules
-	// from a protobuf map<string,Policy> with no ordering guarantee, so a catch-all rule
-	// cannot reliably be placed last and would shadow named rules, causing all requests to
-	// show an empty security_rule.name regardless of which rule actually matched.
 
 	return rbacConfig
 }
@@ -324,11 +310,9 @@ func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rb
 func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
 	if rbacConfig.GetShadowRules() == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
-		// Action must match the enforcement engine (RBAC_ALLOW) so that shadow_engine_result
-		// mirrors enforcement: a rule match → "allowed", no match → "denied" (deny by default).
-		// With RBAC_DENY the semantics invert: a match → "denied", no match → "allowed",
-		// which would make event.action the opposite of what the enforcement engine actually decided.
-		Action: rbacconfigv3.RBAC_ALLOW,
+			// Must match enforcement action (RBAC_ALLOW) so shadow results
+			// mirror enforcement: rule match → allowed, no match → denied.
+			Action:   rbacconfigv3.RBAC_ALLOW,
 			Policies: map[string]*rbacconfigv3.Policy{},
 		}
 	}

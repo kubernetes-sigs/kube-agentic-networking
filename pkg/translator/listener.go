@@ -375,8 +375,7 @@ func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName stri
 			},
 		},
 		HttpFilters: httpFilters,
-		// Enable tracing with custom tags for policy enforcement visibility
-		Tracing: buildTracingConfig(),
+		Tracing:     buildTracingConfig(),
 	}
 	hcmAny, err := anypb.New(hcmConfig)
 	if err != nil {
@@ -437,128 +436,42 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
-// buildTracingConfig creates tracing configuration with custom tags for policy enforcement visibility.
-//
-// Envoy emits two shadow RBAC metadata keys we use:
-//   - shadow_effective_policy_id → security_rule.name (name of the matching shadow rule, or "" if none matched)
-//   - principal                  → peer.spiffe.id (SPIFFE ID of the caller)
-//
-// event.action, event.outcome, and security_rule.match are derived in the OTel collector
-// transform processor from security_rule.name, not from shadow_engine_result.
-// shadow_engine_result is not used as it is unreliable: it only reflects whether the shadow
-// engine itself allowed/denied, which does not map cleanly to the enforcement decision.
+// buildTracingConfig creates tracing configuration with custom tags that expose
+// shadow RBAC metadata and caller identity on gateway spans.
 func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
 	return &hcm.HttpConnectionManager_Tracing{
-		// The provider is configured globally in bootstrap.yaml
 		RandomSampling:    &typev3.Percent{Value: 100.0},
 		ClientSampling:    &typev3.Percent{Value: 100.0},
 		OverallSampling:   &typev3.Percent{Value: 100.0},
 		SpawnUpstreamSpan: wrapperspb.Bool(true),
 		CustomTags: []*tracingv3.CustomTag{
-			{
-				// security_rule.name: name of the shadow rule that matched, or "" (empty) if none did.
-				// Empty means no named rule matched; the OTel collector derives security_rule.match=false from this.
-				Tag: "security_rule.name",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Request_{
-								Request: &metadatav3.MetadataKind_Request{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.rbac",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "shadow_effective_policy_id"}},
-							},
-						},
-						DefaultValue: "",
+			buildMetadataTag("security_rule.name", "envoy.filters.http.rbac", "shadow_effective_policy_id"),
+			buildMetadataTag("peer.spiffe.id", "envoy.filters.http.rbac", "principal"),
+		},
+	}
+}
+
+func buildMetadataTag(tag, filter string, pathKeys ...string) *tracingv3.CustomTag {
+	segments := make([]*metadatav3.MetadataKey_PathSegment, len(pathKeys))
+	for i, k := range pathKeys {
+		segments[i] = &metadatav3.MetadataKey_PathSegment{
+			Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: k},
+		}
+	}
+	return &tracingv3.CustomTag{
+		Tag: tag,
+		Type: &tracingv3.CustomTag_Metadata_{
+			Metadata: &tracingv3.CustomTag_Metadata{
+				Kind: &metadatav3.MetadataKind{
+					Kind: &metadatav3.MetadataKind_Request_{
+						Request: &metadatav3.MetadataKind_Request{},
 					},
 				},
-			},
-			{
-				// peer.spiffe.id: SPIFFE ID of the authenticated caller, set by the enforcement RBAC filter.
-				Tag: "peer.spiffe.id",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Request_{
-								Request: &metadatav3.MetadataKind_Request{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.rbac",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "principal"}},
-							},
-						},
-						DefaultValue: "",
-					},
+				MetadataKey: &metadatav3.MetadataKey{
+					Key:  filter,
+					Path: segments,
 				},
-			},
-			{
-				// mcp.tool.name: tool name extracted by ext_proc from the MCP JSON-RPC body.
-				// Set via ext_proc DynamicMetadata (mcp-audit namespace) per issue #710.
-				Tag: "mcp.tool.name",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Request_{
-								Request: &metadatav3.MetadataKind_Request{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.ext_proc",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "mcp-audit"}},
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "tool_name"}},
-							},
-						},
-						DefaultValue: "",
-					},
-				},
-			},
-			{
-				// mcp.method.name: MCP method from the JSON-RPC body (e.g. tools/call, tools/list).
-				Tag: "mcp.method.name",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Request_{
-								Request: &metadatav3.MetadataKind_Request{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.ext_proc",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "mcp-audit"}},
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "method"}},
-							},
-						},
-						DefaultValue: "",
-					},
-				},
-			},
-			{
-				// mcp.guardrail.decision: ext_proc guardrail decision (allowed/blocked).
-				Tag: "mcp.guardrail.decision",
-				Type: &tracingv3.CustomTag_Metadata_{
-					Metadata: &tracingv3.CustomTag_Metadata{
-						Kind: &metadatav3.MetadataKind{
-							Kind: &metadatav3.MetadataKind_Request_{
-								Request: &metadatav3.MetadataKind_Request{},
-							},
-						},
-						MetadataKey: &metadatav3.MetadataKey{
-							Key: "envoy.filters.http.ext_proc",
-							Path: []*metadatav3.MetadataKey_PathSegment{
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "mcp-audit"}},
-								{Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: "decision"}},
-							},
-						},
-						DefaultValue: "",
-					},
-				},
+				DefaultValue: "",
 			},
 		},
 	}

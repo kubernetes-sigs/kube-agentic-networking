@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Tempo deployment for trace storage and querying.
+# Receives spans from the OTel collector and serves them to Grafana.
+# Uses local (ephemeral) storage — traces are lost on pod restart.
+
 ---
+# Tempo server configuration: single-node mode with local storage
 apiVersion: v1
 kind: ConfigMap
 metadata:
