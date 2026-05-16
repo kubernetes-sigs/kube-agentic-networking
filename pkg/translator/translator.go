@@ -46,6 +46,7 @@ import (
 	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
 
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	agenticlistersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -71,7 +72,7 @@ type Translator struct {
 	gatewayLister              gatewaylisters.GatewayLister
 	httprouteLister            gatewaylisters.HTTPRouteLister
 	referenceGrantLister       gatewaylistersv1beta1.ReferenceGrantLister // optional, for Service ref cross-namespace validation
-	accessPolicyLister         agenticlisters.XAccessPolicyLister
+	accessPolicyLister         agenticlistersv1alpha1.XAccessPolicyLister
 	backendLister              agenticlisters.XBackendLister
 }
 
@@ -86,7 +87,7 @@ func New(
 	gatewayLister gatewaylisters.GatewayLister,
 	httpRouteLister gatewaylisters.HTTPRouteLister,
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister,
-	accessPolicyLister agenticlisters.XAccessPolicyLister,
+	accessPolicyLister agenticlistersv1alpha1.XAccessPolicyLister,
 	backendLister agenticlisters.XBackendLister,
 ) *Translator {
 	return &Translator{
@@ -710,7 +711,7 @@ func (t *Translator) validateHTTPRoute(
 	return parentStatuses, allAcceptingListeners
 }
 
-func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolicyLister) map[string]envoyproxytypes.Resource {
+func buildExtAuthzBackendClusters(accessPolicyLister agenticlistersv1alpha1.XAccessPolicyLister) map[string]envoyproxytypes.Resource {
 	clusters := make(map[string]envoyproxytypes.Resource)
 	accessPolicies, err := accessPolicyLister.List(labels.Everything())
 	if err != nil {
@@ -719,53 +720,51 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 	}
 
 	for _, ap := range accessPolicies {
-		for _, rule := range ap.Spec.Rules {
-			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
-				continue
-			}
-			extAuth := rule.Authorization.ExternalAuth
-			backendRef := extAuth.BackendRef
-			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuth.ExternalAuthProtocol))
-			if _, ok := clusters[clusterName]; ok {
-				continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
-			}
-			serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
-			servicePort := uint32(constants.DefaultExternalAuthPort)
-			if backendRef.Port != nil {
-				//nolint:gosec // G115: port values are within valid uint32 bounds
-				servicePort = uint32(*backendRef.Port)
-			}
-			cluster := &clusterv3.Cluster{
-				Name:                 clusterName,
-				ConnectTimeout:       durationpb.New(constants.DefaultConnectTimeout),
-				ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
-				LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
-				LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
-			}
-			switch extAuth.ExternalAuthProtocol {
-			case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
-				opts := &httpv3.HttpProtocolOptions{
-					UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
-						ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
-							ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
-								Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
-							},
+		if ap.Spec.ExternalAuth == nil {
+			continue
+		}
+		extAuth := ap.Spec.ExternalAuth
+		backendRef := extAuth.BackendRef
+		clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuth.ExternalAuthProtocol))
+		if _, ok := clusters[clusterName]; ok {
+			continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
+		}
+		serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
+		servicePort := uint32(constants.DefaultExternalAuthPort)
+		if backendRef.Port != nil {
+			//nolint:gosec // G115: port values are within valid uint32 bounds
+			servicePort = uint32(*backendRef.Port)
+		}
+		cluster := &clusterv3.Cluster{
+			Name:                 clusterName,
+			ConnectTimeout:       durationpb.New(constants.DefaultConnectTimeout),
+			ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
+			LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
+			LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
+		}
+		switch extAuth.ExternalAuthProtocol {
+		case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
+			opts := &httpv3.HttpProtocolOptions{
+				UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
+					ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
+						ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+							Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
 						},
 					},
-				}
-				optsAny, err := anypb.New(opts)
-				if err != nil {
-					klog.Errorf("failed to marshal typed extension config for cluster %s: %v", clusterName, err)
-					continue
-				}
-				cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
-					string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
-				}
-			case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
-				// HTTP/1.1 is the default protocol, no special configuration needed
+				},
 			}
-			clusters[clusterName] = cluster
+			optsAny, err := anypb.New(opts)
+			if err != nil {
+				klog.Errorf("failed to marshal typed extension config for cluster %s: %v", clusterName, err)
+				continue
+			}
+			cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+				string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
+			}
+		case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
+			// HTTP/1.1 is the default protocol, no special configuration needed
 		}
+		clusters[clusterName] = cluster
 	}
 	return clusters
 }

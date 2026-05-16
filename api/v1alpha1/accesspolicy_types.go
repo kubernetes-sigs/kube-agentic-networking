@@ -166,6 +166,8 @@ type AuthorizationSourceServiceAccount struct {
 	Name string `json:"name"`
 }
 
+// +kubebuilder:validation:XValidation:message="cel must be specified when type is set to 'CEL'",rule="self.type == 'CEL' ? has(self.cel) : true"
+// +kubebuilder:validation:XValidation:message="cel must not be specified when type is set to 'Inline'",rule="self.type == 'Inline' ? !has(self.cel) : true"
 // AuthorizationRule defines the specific authorization criteria that requests must meet.
 type AuthorizationRule struct {
 	// +unionDiscriminator
@@ -177,6 +179,17 @@ type AuthorizationRule struct {
 	// successfully passes through the matched HTTP routing envelope.
 	// +optional
 	MCP MCPAttributes `json:"mcp,omitempty"`
+
+	// CEL specifies a CEL expression for authorization.
+	// +optional
+	CEL *AccessPolicyCELRule `json:"cel,omitempty"`
+}
+
+// AccessPolicyCELRule specifies a CEL expression for authorization.
+type AccessPolicyCELRule struct {
+	// Expression is the CEL expression to evaluate.
+	// +required
+	Expression string `json:"expression"`
 }
 
 // MCPAttributes defines the protocol-specific attributes for MCP authorization.
@@ -223,13 +236,17 @@ type MCPMethodParam string
 type MCPMethodName string
 
 // AuthorizationRuleType identifies a type of authorization rule.
-// +kubebuilder:validation:Enum=Inline
+// +kubebuilder:validation:Enum=Inline;CEL
 type AuthorizationRuleType string
 
 const (
 	// AuthorizationRuleTypeInline is used to identify authorization rules
 	// declared as attributes inside the policy (inline)
 	AuthorizationRuleTypeInline AuthorizationRuleType = "Inline"
+
+	// AuthorizationRuleTypeCEL is used to identify authorization rules
+	// evaluated by a CEL expression.
+	AuthorizationRuleTypeCEL AuthorizationRuleType = "CEL"
 )
 
 const (
@@ -252,6 +269,10 @@ const (
 	// This reason is used with the "Accepted" condition when the policy
 	// was rejected because the maximum number of policies per target was exceeded.
 	PolicyLimitPerTargetExceeded gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"
+
+	// This reason is used with the "Accepted" condition when the policy
+	// was rejected because it contains an invalid CEL expression.
+	PolicyReasonInvalidCEL gwapiv1.PolicyConditionReason = "InvalidCEL"
 )
 
 // AccessPolicyStatus defines the observed state of AccessPolicy.
@@ -272,6 +293,7 @@ type AccessPolicyStatus struct {
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
 
 // XAccessPolicy is the Schema for the accesspolicies API.
 type XAccessPolicy struct {

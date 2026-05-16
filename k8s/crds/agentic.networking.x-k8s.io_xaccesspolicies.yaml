@@ -788,7 +788,7 @@ spec:
         - spec
         type: object
     served: true
-    storage: true
+    storage: false
     subresources:
       status: {}
   - name: v1alpha1
@@ -1077,6 +1077,15 @@ spec:
                         Authorization specifies the authorization rule to be applied to requests from the source.
                         If omitted, all access from the specified source is allowed.
                       properties:
+                        cel:
+                          description: CEL specifies a CEL expression for authorization.
+                          properties:
+                            expression:
+                              description: Expression is the CEL expression to evaluate.
+                              type: string
+                          required:
+                          - expression
+                          type: object
                         mcp:
                           description: |-
                             MCP defines MCP-specific matching criteria.
@@ -1149,10 +1158,16 @@ spec:
                             authorization rule.
                           enum:
                           - Inline
+                          - CEL
                           type: string
                       required:
                       - type
                       type: object
+                      x-kubernetes-validations:
+                      - message: cel must be specified when type is set to 'CEL'
+                        rule: 'self.type == ''CEL'' ? has(self.cel) : true'
+                      - message: cel must not be specified when type is set to 'Inline'
+                        rule: 'self.type == ''Inline'' ? !has(self.cel) : true'
                     name:
                       description: |-
                         Name specifies the name of the rule.
@@ -1603,7 +1618,7 @@ spec:
         required:
         - spec
         type: object
-    served: false
-    storage: false
+    served: true
+    storage: true
     subresources:
       status: {}

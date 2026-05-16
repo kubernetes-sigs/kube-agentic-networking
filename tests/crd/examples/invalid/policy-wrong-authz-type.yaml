@@ -1,4 +1,4 @@
-apiVersion: agentic.networking.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: invalid-policy-wrong-authz-type
@@ -7,9 +7,13 @@ spec:
   - group: agentic.networking.x-k8s.io
     kind: XBackend
     name: valid-backend
+  action: Allow
   rules:
   - name: authorized-tools
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: default
     authorization:
-      type: ExternalAuth
-      tools:
-      - some-tool
+      type: InvalidTypeEnum # This will be rejected by CRD validation
+      mcp: {}

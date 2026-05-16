@@ -41,8 +41,12 @@ const (
 	// This label was formally introduced in https://gateway-api.sigs.k8s.io/geps/gep-1762/#automated-deployments.
 	GatewayNameLabel = "gateway.networking.k8s.io/gateway-name"
 
-	// GatewayRBACFilterNamePrefix is the prefix for Envoy RBAC filters at the gateway level.
-	GatewayRBACFilterNamePrefix = "envoy.filters.http.rbac.gateway_level_"
-	// BackendRBACFilterNamePrefix is the prefix for Envoy RBAC filters at the backend level.
-	BackendRBACFilterNamePrefix = "envoy.filters.http.rbac.backend_level_"
+	// GatewayExtAuthRBACFilterName is the name for Envoy RBAC filter for Gateway ExternalAuth shadowRules.
+	GatewayExtAuthRBACFilterName = "envoy.filters.http.rbac.gateway_extauth"
+	// BackendExtAuthRBACFilterName is the name for Envoy RBAC filter for Backend ExternalAuth shadowRules.
+	BackendExtAuthRBACFilterName = "envoy.filters.http.rbac.backend_extauth"
+	// GatewayAllowRBACFilterName is the name for Envoy RBAC filter for Gateway Allow policies.
+	GatewayAllowRBACFilterName = "envoy.filters.http.rbac.gateway_allow"
+	// BackendAllowRBACFilterName is the name for Envoy RBAC filter for Backend Allow policies.
+	BackendAllowRBACFilterName = "envoy.filters.http.rbac.backend_allow"
 )

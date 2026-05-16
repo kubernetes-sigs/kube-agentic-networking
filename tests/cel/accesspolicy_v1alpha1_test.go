@@ -218,6 +218,38 @@ func TestValidateXAccessPolicyV1Alpha1(t *testing.T) {
 			},
 			wantErrors: []string{"Params can only be specified for get, call, subscribe, unsubscribe, or read methods"},
 		},
+		{
+			desc: "valid CEL authorization",
+			mutate: func(p *v1alpha1.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v1alpha1.AuthorizationRule{
+					Type: v1alpha1.AuthorizationRuleTypeCEL,
+					CEL: &v1alpha1.AccessPolicyCELRule{
+						Expression: "request.mcp.tool_name.startsWith('verify_')",
+					},
+				}
+			},
+		},
+		{
+			desc: "missing cel field for CEL type",
+			mutate: func(p *v1alpha1.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v1alpha1.AuthorizationRule{
+					Type: v1alpha1.AuthorizationRuleTypeCEL,
+				}
+			},
+			wantErrors: []string{"cel must be specified when type is set to 'CEL'"},
+		},
+		{
+			desc: "cel specified for Inline type",
+			mutate: func(p *v1alpha1.XAccessPolicy) {
+				p.Spec.Rules[0].Authorization = &v1alpha1.AuthorizationRule{
+					Type: v1alpha1.AuthorizationRuleTypeInline,
+					CEL: &v1alpha1.AccessPolicyCELRule{
+						Expression: "true",
+					},
+				}
+			},
+			wantErrors: []string{"cel must not be specified when type is set to 'Inline'"},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {

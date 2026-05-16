@@ -38,12 +38,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	v1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -446,10 +447,8 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	}
 
 	// 3. Add Backend-level RBAC filters.
-	// We build only placeholder filters for backends that have policies at this stage.
-	// These will be overridden at the cluster/route level.
-	backendRBACFiltersCount := t.calculateMaxBackendRBACFilters(gateway)
-	backendRBACFilters, err := t.buildBackendLevelRBACFilters(backendRBACFiltersCount)
+	// We always build exactly two placeholder filters for backends.
+	backendRBACFilters, err := t.buildBackendLevelRBACFilters()
 	if err != nil {
 		return nil, err
 	}
@@ -466,58 +465,117 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 		return nil, err
 	}
 
-	// Compose the list at the end to ensure the correct order.
-	// IMPORTANT: Order matters here!
-	// 1. The MCP filter must come first to populate metadata for RBAC.
-	// 2. Gateway-level RBAC filters must come before backend-level RBAC filters.
-	// 3. Backend-level RBAC filters must come before the ext_authz filter to ensure evaluation of RBAC shadow rules that trigger ext_authz.
-	// 4. Ext_authz filter must come before router filter to enforce access control before routing.
-	// 5. Router filter must come last to handle routing after all other filters have processed the request.
+	// Separate Gateway filters by purpose
+	var gatewayExtAuthFilter, gatewayAllowFilter *hcm.HttpFilter
+	for _, f := range gatewayRBACFilters {
+		if f.GetName() == constants.GatewayExtAuthRBACFilterName {
+			gatewayExtAuthFilter = f
+		} else if f.GetName() == constants.GatewayAllowRBACFilterName {
+			gatewayAllowFilter = f
+		}
+	}
+
+	// Separate Backend filters by purpose
+	var backendExtAuthFilter, backendAllowFilter *hcm.HttpFilter
+	for _, f := range backendRBACFilters {
+		if f.GetName() == constants.BackendExtAuthRBACFilterName {
+			backendExtAuthFilter = f
+		} else if f.GetName() == constants.BackendAllowRBACFilterName {
+			backendAllowFilter = f
+		}
+	}
+
+	// Compose the list in strict order:
+	// 1. MCP (must be first to populate metadata for RBAC)
+	// 2. ExternalAuthRBAC triggers (shadowRules, Gateway then Backend)
+	// 3. ExtAuthz (must be between triggers and allows)
+	// 4. Allows (Gateway then Backend)
+	// 5. Router (must be last)
 	var filters []*hcm.HttpFilter
 	filters = append(filters, mcpFilter)
-	filters = append(filters, gatewayRBACFilters...)
-	filters = append(filters, backendRBACFilters...)
+	if gatewayExtAuthFilter != nil {
+		filters = append(filters, gatewayExtAuthFilter)
+	}
+	if backendExtAuthFilter != nil {
+		filters = append(filters, backendExtAuthFilter)
+	}
 	filters = append(filters, extAuthzFilters...)
+	if gatewayAllowFilter != nil {
+		filters = append(filters, gatewayAllowFilter)
+	}
+	if backendAllowFilter != nil {
+		filters = append(filters, backendAllowFilter)
+	}
 	filters = append(filters, routerFilter)
 
 	return filters, nil
 }
 
 func (t *Translator) buildExtAuthzFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
-	accessPolicies, err := t.accessPolicyLister.List(labels.Everything())
-	if err != nil {
-		return nil, fmt.Errorf("failed to list AccessPolicies: %w", err)
-	}
-
 	var filters []*hcm.HttpFilter
-	uniqueExtAuthzConfigs := make(map[string]struct{}) // To track unique externalAuth configs and avoid duplicate filters
-	for _, ap := range accessPolicies {
-		// We only care about AccessPolicies that are directly or indirectly attached to this Gateway.
-		if !t.isAccessPolicyAttachedToGateway(ap, gateway) {
-			continue
+	uniqueExtAuthzConfigs := make(map[string]struct{})
+
+	// Helper to process policies for a target and collect unique configs
+	processPoliciesForTarget := func(group, kind, ns, name string) error {
+		policies, err := t.findAccessPoliciesForTarget(group, kind, ns, name)
+		if err != nil {
+			return err
 		}
-		for _, rule := range ap.Spec.Rules {
-			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
-				continue
+
+		// findAccessPoliciesForTarget returns sorted policies (oldest first).
+		// We only keep the oldest ExternalAuth policy.
+		var extAuthPolicy *v1alpha1.XAccessPolicy
+		for _, ap := range policies {
+			if ap.Spec.Action == v1alpha1.ActionTypeExternalAuth && ap.Spec.ExternalAuth != nil {
+				extAuthPolicy = ap
+				break // Found the oldest one, stop.
 			}
-			extAuthz := rule.Authorization.ExternalAuth
+		}
+
+		if extAuthPolicy != nil {
+			extAuthz := extAuthPolicy.Spec.ExternalAuth
 			uniqueID, err := externalAuthUniqueID(extAuthz)
 			if err != nil {
-				klog.Error(err)
-				continue
+				return err
 			}
-			if _, exists := uniqueExtAuthzConfigs[uniqueID]; exists {
-				continue // Skip if we've already built an ext_authz filter for this config
+			if _, exists := uniqueExtAuthzConfigs[uniqueID]; !exists {
+				uniqueExtAuthzConfigs[uniqueID] = struct{}{}
+				extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, extAuthPolicy.GetNamespace())
+				if err != nil {
+					return err
+				}
+				filters = append(filters, extAuthzFilter)
 			}
-			uniqueExtAuthzConfigs[uniqueID] = struct{}{}
+		}
+		return nil
+	}
 
-			// Build the ext_authz filter for this RBAC filter and ext_authz config combination
-			extAuthzFilter, err := buildExtAuthzFilterForRBACFilter(extAuthz, uniqueID, ap.GetNamespace())
-			if err != nil {
-				klog.Error(err)
-				continue
+	// 1. Process Gateway target
+	if err := processPoliciesForTarget(gatewayv1.GroupName, "Gateway", gateway.Namespace, gateway.Name); err != nil {
+		return nil, err
+	}
+
+	// 2. Process Reachable XBackend targets
+	routes := t.getHTTPRoutesForGateway(gateway)
+	backendNames := make(map[types.NamespacedName]struct{})
+	for _, route := range routes {
+		for _, rule := range route.Spec.Rules {
+			for _, beRef := range rule.BackendRefs {
+				if beRef.Group != nil && *beRef.Group == v0alpha0.GroupName &&
+					beRef.Kind != nil && *beRef.Kind == "XBackend" {
+					ns := route.Namespace
+					if beRef.Namespace != nil {
+						ns = string(*beRef.Namespace)
+					}
+					backendNames[types.NamespacedName{Namespace: ns, Name: string(beRef.Name)}] = struct{}{}
+				}
 			}
-			filters = append(filters, extAuthzFilter)
+		}
+	}
+
+	for beKey := range backendNames {
+		if err := processPoliciesForTarget(v0alpha0.GroupName, "XBackend", beKey.Namespace, beKey.Name); err != nil {
+			return nil, err
 		}
 	}
 
@@ -620,35 +678,6 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 			TypedConfig: extAuthzAny,
 		},
 	}, nil
-}
-
-func (t *Translator) isAccessPolicyAttachedToGateway(ap *v0alpha0.XAccessPolicy, gateway *gatewayv1.Gateway) bool {
-	for _, targetRef := range ap.Spec.TargetRefs {
-		if (targetRef.Group == "" || targetRef.Group == gatewayv1.GroupName) && targetRef.Kind == "Gateway" && string(targetRef.Name) == gateway.Name {
-			return true
-		}
-	}
-	routes := t.getHTTPRoutesForGateway(gateway)
-	for _, targetRef := range ap.Spec.TargetRefs {
-		if targetRef.Group == v0alpha0.GroupName && targetRef.Kind == "XBackend" {
-			for _, route := range routes {
-				for _, rule := range route.Spec.Rules {
-					for _, beRef := range rule.BackendRefs {
-						if beRef.Group != nil && *beRef.Group == v0alpha0.GroupName && beRef.Kind != nil && *beRef.Kind == "XBackend" {
-							ns := route.Namespace
-							if beRef.Namespace != nil {
-								ns = string(*beRef.Namespace)
-							}
-							if ns == ap.Namespace && string(beRef.Name) == string(targetRef.Name) {
-								return true
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return false
 }
 
 // buildDownstreamTLSContext configures TLS for the downstream (client-to-gateway) connection.

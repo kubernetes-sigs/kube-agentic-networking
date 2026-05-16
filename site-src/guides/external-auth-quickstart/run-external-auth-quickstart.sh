@@ -179,6 +179,8 @@ spec:
   - '*'
   authorization:
     "allowed-repos-only":
+      when:
+      - predicate: has(metadata.filter_metadata.mcp_proxy) && metadata.filter_metadata.mcp_proxy.method == "tools/call"
       opa:
         rego: |
           allowed_repos := [
