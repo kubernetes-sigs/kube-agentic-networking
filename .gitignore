@@ -47,3 +47,6 @@ site-src/proposals/landing/*.md
 
 # Auto-generated API reference
 site-src/reference/spec.md
+
+# Agentic instructions
+.agents/

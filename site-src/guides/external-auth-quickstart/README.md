@@ -134,7 +134,7 @@ The `run-external-auth-quickstart.sh` script performs the following steps:
 The key difference in this quickstart is the `XAccessPolicy` for the remote MCP backend. Let's examine how it's configured:
 
 ```yaml
-apiVersion: agentic.networking.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: auth-policy-remote-mcp
@@ -144,6 +144,15 @@ spec:
     - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
+  action: ExternalAuth
+  externalAuth:
+    backendRef:
+      kind: Service
+      name: authorino-authorino-authorization
+      namespace: authorino-operator
+      port: 50051
+    protocol: GRPC
+    grpc: {}
   rules:
     - name: ext-authorizer-for-adk-agent-sa
       source:
@@ -151,23 +160,13 @@ spec:
         serviceAccount:
           name: adk-agent-sa
           namespace: quickstart-ns
-      authorization:
-        type: ExternalAuth
-        externalAuth:
-          backendRef:
-            kind: Service
-            name: authorino-authorino-authorization
-            namespace: authorino-operator
-            port: 50051
-          protocol: GRPC
-          grpc: {}
 ```
 
 **Key components:**
 
-- **`authorization.type: ExternalAuth`**: Delegates authorization decisions to an external service instead of using inline rules
+- **`action: ExternalAuth`**: Delegates authorization decisions to an external service instead of using inline rules
 - **`externalAuth.backendRef`**: Points to the external authorization service
-- **`protocol: GRPC`**: Specifies the protocol to communicate with the external authorizer
+- **`externalAuthProtocol: GRPC`**: Specifies the protocol to communicate with the external authorizer
 
 When the agent attempts to call a tool on the remote MCP backend, the gateway will:
 1. Intercept the request

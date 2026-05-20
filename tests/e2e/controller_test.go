@@ -206,7 +206,7 @@ func TestControllerE2E(t *testing.T) {
 
 	t.Run("Case 5: Patch Gateway policy to allow get-sum", func(t *testing.T) {
 		// Modifying Gateway Policy: Allowing 'get-sum' to align with Backend policy.
-		patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/tools", "value": ["get-sum"]}]`
+		patchGW := `[{"op": "replace", "path": "/spec/rules/0/authorization/mcp/methods", "value": [{"name": "tools/call", "params": ["get-sum"]}]}]`
 		runKubectl(t, "patch", "xaccesspolicy", "e2e-gateway-level-policy", "-n", namespace, "--type=json", "-p", patchGW)
 
 		mcp.assertToolCall(t, "get-sum", `{"a":2,"b":3}`,
@@ -441,7 +441,7 @@ func TestControllerE2E(t *testing.T) {
 
 // TestExternalAuthE2E verifies the ExternalAuth authorization feature including:
 // - External authorization service deployment and integration
-// - Combined InlineTools and ExternalAuth policies at the backend level
+// - Combined Inline and ExternalAuth policies at the backend level
 // - ExternalAuth policy at the gateway level
 // - Multi-client authorization with different ServiceAccounts
 func TestExternalAuthE2E(t *testing.T) {
@@ -460,6 +460,7 @@ func TestExternalAuthE2E(t *testing.T) {
 	// Deploy External Auth service
 	t.Log("Deploying External Auth service...")
 	runKubectl(t, "apply", "--server-side", "-f", "https://raw.githubusercontent.com/Kuadrant/authorino/refs/tags/v0.24.0/install/manifests.yaml")
+	runKubectl(t, "wait", "--for=condition=established", "crd/authconfigs.authorino.kuadrant.io", "--timeout=1m")
 	applyToNamespace(t, "testdata/ext-authz-service.yaml", namespace)
 	runKubectl(t, "wait", "--for=condition=available", "deployment/authorino", "-n", namespace, "--timeout=2m")
 	err := retry(20, 2*time.Second, func() error {
@@ -482,11 +483,11 @@ func TestExternalAuthE2E(t *testing.T) {
 	mcp1 := initializeMCP(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: "e2e-tester"})
 	mcp2 := initializeMCP(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: "e2e-tester-2"})
 
-	t.Run("Case 1: Combined backend policy - InlineTools (tester-1) + ExternalAuth (tester-2)", func(t *testing.T) {
+	t.Run("Case 1: Combined backend policy - Inline (tester-1) + ExternalAuth (tester-2)", func(t *testing.T) {
 		applyToNamespace(t, "testdata/backend-policy-extauth.yaml", namespace)
 
-		// tester-1 with InlineTools: can call echo and get-sum
-		t.Log("Testing tester-1 (InlineTools: echo, get-sum allowed)")
+		// tester-1 with Inline: can call echo and get-sum
+		t.Log("Testing tester-1 (Inline: echo, get-sum allowed)")
 		mcp1.assertToolCall(t, "echo", `{"message":"hello"}`,
 			mcpResponse{
 				StatusCode: 200,

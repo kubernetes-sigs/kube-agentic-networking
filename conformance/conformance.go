@@ -17,7 +17,11 @@ limitations under the License.
 package conformance
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io/fs"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,13 +36,16 @@ import (
 	confflags "sigs.k8s.io/gateway-api/conformance/utils/flags"
 	"sigs.k8s.io/gateway-api/conformance/utils/kubernetes"
 	confsuite "sigs.k8s.io/gateway-api/conformance/utils/suite"
+	gatewayfeatures "sigs.k8s.io/gateway-api/pkg/features"
 
 	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	"sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/conformance/tests"
 	"sigs.k8s.io/kube-agentic-networking/conformance/utils/features"
+	"sigs.k8s.io/kube-agentic-networking/version"
 )
 
-const GatewayLayerProfileName confsuite.ConformanceProfileName = "GatewayLayer"
+const GatewayLayerProfileName confsuite.ConformanceProfileName = "Gateway"
 
 var GatewayLayerProfile = confsuite.ConformanceProfile{
 	Name:         GatewayLayerProfileName,
@@ -56,12 +63,28 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 	require.NoError(t, gatewayv1.Install(scheme), "failed to install gatewayv1 types into scheme")
 	require.NoError(t, apiextensionsv1.AddToScheme(scheme), "failed to add apiextensionsv1 types to scheme")
 	require.NoError(t, v0alpha0.AddToScheme(scheme), "failed to install v0alpha0 types into scheme")
+	require.NoError(t, v1alpha1.AddToScheme(scheme), "failed to install v1alpha1 types into scheme")
 
 	clientOptions := client.Options{Scheme: scheme}
 	c, err := client.New(cfg, clientOptions)
 	require.NoError(t, err, "error initializing Kubernetes client")
 	cs, err := clientset.NewForConfig(cfg)
 	require.NoError(t, err, "error initializing Kubernetes clientset")
+
+	exemptFeatures := confsuite.ParseSupportedFeatures(*confflags.ExemptFeatures)
+	skipTests := confsuite.ParseSkipTests(*confflags.SkipTests)
+	namespaceLabels := confsuite.ParseKeyValuePairs(*confflags.NamespaceLabels)
+	namespaceAnnotations := confsuite.ParseKeyValuePairs(*confflags.NamespaceAnnotations)
+
+	conformanceProfiles := sets.New(GatewayLayerProfileName)
+
+	implementation := confsuite.ParseImplementation(
+		*confflags.ImplementationOrganization,
+		*confflags.ImplementationProject,
+		*confflags.ImplementationURL,
+		*confflags.ImplementationVersion,
+		*confflags.ImplementationContact,
+	)
 
 	opts := confsuite.ConformanceOptions{
 		Client:               c,
@@ -73,21 +96,67 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 		Debug:                *confflags.ShowDebug,
 		CleanupBaseResources: *confflags.CleanupBaseResources,
 		SupportedFeatures:    sets.New(features.AgenticCoreFeatures.UnsortedList()...),
+		SkipTests:            skipTests,
+		ExemptFeatures:       exemptFeatures,
+		RunTest:              *confflags.RunTest,
+		Mode:                 *confflags.Mode,
+		Implementation:       implementation,
+		ConformanceProfiles:  conformanceProfiles,
 		ManifestFS:           []fs.FS{&Manifests},
+		ReportOutputPath:     *confflags.ReportOutput,
+		SkipProvisionalTests: *confflags.SkipProvisionalTests,
 		AllowCRDsMismatch:    true,
+		NamespaceLabels:      namespaceLabels,
+		NamespaceAnnotations: namespaceAnnotations,
+	}
+
+	// Remove any features explicitly exempted via flags.
+	if opts.ExemptFeatures.Len() > 0 {
+		var toDelete []gatewayfeatures.FeatureName
+		for _, f := range opts.ExemptFeatures.UnsortedList() {
+			toDelete = append(toDelete, f)
+		}
+		opts.SupportedFeatures = opts.SupportedFeatures.Delete(toDelete...)
 	}
 
 	return opts
 }
 
 func RunConformance(t *testing.T) {
-	opts := DefaultOptions(t)
+	RunConformanceWithOptions(t, DefaultOptions(t))
+}
+
+func RunConformanceWithOptions(t *testing.T, opts confsuite.ConformanceOptions) {
+	t.Helper()
+	ctx := context.Background()
+
 	confsuite.RegisterConformanceProfile(GatewayLayerProfile)
 
 	cSuite, err := confsuite.NewConformanceTestSuite(opts)
 	require.NoError(t, err, "error initializing conformance suite")
 
+	installedCRDs := &apiextensionsv1.CustomResourceDefinitionList{}
+	err = opts.Client.List(ctx, installedCRDs)
+	require.NoError(t, err, "error getting installedCRDs")
+
+	apiVersion, err := getKubeAgenticNetworkingVersion(installedCRDs.Items)
+	if err != nil {
+		if opts.AllowCRDsMismatch {
+			apiVersion = "UNDEFINED"
+		} else {
+			require.NoError(t, err, "error getting the kube-agentic-networking version")
+		}
+	}
+
 	cSuite.Applier.ManifestFS = cSuite.ManifestFS
+	if cSuite.RunTest != "" {
+		idx := slices.IndexFunc(tests.ConformanceTests, func(test confsuite.ConformanceTest) bool {
+			return test.ShortName == cSuite.RunTest
+		})
+		if idx == -1 {
+			require.FailNow(t, fmt.Sprintf("Test %q does not exist", cSuite.RunTest))
+		}
+	}
 
 	// Apply base manifests
 	cSuite.Applier.GatewayClass = opts.GatewayClassName
@@ -98,4 +167,37 @@ func RunConformance(t *testing.T) {
 
 	err = cSuite.Run(t, tests.ConformanceTests)
 	require.NoError(t, err, "error running conformance tests")
+
+	if opts.ReportOutputPath != "" {
+		t.Log("Generating Kube Agentic Networking conformance report")
+		report, err := cSuite.Report()
+		require.NoError(t, err, "error generating conformance report")
+
+		agenticReport := AgenticNetworkingConformanceReport{
+			GatewayLayerVersion: apiVersion,
+			ConformanceReport:   *report,
+		}
+		err = agenticReport.WriteReport(t.Logf, opts.ReportOutputPath)
+		require.NoError(t, err, "error writing conformance report")
+	}
+}
+
+func getKubeAgenticNetworkingVersion(crds []apiextensionsv1.CustomResourceDefinition) (string, error) {
+	var bundleVersion string
+	for _, crd := range crds {
+		// Only scan the xaccesspolicies CRD to extract the bundle version, allowing xbackends to remain unannotated.
+		if crd.Name != "xaccesspolicies.agentic.networking.x-k8s.io" {
+			continue
+		}
+		v, okv := crd.Annotations[version.BundleVersionAnnotation]
+		if !okv {
+			return "", errors.New("xaccesspolicies CRD found but missing the bundle version annotation")
+		}
+		bundleVersion = v
+		break
+	}
+	if bundleVersion == "" {
+		return "", errors.New("xaccesspolicies CRD not found in the cluster")
+	}
+	return bundleVersion, nil
 }

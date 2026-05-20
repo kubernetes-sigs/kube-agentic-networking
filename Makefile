@@ -103,7 +103,7 @@ test-gateway-api-conformance: ## Run full Gateway API conformance tests includin
 .PHONY: test-e2e-only
 test-e2e-only: ## Run E2E tests against the current cluster without setup.
 	@echo "...Running E2E tests against cluster: $$(kubectl config current-context)"
-	cd tests && go clean -testcache && go test -v -parallel=2 ./e2e/...
+	cd tests && go clean -testcache && go test -v ./e2e/...
 
 .PHONY: verify
 verify: ## Run go vet
@@ -132,12 +132,9 @@ BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 .PHONY: generate
 generate: manifests deepcopy register clientsets ## Generate manifests, deepcopy code, and clientsets.
 
-# TODO: Remove the python post-processing patch once XAccessPolicy v1alpha1 is fully implemented
-# and flipped to `served: true` instead of v0alpha0.
 .PHONY: manifests
-manifests: controller-gen ## Generate CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./api/..." output:crd:artifacts:config=k8s/crds
-	python3 -c "p='k8s/crds/agentic.networking.x-k8s.io_xaccesspolicies.yaml'; text=open(p).read(); parts=text.split('  - name: v1alpha1'); parts[1]=parts[1].replace('    served: true', '    served: false', 1); open(p,'w').write('  - name: v1alpha1'.join(parts))" 
+manifests: ## Generate CustomResourceDefinition objects.
+	go run ./pkg/generator/main.go
 
 .PHONY: deepcopy
 deepcopy: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

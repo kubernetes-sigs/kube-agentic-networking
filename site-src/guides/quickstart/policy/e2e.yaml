@@ -37,7 +37,7 @@ spec:
     port: 443
     path: /mcp
 ---
-apiVersion: agentic.networking.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: auth-policy-local-mcp
@@ -48,6 +48,7 @@ spec:
     - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: local-mcp-backend
+  action: Allow
   rules:
     - name: tools-for-adk-agent-sa
       source:
@@ -56,12 +57,15 @@ spec:
           name: adk-agent-sa
           namespace: quickstart-ns
       authorization:
-        type: InlineTools
-        tools:
-          - "get-sum"
-          - "get-tiny-image"
+        type: Inline
+        mcp:
+          methods:
+            - name: tools/call
+              params:
+                - "get-sum"
+                - "get-tiny-image"
 ---
-apiVersion: agentic.networking.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: auth-policy-remote-mcp
@@ -71,6 +75,7 @@ spec:
     - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
+  action: Allow
   rules:
     - name: tools-for-adk-agent-sa
       source:
@@ -79,9 +84,12 @@ spec:
           name: adk-agent-sa
           namespace: quickstart-ns
       authorization:
-        type: InlineTools
-        tools:
-          - "read_wiki_structure"
+        type: Inline
+        mcp:
+          methods:
+            - name: tools/call
+              params:
+                - "read_wiki_structure"
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

@@ -34,7 +34,8 @@ import (
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
-	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
+	agenticlistersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
@@ -237,7 +238,7 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister: agenticlistersv1alpha1.NewXAccessPolicyLister(indexer),
 			},
 		}
 		gw := &gatewayv1.Gateway{
@@ -250,9 +251,9 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 
 	t.Run("policy targets different gateway", func(t *testing.T) {
 		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-		policy := &agenticv0alpha0.XAccessPolicy{
+		policy := &agenticv1alpha1.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: "policy-1"},
-			Spec: agenticv0alpha0.AccessPolicySpec{
+			Spec: agenticv1alpha1.AccessPolicySpec{
 				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
 					{
 						LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
@@ -260,7 +261,7 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 						},
 					},
 				},
-				Rules: []agenticv0alpha0.AccessRule{{Name: "r1", Source: agenticv0alpha0.Source{Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE}}},
+				Rules: []agenticv1alpha1.AccessRule{{Name: "r1", Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE}}},
 			},
 		}
 		if err := indexer.Add(policy); err != nil {
@@ -268,7 +269,7 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 		}
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister: agenticlistersv1alpha1.NewXAccessPolicyLister(indexer),
 			},
 		}
 		gw := &gatewayv1.Gateway{
@@ -281,9 +282,9 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 
 	t.Run("policy targets this gateway", func(t *testing.T) {
 		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-		policy := &agenticv0alpha0.XAccessPolicy{
+		policy := &agenticv1alpha1.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: "policy-1"},
-			Spec: agenticv0alpha0.AccessPolicySpec{
+			Spec: agenticv1alpha1.AccessPolicySpec{
 				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
 					{
 						LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
@@ -291,7 +292,7 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 						},
 					},
 				},
-				Rules: []agenticv0alpha0.AccessRule{{Name: "r1", Source: agenticv0alpha0.Source{Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE}}},
+				Rules: []agenticv1alpha1.AccessRule{{Name: "r1", Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE}}},
 			},
 		}
 		if err := indexer.Add(policy); err != nil {
@@ -299,7 +300,7 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 		}
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister: agenticlistersv1alpha1.NewXAccessPolicyLister(indexer),
 			},
 		}
 		gw := &gatewayv1.Gateway{
@@ -312,9 +313,9 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 
 	t.Run("policy with XBackend targetRef only", func(t *testing.T) {
 		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-		policy := &agenticv0alpha0.XAccessPolicy{
+		policy := &agenticv1alpha1.XAccessPolicy{
 			ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: "policy-1"},
-			Spec: agenticv0alpha0.AccessPolicySpec{
+			Spec: agenticv1alpha1.AccessPolicySpec{
 				TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{
 					{
 						LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
@@ -322,7 +323,7 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 						},
 					},
 				},
-				Rules: []agenticv0alpha0.AccessRule{{Name: "r1", Source: agenticv0alpha0.Source{Type: agenticv0alpha0.AuthorizationSourceTypeSPIFFE}}},
+				Rules: []agenticv1alpha1.AccessRule{{Name: "r1", Source: agenticv1alpha1.AccessRuleSource{Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE}}},
 			},
 		}
 		if err := indexer.Add(policy); err != nil {
@@ -330,7 +331,7 @@ func TestHasAccessPoliciesTargetingGateway(t *testing.T) {
 		}
 		c := &Controller{
 			agentic: agenticNetResources{
-				accessPolicyLister: agenticlisters.NewXAccessPolicyLister(indexer),
+				accessPolicyLister: agenticlistersv1alpha1.NewXAccessPolicyLister(indexer),
 			},
 		}
 		gw := &gatewayv1.Gateway{
