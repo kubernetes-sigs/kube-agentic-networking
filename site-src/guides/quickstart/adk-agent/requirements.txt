@@ -1,4 +1,5 @@
 google-adk
+mcp
 litellm
 opentelemetry-api
 opentelemetry-sdk
