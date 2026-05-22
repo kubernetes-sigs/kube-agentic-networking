@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
-	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
@@ -33,7 +32,6 @@ import (
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"k8s.io/klog/v2"
@@ -99,20 +97,6 @@ func createClusterLoadAssignment(clusterName, serviceHost string, servicePort ui
 			},
 		},
 	}
-}
-
-// convertServiceRefToCluster creates an Envoy cluster from a direct Service reference.
-func convertServiceRefToCluster(ns, name string, port int32) *clusterv3.Cluster {
-	clusterName := fmt.Sprintf(constants.ClusterNameFormat, ns, name)
-	serviceFQDN := fmt.Sprintf("%s.%s.svc.cluster.local", name, ns)
-	cluster := &clusterv3.Cluster{
-		Name:                 clusterName,
-		ConnectTimeout:       durationpb.New(constants.DefaultConnectTimeout),
-		ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
-		//nolint:gosec // G115: port values are within valid uint32 bounds
-		LoadAssignment: createClusterLoadAssignment(clusterName, serviceFQDN, uint32(port)),
-	}
-	return cluster
 }
 
 // createEnvoyAddress creates an Envoy Address for a given port.

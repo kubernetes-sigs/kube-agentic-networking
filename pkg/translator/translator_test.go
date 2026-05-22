@@ -763,6 +763,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				gwClient,
 				coreInformerFactory.Core().V1().Namespaces().Lister(),
 				coreInformerFactory.Core().V1().Services().Lister(),
+				coreInformerFactory.Discovery().V1().EndpointSlices().Lister(),
 				coreInformerFactory.Core().V1().Secrets().Lister(),
 				coreInformerFactory.Core().V1().ConfigMaps().Lister(),
 				gwInformerFactory.Gateway().V1().Gateways().Lister(),
