@@ -19,6 +19,7 @@ spec:
       authorization:
         type: Inline
         mcp:
+          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
           methods:
             - name: tools/call
               params:
@@ -33,6 +34,7 @@ spec:
       authorization:
         type: Inline
         mcp:
+          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
           methods:
             - name: tools/call
               params:

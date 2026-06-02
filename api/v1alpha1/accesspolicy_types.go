@@ -87,10 +87,10 @@ const (
 type MCPBaseProtocolMethodsOption string
 
 const (
-	// SKIP_BASE_PROTOCOL_METHODS skips matching on the base MCP protocol methods.
-	SKIP_BASE_PROTOCOL_METHODS MCPBaseProtocolMethodsOption = "SKIP_BASE_PROTOCOL_METHODS"
-	// MATCH_BASE_PROTOCOL_METHODS matches on the base MCP protocol methods.
-	MATCH_BASE_PROTOCOL_METHODS MCPBaseProtocolMethodsOption = "MATCH_BASE_PROTOCOL_METHODS"
+	// MCPBaseProtocolMethodsOptionSkip skips matching on the base MCP protocol methods.
+	MCPBaseProtocolMethodsOptionSkip MCPBaseProtocolMethodsOption = "SKIP_BASE_PROTOCOL_METHODS"
+	// MCPBaseProtocolMethodsOptionMatch matches on the base MCP protocol methods.
+	MCPBaseProtocolMethodsOptionMatch MCPBaseProtocolMethodsOption = "MATCH_BASE_PROTOCOL_METHODS"
 )
 
 // AccessRule specifies an authorization rule for a specified target.
@@ -218,12 +218,15 @@ type MCPAttributes struct {
 	Methods []MCPMethod `json:"methods,omitempty"`
 
 	// MCPBaseProtocolMethodsOption specifies whether to match on base MCP protocol methods.
-	// Optional. If specified, matches on the MCP protocol’s non-access specific methods namely:
+	// Optional. If specified, matches on the MCP protocol’s non-access specific methods and transport prerequisites namely:
 	// * initialize
+	// * tools/list
 	// * completion/
 	// * logging/
 	// * notifications/
 	// * ping
+	// * HTTP GET requests (needed for SSE stream connection)
+	// * HTTP DELETE requests with mcp-session-id header (needed for session close)
 	// Defaults to SKIP_BASE_PROTOCOL_METHODS if not specified
 	// +optional
 	// +kubebuilder:default=SKIP_BASE_PROTOCOL_METHODS

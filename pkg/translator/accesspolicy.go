@@ -206,8 +206,8 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 			if rule.Authorization != nil {
 				switch rule.Authorization.Type {
 				case agenticv1alpha1.AuthorizationRuleTypeInline:
-					if permission := t.translateMCPToRBACPermission(&rule.Authorization.MCP); permission != nil {
-						rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
+					if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
+						rbacPolicy.Permissions = permissions
 					}
 				case agenticv1alpha1.AuthorizationRuleTypeCEL:
 					if rule.Authorization.CEL != nil {
@@ -341,8 +341,8 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 			switch rule.Authorization.Type {
 			case agenticv1alpha1.AuthorizationRuleTypeInline:
 				// TODO: Only MCP is currently supported. Add support for more generic inline auth in the future
-				if permission := t.translateMCPToRBACPermission(&rule.Authorization.MCP); permission != nil {
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
+				if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
+					rbacPolicy.Permissions = permissions
 				}
 			case agenticv1alpha1.AuthorizationRuleTypeCEL:
 				if rule.Authorization.CEL != nil {
@@ -393,64 +393,122 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	return rbacConfig
 }
 
-func (t *Translator) translateMCPToRBACPermission(mcp *agenticv1alpha1.MCPAttributes) *rbacconfigv3.Permission {
+func (t *Translator) translateMCPToRBACPermissions(mcp *agenticv1alpha1.MCPAttributes) []*rbacconfigv3.Permission {
 	if mcp == nil {
-		return buildAnyPermission()
+		return []*rbacconfigv3.Permission{buildAnyPermission()}
 	}
 
-	var methodPermissions []*rbacconfigv3.Permission
+	var permissions []*rbacconfigv3.Permission
 	for _, method := range mcp.Methods {
-		methodPermissions = append(methodPermissions, translateMCPMethodToRBACPermission(method))
+		permissions = append(permissions, translateMCPMethodToRBACPermission(method))
 	}
 
-	if mcp.MCPBaseProtocolMethodsOption == agenticv1alpha1.MATCH_BASE_PROTOCOL_METHODS {
-		methodPermissions = append(methodPermissions, buildBaseProtocolMethodsPermission())
+	if mcp.MCPBaseProtocolMethodsOption == agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch {
+		permissions = append(permissions, buildBaseProtocolMethodsRules()...)
 	}
 
-	if len(methodPermissions) == 0 {
+	if len(permissions) == 0 {
 		// If both methods and base protocol methods are empty/skipped, we fall back to allowing anything
 		// to maintain backward compatibility for policies that don't specify methods.
 		// TODO: Re-evaluate this default if strict explicit allow is required when `mcp` is present but empty.
-		return buildAnyPermission()
+		return []*rbacconfigv3.Permission{buildAnyPermission()}
 	}
 
-	if len(methodPermissions) == 1 {
-		return methodPermissions[0]
-	}
-
-	return &rbacconfigv3.Permission{
-		Rule: &rbacconfigv3.Permission_OrRules{
-			OrRules: &rbacconfigv3.Permission_Set{
-				Rules: methodPermissions,
-			},
-		},
-	}
+	return permissions
 }
 
-func buildBaseProtocolMethodsPermission() *rbacconfigv3.Permission {
-	return &rbacconfigv3.Permission{
-		Rule: &rbacconfigv3.Permission_SourcedMetadata{
-			SourcedMetadata: &rbacconfigv3.SourcedMetadata{
-				MetadataMatcher: &matcherv3.MetadataMatcher{
-					Filter: constants.MCPProxyFilterName,
-					Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
-					Value: &matcherv3.ValueMatcher{
-						MatchPattern: &matcherv3.ValueMatcher_OrMatch{
-							OrMatch: &matcherv3.OrMatcher{
-								ValueMatchers: []*matcherv3.ValueMatcher{
-									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "initialize"}}}},
-									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: "completion/"}}}},
-									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: "logging/"}}}},
-									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: "notifications/"}}}},
-									{MatchPattern: &matcherv3.ValueMatcher_StringMatch{StringMatch: &matcherv3.StringMatcher{MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "ping"}}}},
+func buildBaseProtocolMethodsRules() []*rbacconfigv3.Permission {
+	var rules []*rbacconfigv3.Permission
+
+	// 1. MCP Base Methods metadata matchers (one permission per method)
+	methods := []string{"initialize", "tools/list", "ping"}
+	prefixes := []string{"completion/", "logging/", "notifications/"}
+
+	for _, m := range methods {
+		rules = append(rules, &rbacconfigv3.Permission{
+			Rule: &rbacconfigv3.Permission_SourcedMetadata{
+				SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+					MetadataMatcher: &matcherv3.MetadataMatcher{
+						Filter: constants.MCPProxyFilterName,
+						Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+						Value: &matcherv3.ValueMatcher{
+							MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+								StringMatch: &matcherv3.StringMatcher{
+									MatchPattern: &matcherv3.StringMatcher_Exact{Exact: m},
 								},
 							},
 						},
 					},
 				},
 			},
-		},
+		})
 	}
+
+	for _, p := range prefixes {
+		rules = append(rules, &rbacconfigv3.Permission{
+			Rule: &rbacconfigv3.Permission_SourcedMetadata{
+				SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+					MetadataMatcher: &matcherv3.MetadataMatcher{
+						Filter: constants.MCPProxyFilterName,
+						Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+						Value: &matcherv3.ValueMatcher{
+							MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+								StringMatch: &matcherv3.StringMatcher{
+									MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: p},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	// 2. HTTP GET permission (for SSE stream connection)
+	rules = append(rules, &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_Header{
+			Header: &routev3.HeaderMatcher{
+				Name: ":method",
+				HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
+					StringMatch: &matcherv3.StringMatcher{
+						MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "GET"},
+					},
+				},
+			},
+		},
+	})
+
+	// 3. HTTP DELETE permission with session-id header presence (for session close)
+	rules = append(rules, &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_AndRules{
+			AndRules: &rbacconfigv3.Permission_Set{
+				Rules: []*rbacconfigv3.Permission{
+					{
+						Rule: &rbacconfigv3.Permission_Header{
+							Header: &routev3.HeaderMatcher{
+								Name: ":method",
+								HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
+									StringMatch: &matcherv3.StringMatcher{
+										MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "DELETE"},
+									},
+								},
+							},
+						},
+					},
+					{
+						Rule: &rbacconfigv3.Permission_Header{
+							Header: &routev3.HeaderMatcher{
+								Name:                 constants.MCPSessionIDHeader,
+								HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: true},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	return rules
 }
 
 func translateMCPMethodToRBACPermission(method agenticv1alpha1.MCPMethod) *rbacconfigv3.Permission {

@@ -1099,12 +1099,15 @@ spec:
                               default: SKIP_BASE_PROTOCOL_METHODS
                               description: |-
                                 MCPBaseProtocolMethodsOption specifies whether to match on base MCP protocol methods.
-                                Optional. If specified, matches on the MCP protocol’s non-access specific methods namely:
+                                Optional. If specified, matches on the MCP protocol’s non-access specific methods and transport prerequisites namely:
                                 * initialize
+                                * tools/list
                                 * completion/
                                 * logging/
                                 * notifications/
                                 * ping
+                                * HTTP GET requests (needed for SSE stream connection)
+                                * HTTP DELETE requests with mcp-session-id header (needed for session close)
                                 Defaults to SKIP_BASE_PROTOCOL_METHODS if not specified
                               enum:
                               - SKIP_BASE_PROTOCOL_METHODS
