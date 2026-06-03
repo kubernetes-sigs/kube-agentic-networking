@@ -37,7 +37,7 @@ import (
 var XAccessPolicyMCPMatching = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyMCPMatching",
 	Description: "Verifies different levels of MCP method matching (Category, Specific Method, Params).",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
 	Manifests:   []string{"tests/xaccesspolicy-mcp-matching.yaml"},
 	Test: func(t *testing.T, s *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

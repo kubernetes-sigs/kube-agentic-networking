@@ -37,7 +37,7 @@ import (
 var XAccessPolicyBaseProtocolMatch = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyBaseProtocolMatch",
 	Description: "Verifies that base protocol methods are allowed when MATCH_BASE_PROTOCOL_METHODS is set, while other traffic is denied.",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
 	Manifests:   []string{"tests/xaccesspolicy-base-protocol-match.yaml"},
 	Test: func(t *testing.T, s *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

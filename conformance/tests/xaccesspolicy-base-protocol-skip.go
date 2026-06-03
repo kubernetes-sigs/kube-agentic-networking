@@ -39,7 +39,7 @@ import (
 var XAccessPolicyBaseProtocolSkip = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyBaseProtocolSkip",
 	Description: "Verifies that base protocol methods (like initialize) are denied when SKIP_BASE_PROTOCOL_METHODS is set.",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
 	Manifests:   []string{"tests/xaccesspolicy-base-protocol-skip.yaml"},
 	Test: func(t *testing.T, s *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

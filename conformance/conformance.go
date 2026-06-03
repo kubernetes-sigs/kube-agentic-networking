@@ -19,9 +19,7 @@ package conformance
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -149,18 +147,8 @@ func RunConformanceWithOptions(t *testing.T, opts confsuite.ConformanceOptions) 
 	}
 
 	cSuite.Applier.ManifestFS = cSuite.ManifestFS
-	if cSuite.RunTest != "" {
-		idx := slices.IndexFunc(tests.ConformanceTests, func(test confsuite.ConformanceTest) bool {
-			return test.ShortName == cSuite.RunTest
-		})
-		if idx == -1 {
-			require.FailNow(t, fmt.Sprintf("Test %q does not exist", cSuite.RunTest))
-		}
-	}
-
-	// Apply base manifests
-	cSuite.Applier.GatewayClass = opts.GatewayClassName
-	cSuite.Applier.MustApplyWithCleanup(t, opts.Client, cSuite.TimeoutConfig, opts.BaseManifests, cSuite.Cleanup)
+	// Setup conformance suite (Ensures GatewayClass is accepted, applies BaseManifests and certs)
+	cSuite.Setup(t, tests.ConformanceTests)
 
 	t.Log("Waiting for agentic-conformance-infra namespace to be ready")
 	kubernetes.NamespacesMustBeReady(t, opts.Client, cSuite.TimeoutConfig, []string{"agentic-conformance-infra"})

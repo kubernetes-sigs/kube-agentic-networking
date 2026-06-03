@@ -5,6 +5,21 @@ metadata:
   name: agentic-conformance-infra
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway-conformance-infra
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway-conformance-web-backend
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway-conformance-app-backend
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: conformance-tester-sa

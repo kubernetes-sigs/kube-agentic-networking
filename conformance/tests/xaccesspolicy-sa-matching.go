@@ -37,7 +37,7 @@ import (
 var XAccessPolicySAMatching = suite.ConformanceTest{
 	ShortName:   "XAccessPolicySAMatching",
 	Description: "Verifies access is allowed for matched ServiceAccount and denied for others (default deny).",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
 	Manifests:   []string{"tests/xaccesspolicy-sa-matching.yaml"},
 	Test: func(t *testing.T, s *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

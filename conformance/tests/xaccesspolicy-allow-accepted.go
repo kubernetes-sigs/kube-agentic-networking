@@ -36,7 +36,7 @@ import (
 var XAccessPolicyAllowAccepted = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyAllowAccepted",
 	Description: "Verifies that a valid XAccessPolicy with Allow action targeting a Gateway is accepted by the controller.",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
 	Manifests:   []string{"tests/xaccesspolicy-allow-accepted.yaml"},
 	Test: func(t *testing.T, suite *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

@@ -38,7 +38,7 @@ import (
 var XAccessPolicyExtAuthLimit = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyExtAuthLimit",
 	Description: "Verifies that only one ExternalAuth policy is accepted per target, and subsequent ones are rejected.",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
 	Manifests:   []string{"tests/xaccesspolicy-extauth-limit.yaml"},
 	Test: func(t *testing.T, suite *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
