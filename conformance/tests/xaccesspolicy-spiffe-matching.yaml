@@ -1,7 +1,7 @@
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
-  name: test-access-policy
+  name: xaccesspolicy-spiffe-matching
   namespace: agentic-conformance-infra
 spec:
   targetRefs:
@@ -10,15 +10,14 @@ spec:
       name: conformance-primary
   action: Allow
   rules:
-    - name: allow-get-sum
+    - name: allow-tester-spiffe
       source:
-        type: ServiceAccount
-        serviceAccount:
-          name: default
-          namespace: agentic-conformance-infra
+        type: SPIFFE
+        spiffe: spiffe://cluster.local/ns/agentic-conformance-infra/sa/conformance-tester-sa
       authorization:
         type: Inline
         mcp:
+          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
           methods:
             - name: tools/call
               params:

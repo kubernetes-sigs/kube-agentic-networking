@@ -28,22 +28,22 @@ import (
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
 
-	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
-	"sigs.k8s.io/kube-agentic-networking/api/v0alpha0/helpers"
+	"sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 	localfeatures "sigs.k8s.io/kube-agentic-networking/conformance/utils/features"
+	"sigs.k8s.io/kube-agentic-networking/pkg/helpers"
 )
 
-var XAccessPolicyAccepted = suite.ConformanceTest{
-	ShortName:   "XAccessPolicyAccepted",
-	Description: "Verifies that an XAccessPolicy targeting a Gateway is accepted by the controller.",
+var XAccessPolicyAllowAccepted = suite.ConformanceTest{
+	ShortName:   "XAccessPolicyAllowAccepted",
+	Description: "Verifies that a valid XAccessPolicy with Allow action targeting a Gateway is accepted by the controller.",
 	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
-	Manifests:   []string{"tests/accesspolicy-accepted.yaml"},
+	Manifests:   []string{"tests/xaccesspolicy-allow-accepted.yaml"},
 	Test: func(t *testing.T, suite *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
-		policy := &v0alpha0.XAccessPolicy{}
-		policyName := types.NamespacedName{Name: "test-access-policy", Namespace: "agentic-conformance-infra"}
+		policy := &v1alpha1.XAccessPolicy{}
+		policyName := types.NamespacedName{Name: "xaccesspolicy-allow-accepted", Namespace: "agentic-conformance-infra"}
 
 		t.Logf("Waiting for XAccessPolicy %s to be accepted", policyName)
 
@@ -64,5 +64,5 @@ var XAccessPolicyAccepted = suite.ConformanceTest{
 }
 
 func init() {
-	ConformanceTests = append(ConformanceTests, XAccessPolicyAccepted)
+	ConformanceTests = append(ConformanceTests, XAccessPolicyAllowAccepted)
 }

@@ -4,6 +4,91 @@ kind: Namespace
 metadata:
   name: agentic-conformance-infra
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: conformance-tester-sa
+  namespace: agentic-conformance-infra
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conformance-tester
+  namespace: agentic-conformance-infra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: conformance-tester
+  template:
+    metadata:
+      labels:
+        app: conformance-tester
+    spec:
+      serviceAccountName: conformance-tester-sa
+      containers:
+      - name: tester
+        image: curlimages/curl:latest
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - name: agent-identity-mtls
+          mountPath: /run/agent-identity-mtls
+          readOnly: true
+      volumes:
+      - name: agent-identity-mtls
+        projected:
+          sources:
+          - clusterTrustBundle:
+              signerName: kube-agentic-networking.sigs.k8s.io/identity
+              labelSelector:
+                matchLabels:
+                  "kube-agentic-networking.sigs.k8s.io/canarying": "live"
+                  "kube-agentic-networking.sigs.k8s.io/workload-trust-domain": "cluster.local"
+                  "kube-agentic-networking.sigs.k8s.io/peer-trust-domain": "cluster.local"
+              path: cluster.local.trust-bundle.pem
+          - podCertificate:
+              signerName: kube-agentic-networking.sigs.k8s.io/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conformance-mcp-backend
+  namespace: agentic-conformance-infra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: conformance-mcp-backend
+  template:
+    metadata:
+      labels:
+        app: conformance-mcp-backend
+    spec:
+      containers:
+        - name: mcp-backend
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-everything-mcp:main
+          ports:
+            - containerPort: 3001
+          env:
+            - name: PORT
+              value: "3001"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: conformance-mcp-backend-svc
+  namespace: agentic-conformance-infra
+spec:
+  type: ClusterIP
+  selector:
+    app: conformance-mcp-backend
+  ports:
+    - port: 3001
+      targetPort: 3001
+      protocol: TCP
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -18,3 +103,41 @@ spec:
     allowedRoutes:
       namespaces:
         from: All
+  - name: https
+    port: 443
+    protocol: HTTPS
+    allowedRoutes:
+      namespaces:
+        from: All
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: gateway-server-cert
+        kind: Secret
+        group: ""
+  tls:
+    frontend:
+      default:
+        validation:
+          caCertificateRefs:
+          - name: gateway-client-ca
+            kind: ConfigMap
+            group: ""
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: conformance-route
+  namespace: agentic-conformance-infra
+spec:
+  parentRefs:
+    - name: conformance-primary
+      namespace: agentic-conformance-infra
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: conformance-mcp-backend-svc
+          port: 3001

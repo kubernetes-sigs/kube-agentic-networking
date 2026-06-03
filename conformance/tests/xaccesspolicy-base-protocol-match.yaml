@@ -1,7 +1,7 @@
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
-  name: test-access-policy
+  name: xaccesspolicy-base-protocol-match
   namespace: agentic-conformance-infra
 spec:
   targetRefs:
@@ -10,16 +10,13 @@ spec:
       name: conformance-primary
   action: Allow
   rules:
-    - name: allow-get-sum
+    - name: allow-tester-base
       source:
         type: ServiceAccount
         serviceAccount:
-          name: default
+          name: conformance-tester-sa
           namespace: agentic-conformance-infra
       authorization:
         type: Inline
         mcp:
-          methods:
-            - name: tools/call
-              params:
-                - "get-sum"
+          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS

@@ -114,7 +114,7 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 	if opts.ExemptFeatures.Len() > 0 {
 		var toDelete []gatewayfeatures.FeatureName
 		for _, f := range opts.ExemptFeatures.UnsortedList() {
-			toDelete = append(toDelete, f)
+			toDelete = append(toDelete, gatewayfeatures.FeatureName(f))
 		}
 		opts.SupportedFeatures = opts.SupportedFeatures.Delete(toDelete...)
 	}
