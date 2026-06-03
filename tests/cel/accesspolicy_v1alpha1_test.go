@@ -250,6 +250,12 @@ func TestValidateXAccessPolicyV1Alpha1(t *testing.T) {
 			},
 			wantErrors: []string{"cel must not be specified when type is set to 'Inline'"},
 		},
+		{
+			desc: "valid policy with empty rules",
+			mutate: func(p *v1alpha1.XAccessPolicy) {
+				p.Spec.Rules = nil
+			},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {

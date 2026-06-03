@@ -172,15 +172,7 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 // buildRBACConfigWithCommonPolicies generates an RBAC config for an AccessPolicy.
 // It includes the common policies needed for MCP session management to avoid blocking basic operations.
 func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
-	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy)
-
-	// Add common policies to avoid blocking basic MCP operations.
-	// These are added to the 'Rules' section which is where allowed traffic is defined.
-	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
-
-	return rbacConfig
+	return t.translateAccessPolicyToRBAC(accessPolicy)
 }
 
 func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
@@ -214,8 +206,8 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 			if rule.Authorization != nil {
 				switch rule.Authorization.Type {
 				case agenticv1alpha1.AuthorizationRuleTypeInline:
-					if permission := t.translateMCPToRBACPermission(&rule.Authorization.MCP); permission != nil {
-						rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
+					if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
+						rbacPolicy.Permissions = permissions
 					}
 				case agenticv1alpha1.AuthorizationRuleTypeCEL:
 					if rule.Authorization.CEL != nil {
@@ -237,10 +229,6 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
 		}
 	}
-
-	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
-	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
 
 	return rbacConfig
 }
@@ -294,6 +282,34 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
 
+	if len(accessPolicy.Spec.Rules) == 0 {
+		if accessPolicy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth && accessPolicy.Spec.ExternalAuth != nil {
+			hash, err := externalAuthUniqueID(accessPolicy.Spec.ExternalAuth)
+			if err != nil {
+				klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
+				return rbacConfig
+			}
+			rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash)
+
+			rbacPolicy := &rbacconfigv3.Policy{
+				Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
+				Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+			}
+
+			policyName := accessPolicy.Name // Use policy name as rule name
+
+			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
+
+			// Ensure the regular Rules section transparently allows all traffic through so that secondary policies evaluate non-matching streams.
+			allowAllPolicy := &rbacconfigv3.Policy{
+				Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
+				Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+			}
+			addPolicyToRBACRules(rbacConfig, policyName, allowAllPolicy)
+		}
+		return rbacConfig
+	}
+
 	// Each AccessRule in the XAccessPolicy is translated into a named policy within the Envoy RBAC filter.
 	for _, rule := range accessPolicy.Spec.Rules {
 		policyName := rule.Name
@@ -325,8 +341,8 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 			switch rule.Authorization.Type {
 			case agenticv1alpha1.AuthorizationRuleTypeInline:
 				// TODO: Only MCP is currently supported. Add support for more generic inline auth in the future
-				if permission := t.translateMCPToRBACPermission(&rule.Authorization.MCP); permission != nil {
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{permission}
+				if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
+					rbacPolicy.Permissions = permissions
 				}
 			case agenticv1alpha1.AuthorizationRuleTypeCEL:
 				if rule.Authorization.CEL != nil {
@@ -377,27 +393,122 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	return rbacConfig
 }
 
-func (t *Translator) translateMCPToRBACPermission(mcp *agenticv1alpha1.MCPAttributes) *rbacconfigv3.Permission {
-	if mcp == nil || len(mcp.Methods) == 0 {
-		return buildAnyPermission()
+func (t *Translator) translateMCPToRBACPermissions(mcp *agenticv1alpha1.MCPAttributes) []*rbacconfigv3.Permission {
+	if mcp == nil {
+		return []*rbacconfigv3.Permission{buildAnyPermission()}
 	}
 
-	var methodPermissions []*rbacconfigv3.Permission
+	var permissions []*rbacconfigv3.Permission
 	for _, method := range mcp.Methods {
-		methodPermissions = append(methodPermissions, translateMCPMethodToRBACPermission(method))
+		permissions = append(permissions, translateMCPMethodToRBACPermission(method))
 	}
 
-	if len(methodPermissions) == 1 {
-		return methodPermissions[0]
+	if mcp.MCPBaseProtocolMethodsOption == agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch {
+		permissions = append(permissions, buildBaseProtocolMethodsRules()...)
 	}
 
-	return &rbacconfigv3.Permission{
-		Rule: &rbacconfigv3.Permission_OrRules{
-			OrRules: &rbacconfigv3.Permission_Set{
-				Rules: methodPermissions,
+	if len(permissions) == 0 {
+		// If both methods and base protocol methods are empty/skipped, we fall back to allowing anything
+		// to maintain backward compatibility for policies that don't specify methods.
+		// TODO: Re-evaluate this default if strict explicit allow is required when `mcp` is present but empty.
+		return []*rbacconfigv3.Permission{buildAnyPermission()}
+	}
+
+	return permissions
+}
+
+func buildBaseProtocolMethodsRules() []*rbacconfigv3.Permission {
+	var rules []*rbacconfigv3.Permission
+
+	// 1. MCP Base Methods metadata matchers (one permission per method)
+	methods := []string{"initialize", "tools/list", "ping"}
+	prefixes := []string{"completion/", "logging/", "notifications/"}
+
+	for _, m := range methods {
+		rules = append(rules, &rbacconfigv3.Permission{
+			Rule: &rbacconfigv3.Permission_SourcedMetadata{
+				SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+					MetadataMatcher: &matcherv3.MetadataMatcher{
+						Filter: constants.MCPProxyFilterName,
+						Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+						Value: &matcherv3.ValueMatcher{
+							MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+								StringMatch: &matcherv3.StringMatcher{
+									MatchPattern: &matcherv3.StringMatcher_Exact{Exact: m},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	for _, p := range prefixes {
+		rules = append(rules, &rbacconfigv3.Permission{
+			Rule: &rbacconfigv3.Permission_SourcedMetadata{
+				SourcedMetadata: &rbacconfigv3.SourcedMetadata{
+					MetadataMatcher: &matcherv3.MetadataMatcher{
+						Filter: constants.MCPProxyFilterName,
+						Path:   []*matcherv3.MetadataMatcher_PathSegment{{Segment: &matcherv3.MetadataMatcher_PathSegment_Key{Key: "method"}}},
+						Value: &matcherv3.ValueMatcher{
+							MatchPattern: &matcherv3.ValueMatcher_StringMatch{
+								StringMatch: &matcherv3.StringMatcher{
+									MatchPattern: &matcherv3.StringMatcher_Prefix{Prefix: p},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	// 2. HTTP GET permission (for SSE stream connection)
+	rules = append(rules, &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_Header{
+			Header: &routev3.HeaderMatcher{
+				Name: ":method",
+				HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
+					StringMatch: &matcherv3.StringMatcher{
+						MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "GET"},
+					},
+				},
 			},
 		},
-	}
+	})
+
+	// 3. HTTP DELETE permission with session-id header presence (for session close)
+	rules = append(rules, &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_AndRules{
+			AndRules: &rbacconfigv3.Permission_Set{
+				Rules: []*rbacconfigv3.Permission{
+					{
+						Rule: &rbacconfigv3.Permission_Header{
+							Header: &routev3.HeaderMatcher{
+								Name: ":method",
+								HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
+									StringMatch: &matcherv3.StringMatcher{
+										MatchPattern: &matcherv3.StringMatcher_Exact{Exact: "DELETE"},
+									},
+								},
+							},
+						},
+					},
+					{
+						Rule: &rbacconfigv3.Permission_Header{
+							Header: &routev3.HeaderMatcher{
+								Name:                 constants.MCPSessionIDHeader,
+								HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: true},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	return rules
 }
 
 func translateMCPMethodToRBACPermission(method agenticv1alpha1.MCPMethod) *rbacconfigv3.Permission {

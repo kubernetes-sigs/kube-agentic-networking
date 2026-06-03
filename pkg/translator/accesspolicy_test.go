@@ -310,7 +310,116 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 	tr := &Translator{}
 	policy := &agenticv1alpha1.XAccessPolicy{
 		Spec: agenticv1alpha1.AccessPolicySpec{
-			Rules: []agenticv1alpha1.AccessRule{{Name: "custom-rule"}},
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "custom-rule",
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP: agenticv1alpha1.MCPAttributes{
+							MCPBaseProtocolMethodsOption: agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rbac := tr.buildRBACConfigWithCommonPolicies(policy)
+
+	rbacPolicy := rbac.GetRules().GetPolicies()["custom-rule"]
+	if rbacPolicy == nil {
+		t.Fatal("Expected policy 'custom-rule' not found")
+	}
+
+	permissions := rbacPolicy.GetPermissions()
+	if len(permissions) != 8 {
+		t.Fatalf("Expected 8 permissions, got %d", len(permissions))
+	}
+
+	// Verify MCP base methods (exact matches)
+	expectedExact := map[string]bool{
+		"initialize": false,
+		"tools/list": false,
+		"ping":       false,
+	}
+	for i := 0; i < 3; i++ {
+		mcpRule := permissions[i].GetSourcedMetadata()
+		if mcpRule == nil || mcpRule.GetMetadataMatcher() == nil {
+			t.Fatalf("Expected SourcedMetadata for rule %d, got %+v", i, permissions[i])
+		}
+		val := mcpRule.GetMetadataMatcher().GetValue().GetStringMatch().GetExact()
+		if _, ok := expectedExact[val]; ok {
+			expectedExact[val] = true
+		} else {
+			t.Errorf("Unexpected exact match value: %q", val)
+		}
+	}
+	for val, found := range expectedExact {
+		if !found {
+			t.Errorf("Expected exact match for %q not found", val)
+		}
+	}
+
+	// Verify MCP base methods (prefix matches)
+	expectedPrefix := map[string]bool{
+		"completion/":    false,
+		"logging/":       false,
+		"notifications/": false,
+	}
+	for i := 3; i < 6; i++ {
+		mcpRule := permissions[i].GetSourcedMetadata()
+		if mcpRule == nil || mcpRule.GetMetadataMatcher() == nil {
+			t.Fatalf("Expected SourcedMetadata for rule %d, got %+v", i, permissions[i])
+		}
+		val := mcpRule.GetMetadataMatcher().GetValue().GetStringMatch().GetPrefix()
+		if _, ok := expectedPrefix[val]; ok {
+			expectedPrefix[val] = true
+		} else {
+			t.Errorf("Unexpected prefix match value: %q", val)
+		}
+	}
+	for val, found := range expectedPrefix {
+		if !found {
+			t.Errorf("Expected prefix match for %q not found", val)
+		}
+	}
+
+	// Rule 6: HTTP GET
+	getRule := permissions[6].GetHeader()
+	if getRule == nil || getRule.GetName() != ":method" || getRule.GetStringMatch().GetExact() != "GET" {
+		t.Errorf("Expected HTTP GET header matcher, got %+v", permissions[6])
+	}
+
+	// Rule 7: HTTP DELETE with session-id header
+	deleteRule := permissions[7].GetAndRules()
+	if deleteRule == nil || len(deleteRule.GetRules()) != 2 {
+		t.Fatalf("Expected AndRules for HTTP DELETE, got %+v", permissions[7])
+	}
+	delMethodRule := deleteRule.GetRules()[0].GetHeader()
+	if delMethodRule == nil || delMethodRule.GetName() != ":method" || delMethodRule.GetStringMatch().GetExact() != "DELETE" {
+		t.Errorf("Expected HTTP DELETE method matcher, got %+v", deleteRule.GetRules()[0])
+	}
+	sessionHeaderRule := deleteRule.GetRules()[1].GetHeader()
+	if sessionHeaderRule == nil || sessionHeaderRule.GetName() != constants.MCPSessionIDHeader || !sessionHeaderRule.GetPresentMatch() {
+		t.Errorf("Expected session-id header presence matcher, got %+v", deleteRule.GetRules()[1])
+	}
+}
+
+func TestBuildRBACConfigWithoutCommonPolicies(t *testing.T) {
+	tr := &Translator{}
+	policy := &agenticv1alpha1.XAccessPolicy{
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "custom-rule",
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP:  agenticv1alpha1.MCPAttributes{
+							// Defaults to SKIP_BASE_PROTOCOL_METHODS
+						},
+					},
+				},
+			},
 		},
 	}
 
@@ -318,15 +427,20 @@ func TestBuildRBACConfigWithCommonPolicies(t *testing.T) {
 
 	expectedPolicies := []string{
 		"custom-rule",
-		constants.AllowMCPSessionClosePolicyName,
-		constants.AllowAnyoneToInitializeAndListToolsPolicyName,
-		constants.AllowHTTPGetPolicyName,
 	}
 
-	for _, p := range expectedPolicies {
-		if _, ok := rbac.GetRules().GetPolicies()[p]; !ok {
-			t.Errorf("Expected policy %s not found", p)
-		}
+	if len(rbac.GetRules().GetPolicies()) != len(expectedPolicies) {
+		t.Errorf("Expected %d policies, got %d", len(expectedPolicies), len(rbac.GetRules().GetPolicies()))
+	}
+
+	rbacPolicy := rbac.GetRules().GetPolicies()["custom-rule"]
+	if rbacPolicy == nil {
+		t.Fatal("Expected policy 'custom-rule' not found")
+	}
+
+	permissions := rbacPolicy.GetPermissions()
+	if len(permissions) != 1 || !permissions[0].GetAny() {
+		t.Errorf("Expected 'Any' permission for empty methods and skipped base methods")
 	}
 }
 
@@ -711,6 +825,34 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			expectedShadowRules: map[string]expectedRule{
 				"rule-ext-auth": {
 					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
+				},
+			},
+			expectShadowStatPrefix: true,
+		},
+		{
+			name: "external authz with empty rules",
+			accessPolicy: &agenticv1alpha1.XAccessPolicy{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "policy-ext-auth-empty-rules"},
+				Spec: agenticv1alpha1.AccessPolicySpec{
+					Action: agenticv1alpha1.ActionTypeExternalAuth,
+					ExternalAuth: &gatewayv1.HTTPExternalAuthFilter{
+						ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: "ext-auth-svc",
+						},
+					},
+				},
+			},
+			expectedRules: map[string]expectedRule{
+				"policy-ext-auth-empty-rules": {
+					permissions:         []string{},
+					expectAnyPermission: true,
+				},
+			},
+			expectedShadowRules: map[string]expectedRule{
+				"policy-ext-auth-empty-rules": {
 					permissions:         []string{},
 					expectAnyPermission: true,
 				},
