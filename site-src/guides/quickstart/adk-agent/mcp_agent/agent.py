@@ -19,10 +19,7 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
-import contextvars
-
-from opentelemetry import trace, context
-from .genai_spans import GenAISpanHelper
+from opentelemetry import trace
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
@@ -69,55 +66,38 @@ else:
     )
 
 tracer = trace.get_tracer(__name__)
-genai_helper = GenAISpanHelper(tracer)
-
-# Tracks the active tool call span across async boundaries so httpx instrumentation
-# can inject the correct traceparent into outgoing requests to the gateway.
-_active_tool_span: contextvars.ContextVar = contextvars.ContextVar("_active_tool_span", default=None)
 
 
 def _before_tool_callback(tool, args, tool_context):
-    """Create a gen_ai.tool.call span and attach it to the current context.
+    """Add GenAI semantic convention attributes to the current ADK execute_tool span.
 
-    ADK's httpx instrumentation reads the active span to inject traceparent,
-    linking this agent span to the gateway's ingress span in the same trace.
+    ADK 2.0+ creates an 'execute_tool' span via record_tool_execution() that becomes
+    the current span. We enrich it with GenAI attributes and rely on ADK's span hierarchy
+    for trace propagation to the gateway (httpx instrumentation injects traceparent
+    from the current span).
     """
+    span = trace.get_current_span()
     tool_name = getattr(tool, "name", str(tool))
-    span = tracer.start_span(
-        "gen_ai.tool.call",
-        attributes={
-            "gen_ai.tool.name": tool_name,
-            "gen_ai.operation.name": "execute_tool",
-            "gen_ai.agent.name": AGENT_NAME,
-        },
-    )
-    token = context.attach(trace.set_span_in_context(span))
-    _active_tool_span.set((span, token))
-    logger.debug(
+    span.set_attribute("gen_ai.tool.name", tool_name)
+    span.set_attribute("gen_ai.operation.name", "execute_tool")
+    span.set_attribute("gen_ai.agent.name", AGENT_NAME)
+    span.update_name(f"gen_ai.tool.call {tool_name}")
+    logger.info(
         f"tool_call_start tool={tool_name} "
-        f"trace_id={span.get_span_context().trace_id:032x} "
-        f"span_id={span.get_span_context().span_id:016x}"
+        f"trace_id={span.get_span_context().trace_id:032x}"
     )
-    return None
 
 
 def _after_tool_callback(tool, args, tool_context, tool_response):
-    """End the gen_ai.tool.call span after the MCP tool completes."""
-    entry = _active_tool_span.get()
-    if entry is None:
-        return None
-    span, token = entry
-    _active_tool_span.set(None)
+    """Record tool call outcome on the current span."""
+    span = trace.get_current_span()
     tool_name = getattr(tool, "name", str(tool))
     if isinstance(tool_response, dict) and tool_response.get("error"):
         span.set_status(trace.Status(trace.StatusCode.ERROR, str(tool_response["error"])))
         span.set_attribute("error.type", "ToolExecutionError")
     else:
         span.set_status(trace.Status(trace.StatusCode.OK))
-    span.end()
-    context.detach(token)
-    logger.debug(f"tool_call_end tool={tool_name}")
-    return None
+    logger.info(f"tool_call_end tool={tool_name}")
 
 
 def _init_mcp(name: str, mcp_type: str) -> McpToolset:
