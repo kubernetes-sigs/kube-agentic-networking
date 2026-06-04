@@ -17,6 +17,20 @@ A set of new fields proposed to be added the AccessPolicy API can be used in con
 
 This API is **provisional** and subject to change without prior notice. Vendors and integrators should not implement or rely on it, and it must not be enabled in production environments until a stable version is released.
 
+### Implementation status (v1alpha1)
+
+Partially implemented in the prototype:
+
+| Proposal concept | v1alpha1 status |
+|----------------|-----------------|
+| `InlineTools` + flat `tools:` list | **`Inline`** + `mcp.methods` (e.g. `tools/call` with `params`) |
+| Rule-level `ExternalAuth` | **`spec.action: ExternalAuth`** + `spec.externalAuth` |
+| `CEL` authorization | Implemented (`authorization.type: CEL`) |
+| OIDC / JWT sources | **Not implemented** |
+| Dynamic tool discovery without enumeration | **Not implemented** |
+
+See [`api/v1alpha1/accesspolicy_types.go`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v1alpha1/accesspolicy_types.go) and the [site API reference](https://kube-agentic-networking.sigs.k8s.io/reference/spec/). YAML examples below reflect the original proposal, not the implemented API.
+
 ----
 
 ## Non-Goals

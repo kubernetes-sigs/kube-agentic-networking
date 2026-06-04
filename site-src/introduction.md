@@ -57,8 +57,14 @@ This defines authorization policies for tool access from AI agents running insid
 
 The API introduces 2 new CRDs:
 
-- [XBackend](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v0alpha0/backend_types.go): describes a backend in agentic networking
-- [XAccessPolicy](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v0alpha0/accesspolicy_types.go): describes who can access what (the permissions/grants) in relation to the agentic networking backends
+- [XBackend](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v0alpha0/backend_types.go) (`agentic.networking.x-k8s.io/v0alpha0`): describes a backend in agentic networking.
+- [XAccessPolicy](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v1alpha1/accesspolicy_types.go) (`agentic.networking.x-k8s.io/v1alpha1`): describes who can access what in relation to agentic networking backends or Gateways. The v1alpha1 API is the storage version; an older v0alpha0 shape is still served for compatibility but should not be used for new policies.
+
+Key v1alpha1 concepts:
+
+- `spec.action`: `Allow` (inline authorization in rules) or `ExternalAuth` (delegate to `spec.externalAuth`).
+- Tool allowlists use `authorization.type: Inline` with `mcp.methods` (for example, `tools/call` with `params` listing tool names), not a flat `tools:` list on rules.
+- See the [API reference](reference/spec/) and [quickstart](guides/quickstart/README.md) for current examples.
 
 ## Who is working on this project?
 

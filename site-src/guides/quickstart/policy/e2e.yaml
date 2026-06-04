@@ -43,7 +43,7 @@ metadata:
   name: auth-policy-local-mcp
   namespace: quickstart-ns
 spec:
-  # AuthPolicy targets a single HTTPRoute.
+  # XAccessPolicy targets the local MCP XBackend.
   targetRefs:
     - group: agentic.networking.x-k8s.io
       kind: XBackend

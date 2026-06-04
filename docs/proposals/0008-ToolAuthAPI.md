@@ -11,6 +11,20 @@ This proposal defines authorization policies for tool access from AI agents runn
 
 This API is **provisional** and subject to change without prior notice. Vendors and integrators should not implement or rely on it, and it must not be enabled in production environments until a stable version is released.
 
+## Implementation status (v1alpha1)
+
+A prototype implementation exists. **Use the implemented API below**, not the original proposal shapes in later sections.
+
+| Proposal | Implemented |
+|----------|-------------|
+| `Backend` / `AccessPolicy` | `XBackend` / `XAccessPolicy` |
+| `spec.type: MCP` on Backend | `spec.mcp` only (`api/v0alpha0`, version `v0alpha0`) |
+| Flat `tools: []` on rules | `action: Allow` + `authorization.type: Inline` + `mcp.methods` (e.g. `tools/call` with `params`) |
+| `serviceAccounts: ["ns/sa"]` shorthand | `source.type: ServiceAccount` + `serviceAccount: { name, namespace? }` |
+| Rule-level external auth | `spec.action: ExternalAuth` + `spec.externalAuth` |
+
+**Authoritative references:** [`api/v1alpha1/accesspolicy_types.go`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v1alpha1/accesspolicy_types.go), [site API reference](https://kube-agentic-networking.sigs.k8s.io/reference/spec/), [quickstart example](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/policy/e2e.yaml).
+
 # Non-Goals
 
 The authentication of MCP tool access is not within the scope of this proposal, and will be explored separately in the future.
@@ -303,27 +317,40 @@ The following example shows how we can utilize AccessPolicy, Backend and HTTPRou
 
 ```yaml
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
-kind: AccessPolicy
+kind: XAccessPolicy
 metadata:
   name: access-policy-server1
 spec:
-  # AccessPolicy targets a single Backend.
   targetRefs:
   - group: agentic.networking.x-k8s.io
-    kind: Backend
+    kind: XBackend
     name: mcp-server1
+  action: Allow
   rules:
-  - source:
-      serviceAccounts:
-      - "default/sa1"
-    tools:
-    - "add"
-    - "subtract"
-  - source:
-      serviceAccounts:
-      - "default/sa2"
-    tools:
-    - "subtract"
+  - name: sa1-tools
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: sa1
+        namespace: default
+    authorization:
+      type: Inline
+      mcp:
+        methods:
+        - name: tools/call
+          params: ["add", "subtract"]
+  - name: sa2-tools
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: sa2
+        namespace: default
+    authorization:
+      type: Inline
+      mcp:
+        methods:
+        - name: tools/call
+          params: ["subtract"]
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -344,37 +371,43 @@ spec:
           type: ReplacePrefixMatch
           replacePrefixMatch: /mcp
     backendRefs:
-    - name: mcp-server1 # server1 running in the Kubernetes cluster
+    - name: mcp-server1
       group: agentic.networking.x-k8s.io
-      kind: Backend
+      kind: XBackend
 ---
-# Define a Backend resource for server1, which runs in the K8s cluster.
-apiVersion: agentic.networking.x-k8s.io/v1alpha1
-kind: Backend
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
+kind: XBackend
 metadata:
   name: mcp-server1
 spec:
-  type: MCP
   mcp:
     serviceName: server1-svc
     port: 9000
     path: /mcp
 ---
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
-kind: AccessPolicy
+kind: XAccessPolicy
 metadata:
   name: access-policy-server2
 spec:
   targetRefs:
   - group: agentic.networking.x-k8s.io
-    kind: Backend
+    kind: XBackend
     name: mcp-server2
+  action: Allow
   rules:
-  - source:
-      serviceAccounts:
-      - "default/sa2"
-    tools:
-    - "read_wiki_structure"
+  - name: sa2-wiki
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: sa2
+        namespace: default
+    authorization:
+      type: Inline
+      mcp:
+        methods:
+        - name: tools/call
+          params: ["read_wiki_structure"]
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -397,15 +430,13 @@ spec:
     backendRefs:
     - name: mcp-server2
       group: agentic.networking.x-k8s.io
-      kind: Backend
+      kind: XBackend
 ---
-# Define a Backend resource for server2, which is external.
-apiVersion: agentic.networking.x-k8s.io/v1alpha1
-kind: Backend
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
+kind: XBackend
 metadata:
   name: mcp-server2
 spec:
-  type: MCP
   mcp:
     hostname: mcp.deepwiki.com
     port: 443
