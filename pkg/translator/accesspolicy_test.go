@@ -545,6 +545,12 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					permissions: []string{"tool-1"},
 				},
 			},
+			expectedShadowRules: map[string]expectedRule{
+				"rule-1": {
+					principal:   "spiffe://example.com/ns/default/sa/caller",
+					permissions: []string{"tool-1"},
+				},
+			},
 		},
 		{
 			name: "one rule with empty tools",
@@ -565,11 +571,25 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					expectAnyPermission: true,
 				},
 			},
+			expectedShadowRules: map[string]expectedRule{
+				"rule-1": {
+					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
+				},
+			},
 		},
 		{
 			name:         "one rule with nil authorization",
 			accessPolicy: newTestAccessPolicy("policy-3", "default", "dummy", "Gateway", "spiffe://example.com/ns/default/sa/caller"),
 			expectedRules: map[string]expectedRule{
+				"rule-1": {
+					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
+				},
+			},
+			expectedShadowRules: map[string]expectedRule{
 				"rule-1": {
 					principal:           "spiffe://example.com/ns/default/sa/caller",
 					permissions:         []string{},
@@ -638,6 +658,16 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					permissions: []string{"tool-b", "tool-c"},
 				},
 			},
+			expectedShadowRules: map[string]expectedRule{
+				"rule-1": {
+					principal:   "spiffe://" + testTrustDomain + "/ns/my-ns/sa/my-sa",
+					permissions: []string{"tool-a"},
+				},
+				"rule-2": {
+					principal:   "spiffe://example.com/ns/default/sa/caller",
+					permissions: []string{"tool-b", "tool-c"},
+				},
+			},
 		},
 		{
 			name: "one rule with service account in same namespace (empty ns in source)",
@@ -670,6 +700,12 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				},
 			},
 			expectedRules: map[string]expectedRule{
+				"rule-1": {
+					principal:   "spiffe://" + testTrustDomain + "/ns/my-ns/sa/my-sa",
+					permissions: []string{"tool-1"},
+				},
+			},
+			expectedShadowRules: map[string]expectedRule{
 				"rule-1": {
 					principal:   "spiffe://" + testTrustDomain + "/ns/my-ns/sa/my-sa",
 					permissions: []string{"tool-1"},
