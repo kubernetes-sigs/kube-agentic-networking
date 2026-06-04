@@ -14,12 +14,15 @@
 
 import logging
 import os
+
+import httpx
 from google.adk.agents import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
-
+from opentelemetry import context as otel_context
 from opentelemetry import trace
+from opentelemetry.propagate import inject
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
@@ -67,21 +70,42 @@ else:
 
 tracer = trace.get_tracer(__name__)
 
+# Shared slot for the current tool execution's OTel context. The MCP SDK runs HTTP
+# requests in a background anyio task that doesn't inherit ContextVars, so we bridge
+# the context manually: _before_tool_callback writes here, the httpx hook reads it.
+_active_otel_ctx: list = [None]
+
+
+def _create_traced_httpx_client(
+    headers: dict | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """httpx factory that injects traceparent from the active tool execution context."""
+    async def _inject_trace(request: httpx.Request):
+        if _active_otel_ctx[0]:
+            carrier: dict[str, str] = {}
+            inject(carrier, context=_active_otel_ctx[0])
+            request.headers.update(carrier)
+
+    kwargs: dict = {"follow_redirects": True, "event_hooks": {"request": [_inject_trace]}}
+    kwargs["timeout"] = timeout if timeout is not None else httpx.Timeout(30.0, read=300.0)
+    if headers is not None:
+        kwargs["headers"] = headers
+    if auth is not None:
+        kwargs["auth"] = auth
+    return httpx.AsyncClient(**kwargs)
+
 
 def _before_tool_callback(tool, args, tool_context):
-    """Add GenAI semantic convention attributes to the current ADK execute_tool span.
-
-    ADK 2.0+ creates an 'execute_tool' span via record_tool_execution() that becomes
-    the current span. We enrich it with GenAI attributes and rely on ADK's span hierarchy
-    for trace propagation to the gateway (httpx instrumentation injects traceparent
-    from the current span).
-    """
+    """Enrich the execute_tool span and capture OTel context for HTTP propagation."""
     span = trace.get_current_span()
     tool_name = getattr(tool, "name", str(tool))
     span.set_attribute("gen_ai.tool.name", tool_name)
     span.set_attribute("gen_ai.operation.name", "execute_tool")
     span.set_attribute("gen_ai.agent.name", AGENT_NAME)
     span.update_name(f"gen_ai.tool.call {tool_name}")
+    _active_otel_ctx[0] = otel_context.get_current()
     logger.info(
         f"tool_call_start tool={tool_name} "
         f"trace_id={span.get_span_context().trace_id:032x}"
@@ -105,7 +129,10 @@ def _init_mcp(name: str, mcp_type: str) -> McpToolset:
     url = f"http://{envoy_service}/{mcp_type}/mcp"
     logger.info(f"Initializing McpToolset {name} at {url}")
     toolset = McpToolset(
-        connection_params=StreamableHTTPConnectionParams(url=url),
+        connection_params=StreamableHTTPConnectionParams(
+            url=url,
+            httpx_client_factory=_create_traced_httpx_client,
+        ),
     )
     logger.info(f"McpToolset {name} initialized successfully.")
     return toolset
