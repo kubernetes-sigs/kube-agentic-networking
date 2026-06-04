@@ -1,0 +1,39 @@
+{{- if .Values.collector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    app: otel-collector
+    {{- include "observability-example.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+      - name: otel-collector
+        image: {{ .Values.collector.image.repository }}:{{ .Values.collector.image.tag }}
+        command:
+          - "/otelcol-contrib"
+          - "--config=/etc/otelcol-config/base.yaml"
+        ports:
+        - containerPort: 4317
+          name: otlp-grpc
+        - containerPort: 4318
+          name: otlp-http
+        volumeMounts:
+        - name: otel-collector-config
+          mountPath: /etc/otelcol-config
+        resources:
+          {{- toYaml .Values.collector.resources | nindent 10 }}
+      volumes:
+      - name: otel-collector-config
+        configMap:
+          name: otel-collector-config
+{{- end }}

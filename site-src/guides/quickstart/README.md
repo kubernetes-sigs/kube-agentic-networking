@@ -300,6 +300,25 @@ The exact configuration method depends on how your agent connects to MCP tools.
 
 </details>
 
+## Observability (Optional)
+
+The agent and gateway emit OpenTelemetry traces that can be collected by any OTLP-compatible backend. If you already have an observability stack, point the OTel Collector at your endpoint.
+
+For a quick demo, install the **example** observability stack (OTel Collector, Tempo, Grafana). This is not production-grade — it uses in-memory storage and default credentials:
+
+```shell
+helm install observability-example charts/observability-example \
+  --namespace quickstart-ns
+```
+
+Then access Grafana at http://localhost:3000 (admin/admin):
+
+```shell
+kubectl port-forward -n quickstart-ns svc/grafana 3000:3000
+```
+
+In Grafana, go to **Explore → Tempo** and search by service name (`adk-agent` or `envoy-gateway-quickstart-ns/agentic-net-gateway`). See the [chart README](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/charts/observability-example/README.md) for configuration options.
+
 ## Clean Up
 
 To remove all resources created during this quickstart:
