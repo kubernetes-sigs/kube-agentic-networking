@@ -1,5 +1,5 @@
-google-adk
-mcp
+google-adk>=2.0.0
+mcp>=1.27.0
 litellm
 opentelemetry-api
 opentelemetry-sdk
