@@ -105,6 +105,14 @@ test-e2e-only: ## Run E2E tests against the current cluster without setup.
 	@echo "...Running E2E tests against cluster: $$(kubectl config current-context)"
 	cd tests && go clean -testcache && go test -v ./e2e/...
 
+.PHONY: setup-cluster
+setup-cluster: ## Create a local Kind cluster with MetalLB, CRDs, and the controller deployed.
+	./dev/ci/setup-cluster.sh
+
+.PHONY: teardown-cluster
+teardown-cluster: ## Delete the local dev cluster created by setup-cluster.
+	kind delete cluster --name "$${CLUSTER_NAME:-kan-dev}"
+
 .PHONY: verify
 verify: ## Run go vet
 	hack/verify-all.sh -v

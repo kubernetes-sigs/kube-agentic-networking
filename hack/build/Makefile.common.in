@@ -23,7 +23,7 @@ REPO_ROOT?=$(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
 # Default tags for local builds
 TAG ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo latest)
-BASE_REF ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo latest)
+BASE_REF ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' || echo latest)
 
 # Go version to use, respected by images that build go binaries
 GO_VERSION?=$(shell cat $(REPO_ROOT)/.go-version | head -n1)
