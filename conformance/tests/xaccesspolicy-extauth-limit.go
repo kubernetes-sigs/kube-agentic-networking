@@ -51,10 +51,10 @@ var XAccessPolicyExtAuthLimit = suite.ConformanceTest{
 		t.Logf("Waiting for senior XAccessPolicy %s to be accepted", policy1Name)
 		policy1 := &v1alpha1.XAccessPolicy{}
 		err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-			err := suite.Client.Get(ctx, policy1Name, policy1)
-			if err != nil {
-				t.Logf("Error getting XAccessPolicy 1: %v", err)
-				return false, client.IgnoreNotFound(err)
+			getErr := suite.Client.Get(ctx, policy1Name, policy1)
+			if getErr != nil {
+				t.Logf("Error getting XAccessPolicy 1: %v", getErr)
+				return false, client.IgnoreNotFound(getErr)
 			}
 			return helpers.IsXAccessPolicyAccepted(policy1), nil
 		})
@@ -64,10 +64,10 @@ var XAccessPolicyExtAuthLimit = suite.ConformanceTest{
 		t.Logf("Waiting for junior XAccessPolicy %s to be rejected with LimitPerTargetExceeded", policy2Name)
 		policy2 := &v1alpha1.XAccessPolicy{}
 		err = wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-			err := suite.Client.Get(ctx, policy2Name, policy2)
-			if err != nil {
-				t.Logf("Error getting XAccessPolicy 2: %v", err)
-				return false, client.IgnoreNotFound(err)
+			getErr := suite.Client.Get(ctx, policy2Name, policy2)
+			if getErr != nil {
+				t.Logf("Error getting XAccessPolicy 2: %v", getErr)
+				return false, client.IgnoreNotFound(getErr)
 			}
 
 			// We check if it has Accepted=False with reason LimitPerTargetExceeded

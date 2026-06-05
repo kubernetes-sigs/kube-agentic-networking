@@ -120,7 +120,11 @@ spec:
       patternMatching:
         patterns:
         - predicate: |
-            metadata.filter_metadata.mcp_proxy.method == "initialize" || (metadata.filter_metadata.mcp_proxy.method == "tools/call" && has(metadata.filter_metadata.mcp_proxy.params) && has(metadata.filter_metadata.mcp_proxy.params.name) && metadata.filter_metadata.mcp_proxy.params.name in ["get-sum", "get-env"])
+            metadata.filter_metadata.mcp_proxy.method == "initialize" ||
+            (metadata.filter_metadata.mcp_proxy.method == "tools/call" &&
+             has(metadata.filter_metadata.mcp_proxy.params) &&
+             has(metadata.filter_metadata.mcp_proxy.params.name) &&
+             metadata.filter_metadata.mcp_proxy.params.name in ["get-sum", "get-env"])
 ---
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
@@ -129,9 +133,9 @@ metadata:
   namespace: agentic-conformance-infra
 spec:
   targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: conformance-primary
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: conformance-primary
   action: ExternalAuth
   externalAuth:
     protocol: GRPC
@@ -142,12 +146,12 @@ spec:
       port: 50051
     grpc: {}
   rules:
-    - name: route-to-extauth
-      source:
-        type: ServiceAccount
-        serviceAccount:
-          name: conformance-tester-sa
-          namespace: agentic-conformance-infra
+  - name: route-to-extauth
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: conformance-tester-sa
+        namespace: agentic-conformance-infra
 ---
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
@@ -156,22 +160,22 @@ metadata:
   namespace: agentic-conformance-infra
 spec:
   targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: conformance-primary
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: conformance-primary
   action: Allow
   rules:
-    - name: allow-get-sum
-      source:
-        type: ServiceAccount
-        serviceAccount:
-          name: conformance-tester-sa
-          namespace: agentic-conformance-infra
-      authorization:
-        type: Inline
-        mcp:
-          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
-          methods:
-            - name: tools/call
-              params:
-                - "get-sum"
+  - name: allow-get-sum
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: conformance-tester-sa
+        namespace: agentic-conformance-infra
+    authorization:
+      type: Inline
+      mcp:
+        mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+        methods:
+        - name: tools/call
+          params:
+          - "get-sum"

@@ -52,9 +52,9 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 		// 1. Wait for Authorino deployment to be available
 		t.Log("Waiting for Authorino deployment to be available")
 		err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-			dep, err := s.Clientset.AppsV1().Deployments(namespace).Get(ctx, "authorino", metav1.GetOptions{})
-			if err != nil {
-				return false, client.IgnoreNotFound(err)
+			dep, getErr := s.Clientset.AppsV1().Deployments(namespace).Get(ctx, "authorino", metav1.GetOptions{})
+			if getErr != nil {
+				return false, client.IgnoreNotFound(getErr)
 			}
 			return dep.Status.AvailableReplicas > 0, nil
 		})
@@ -64,10 +64,10 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 		t.Logf("Waiting for XAccessPolicy %s to be accepted", extAuthPolicyName)
 		extAuthPolicy := &v1alpha1.XAccessPolicy{}
 		err = wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-			err := s.Client.Get(ctx, extAuthPolicyName, extAuthPolicy)
-			if err != nil {
-				t.Logf("Error getting ExternalAuth policy: %v", err)
-				return false, client.IgnoreNotFound(err)
+			getErr := s.Client.Get(ctx, extAuthPolicyName, extAuthPolicy)
+			if getErr != nil {
+				t.Logf("Error getting ExternalAuth policy: %v", getErr)
+				return false, client.IgnoreNotFound(getErr)
 			}
 			return helpers.IsXAccessPolicyAccepted(extAuthPolicy), nil
 		})
@@ -76,10 +76,10 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 		t.Logf("Waiting for XAccessPolicy %s to be accepted", allowPolicyName)
 		allowPolicy := &v1alpha1.XAccessPolicy{}
 		err = wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-			err := s.Client.Get(ctx, allowPolicyName, allowPolicy)
-			if err != nil {
-				t.Logf("Error getting Allow policy: %v", err)
-				return false, client.IgnoreNotFound(err)
+			getErr := s.Client.Get(ctx, allowPolicyName, allowPolicy)
+			if getErr != nil {
+				t.Logf("Error getting Allow policy: %v", getErr)
+				return false, client.IgnoreNotFound(getErr)
 			}
 			return helpers.IsXAccessPolicyAccepted(allowPolicy), nil
 		})

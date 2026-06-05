@@ -58,9 +58,9 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 
 	mcpSessionID := ""
 	err = retry(15, 5*time.Second, func() error {
-		out, err := execMCPCurl(t, host, namespace, podName)
-		if err != nil {
-			return err
+		out, execErr := execMCPCurl(t, host, namespace, podName)
+		if execErr != nil {
+			return execErr
 		}
 
 		// Extract mcp-session-id from headers
@@ -180,6 +180,7 @@ func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, 
 	return assertMCPResponse(resp, expected, body)
 }
 
+//nolint:unparam
 func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) {
 	// Retry to allow xds update to propagate.
 	err := retry(15, 2*time.Second, func() error {
@@ -378,15 +379,13 @@ func (m *mcpTestSession) checkMCPMethod(t *testing.T, method string, paramsJSON 
 		if expectedError.Message != "" && resp.Error.Message != expectedError.Message {
 			return fmt.Errorf("error message mismatch: got %q, want %q\nbody: %s", resp.Error.Message, expectedError.Message, body)
 		}
-	} else {
-		if resp.Error != nil {
-			// Check if it is Envoy RBAC error
-			if resp.Error.Code == 403 && resp.Error.Message == "Access to this tool is forbidden." {
-				return fmt.Errorf("expected allowed but was denied by Envoy\nbody: %s", body)
-			}
-			// Other errors are assumed to be backend errors, which means it was allowed by Envoy.
-			t.Logf("Accepting backend error as proof of allowed: %v", resp.Error)
+	} else if resp.Error != nil {
+		// Check if it is Envoy RBAC error
+		if resp.Error.Code == 403 && resp.Error.Message == "Access to this tool is forbidden." {
+			return fmt.Errorf("expected allowed but was denied by Envoy\nbody: %s", body)
 		}
+		// Other errors are assumed to be backend errors, which means it was allowed by Envoy.
+		t.Logf("Accepting backend error as proof of allowed: %v", resp.Error)
 	}
 
 	return nil

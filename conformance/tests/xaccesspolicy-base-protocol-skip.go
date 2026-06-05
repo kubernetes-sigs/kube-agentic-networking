@@ -52,10 +52,10 @@ var XAccessPolicyBaseProtocolSkip = suite.ConformanceTest{
 		t.Logf("Waiting for XAccessPolicy %s to be accepted", policyName)
 		policy := &v1alpha1.XAccessPolicy{}
 		err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-			err := s.Client.Get(ctx, policyName, policy)
-			if err != nil {
-				t.Logf("Error getting XAccessPolicy: %v", err)
-				return false, client.IgnoreNotFound(err)
+			getErr := s.Client.Get(ctx, policyName, policy)
+			if getErr != nil {
+				t.Logf("Error getting XAccessPolicy: %v", getErr)
+				return false, client.IgnoreNotFound(getErr)
 			}
 			return helpers.IsXAccessPolicyAccepted(policy), nil
 		})
@@ -72,9 +72,9 @@ var XAccessPolicyBaseProtocolSkip = suite.ConformanceTest{
 		// 4. Try to initialize MCP session (should fail with 403)
 		t.Log("Verifying MCP initialization is denied")
 		err = retry(15, 2*time.Second, func() error {
-			out, err := execMCPCurl(t, gatewayIP, namespace, testerPodName)
-			if err != nil {
-				return err // kubectl error
+			out, execErr := execMCPCurl(t, gatewayIP, namespace, testerPodName)
+			if execErr != nil {
+				return execErr // kubectl error
 			}
 			if !strings.Contains(out, "403") {
 				return fmt.Errorf("expected 403 Forbidden, got response: %s", out)
