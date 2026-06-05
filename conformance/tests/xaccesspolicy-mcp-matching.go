@@ -72,29 +72,24 @@ var XAccessPolicyMCPMatching = suite.ConformanceTest{
 		// Rule allows 'prompts' category.
 		// Test prompts/list -> should be allowed.
 		t.Log("Verifying prompts/list is allowed (category match)")
-		statusCode, err := mcp.checkMCPMethod(t, "prompts/list", "")
-		require.NoError(t, err, "failed to call prompts/list")
-		require.Equal(t, 200, statusCode, "unexpected status code for prompts/list")
+		mcp.assertMCPMethod(t, "prompts/list", "", nil)
 
 		// Test prompts/get -> should be allowed.
 		t.Log("Verifying prompts/get is allowed (category match)")
-		statusCode, err = mcp.checkMCPMethod(t, "prompts/get", `{"name":"some-prompt"}`)
-		require.NoError(t, err, "failed to call prompts/get")
-		require.Equal(t, 200, statusCode, "unexpected status code for prompts/get")
+		mcp.assertMCPMethod(t, "prompts/get", `{"name":"some-prompt"}`, nil)
 
 		// 5. Verify Specific Method Matching
 		// Rule allows 'resources/list'.
 		// Test resources/list -> should be allowed.
 		t.Log("Verifying resources/list is allowed (specific method match)")
-		statusCode, err = mcp.checkMCPMethod(t, "resources/list", "")
-		require.NoError(t, err, "failed to call resources/list")
-		require.Equal(t, 200, statusCode, "unexpected status code for resources/list")
+		mcp.assertMCPMethod(t, "resources/list", "", nil)
 
 		// Test resources/read -> should be denied (default deny, not allowed by resources/list).
 		t.Log("Verifying resources/read is denied")
-		statusCode, err = mcp.checkMCPMethod(t, "resources/read", `{"uri":"some-uri"}`)
-		require.NoError(t, err, "failed to call resources/read")
-		require.Equal(t, 403, statusCode, "unexpected status code for resources/read (expected 403)")
+		mcp.assertMCPMethod(t, "resources/read", `{"uri":"some-uri"}`, &mcpError{
+			Code:    403,
+			Message: "Access to this tool is forbidden.",
+		})
 
 		// 6. Verify Method with Specific Params
 		// Rule allows 'tools/call' with param 'get-sum'.

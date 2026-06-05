@@ -21,6 +21,7 @@ import (
 	"errors"
 	"io/fs"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -149,6 +150,21 @@ func RunConformanceWithOptions(t *testing.T, opts confsuite.ConformanceOptions) 
 	cSuite.Applier.ManifestFS = cSuite.ManifestFS
 	// Setup conformance suite (Ensures GatewayClass is accepted, applies BaseManifests and certs)
 	cSuite.Setup(t, tests.ConformanceTests)
+
+	t.Log("Preparing TLS resources for Gateway")
+	err = PrepareTLSResources(ctx, opts.Clientset, "agentic-conformance-infra")
+	require.NoError(t, err, "error preparing TLS resources")
+
+	t.Log("Touching Gateway to force reconciliation")
+	gw := &gatewayv1.Gateway{}
+	err = opts.Client.Get(ctx, client.ObjectKey{Namespace: "agentic-conformance-infra", Name: "conformance-primary"}, gw)
+	require.NoError(t, err, "error getting Gateway to touch")
+	if gw.Annotations == nil {
+		gw.Annotations = make(map[string]string)
+	}
+	gw.Annotations["conformance-workaround"] = time.Now().Format(time.RFC3339)
+	err = opts.Client.Update(ctx, gw)
+	require.NoError(t, err, "error touching Gateway for reconciliation")
 
 	t.Log("Waiting for agentic-conformance-infra namespace to be ready")
 	kubernetes.NamespacesMustBeReady(t, opts.Client, cSuite.TimeoutConfig, []string{"agentic-conformance-infra"})

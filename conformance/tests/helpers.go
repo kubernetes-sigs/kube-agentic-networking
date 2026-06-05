@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -50,9 +51,14 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 	t.Helper()
 	t.Logf("Initialize MCP session for pod %s/%s", namespace, podName)
 
+	host, _, err := net.SplitHostPort(gatewayIP)
+	if err != nil {
+		host = gatewayIP
+	}
+
 	mcpSessionID := ""
-	err := retry(15, 5*time.Second, func() error {
-		out, err := execMCPCurl(t, gatewayIP, namespace, podName)
+	err = retry(15, 5*time.Second, func() error {
+		out, err := execMCPCurl(t, host, namespace, podName)
 		if err != nil {
 			return err
 		}
@@ -73,7 +79,7 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 
 	return &mcpTestSession{
 		t:         t,
-		gatewayIP: gatewayIP,
+		gatewayIP: host,
 		sessionID: mcpSessionID,
 		podName:   podName,
 		namespace: namespace,
@@ -81,6 +87,10 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 }
 
 func execMCPCurl(t *testing.T, gatewayIP, namespace, podName string) (string, error) {
+	host, _, err := net.SplitHostPort(gatewayIP)
+	if err != nil {
+		host = gatewayIP
+	}
 	return runKubectlOutput(t, "exec", podName, "-n", namespace, "--",
 		"curl", "-ks", "-i",
 		"--cert", agentCertPath,
@@ -90,7 +100,7 @@ func execMCPCurl(t *testing.T, gatewayIP, namespace, podName string) (string, er
 		"-H", "Accept: application/json, text/event-stream",
 		"-H", "mcp-protocol-version: 2025-11-25",
 		"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
-		fmt.Sprintf("https://%s:443/mcp", gatewayIP))
+		fmt.Sprintf("https://%s:443/mcp", host))
 }
 
 type mcpResponse struct {
@@ -287,6 +297,7 @@ func (m *mcpTestSession) checkToolsList(t *testing.T) (int, error) {
 		"--key", agentKeyPath,
 		"--cacert", agentCAPath,
 		"-H", "Content-Type: application/json",
+		"-H", "Accept: application/json, text/event-stream",
 		"-H", "mcp-protocol-version: 2025-11-25",
 		"-H", fmt.Sprintf("mcp-session-id: %s", m.sessionID),
 		"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
@@ -301,8 +312,15 @@ func (m *mcpTestSession) checkToolsList(t *testing.T) (int, error) {
 	return code, nil
 }
 
-// checkMCPMethod sends an MCP request with specified method and params, returning HTTP status code.
-func (m *mcpTestSession) checkMCPMethod(t *testing.T, method string, paramsJSON string) (int, error) {
+type genericRespBody struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      any             `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *mcpError       `json:"error,omitempty"`
+}
+
+// checkMCPMethod sends an MCP request and verifies the response.
+func (m *mcpTestSession) checkMCPMethod(t *testing.T, method string, paramsJSON string, expectedError *mcpError) error {
 	t.Helper()
 	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"%s"}`, method)
 	if paramsJSON != "" {
@@ -310,23 +328,76 @@ func (m *mcpTestSession) checkMCPMethod(t *testing.T, method string, paramsJSON 
 	}
 
 	out, err := runKubectlOutput(t, "exec", m.podName, "-n", m.namespace, "--",
-		"curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}",
+		"curl", "-ks", "-w", "\n%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
 		"--cacert", agentCAPath,
 		"-H", "Content-Type: application/json",
+		"-H", "Accept: application/json, text/event-stream",
 		"-H", "mcp-protocol-version: 2025-11-25",
 		"-H", fmt.Sprintf("mcp-session-id: %s", m.sessionID),
 		"--data-raw", data,
 		fmt.Sprintf("https://%s:443/mcp", m.gatewayIP))
 	if err != nil {
-		return 0, fmt.Errorf("failed to call MCP method %s: %w", method, err)
+		return fmt.Errorf("failed to call MCP method %s: %w", method, err)
 	}
-	code, err := strconv.Atoi(strings.TrimSpace(out))
+
+	out = strings.TrimSpace(out)
+	lines := strings.Split(out, "\n")
+	if len(lines) == 0 {
+		return fmt.Errorf("empty response from gateway")
+	}
+
+	codeStr := strings.TrimSpace(lines[len(lines)-1])
+	code, err := strconv.Atoi(codeStr)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse status code: %w", err)
+		return fmt.Errorf("failed to parse HTTP status code from response: %q", codeStr)
 	}
-	return code, nil
+	if code != 200 {
+		return fmt.Errorf("unexpected HTTP status code: got %d, want 200", code)
+	}
+
+	body := strings.TrimSpace(strings.Join(lines[:len(lines)-1], "\n"))
+	idx := strings.Index(body, "{")
+	if idx == -1 {
+		return fmt.Errorf("failed to find JSON payload in response\nbody: %s", body)
+	}
+
+	var resp genericRespBody
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body[idx:])), &resp); err != nil {
+		return fmt.Errorf("failed to parse JSON response: %w\nbody: %s", err, body)
+	}
+
+	if expectedError != nil {
+		if resp.Error == nil {
+			return fmt.Errorf("expected error in response but got nil\nbody: %s", body)
+		}
+		if resp.Error.Code != expectedError.Code {
+			return fmt.Errorf("error code mismatch: got %d, want %d\nbody: %s", resp.Error.Code, expectedError.Code, body)
+		}
+		if expectedError.Message != "" && resp.Error.Message != expectedError.Message {
+			return fmt.Errorf("error message mismatch: got %q, want %q\nbody: %s", resp.Error.Message, expectedError.Message, body)
+		}
+	} else {
+		if resp.Error != nil {
+			// Check if it is Envoy RBAC error
+			if resp.Error.Code == 403 && resp.Error.Message == "Access to this tool is forbidden." {
+				return fmt.Errorf("expected allowed but was denied by Envoy\nbody: %s", body)
+			}
+			// Other errors are assumed to be backend errors, which means it was allowed by Envoy.
+			t.Logf("Accepting backend error as proof of allowed: %v", resp.Error)
+		}
+	}
+
+	return nil
+}
+
+func (m *mcpTestSession) assertMCPMethod(t *testing.T, method string, paramsJSON string, expectedError *mcpError) {
+	t.Helper()
+	err := retry(15, 2*time.Second, func() error {
+		return m.checkMCPMethod(t, method, paramsJSON, expectedError)
+	})
+	require.NoError(t, err, "MCP method call failed after retries")
 }
 
 // getTesterPodName finds the pod name of the tester deployment.

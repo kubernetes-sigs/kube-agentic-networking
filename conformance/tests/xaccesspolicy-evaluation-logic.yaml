@@ -120,7 +120,7 @@ spec:
       patternMatching:
         patterns:
         - predicate: |
-            metadata.filter_metadata.mcp_proxy.params.name in ["get-sum", "get-env"]
+            metadata.filter_metadata.mcp_proxy.method == "initialize" || (metadata.filter_metadata.mcp_proxy.method == "tools/call" && has(metadata.filter_metadata.mcp_proxy.params) && has(metadata.filter_metadata.mcp_proxy.params.name) && metadata.filter_metadata.mcp_proxy.params.name in ["get-sum", "get-env"])
 ---
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
@@ -134,13 +134,13 @@ spec:
       name: conformance-primary
   action: ExternalAuth
   externalAuth:
-    externalAuthProtocol: gRPC
+    protocol: GRPC
     backendRef:
       group: ""
       kind: Service
       name: authorino
       port: 50051
-    gRPCAuthConfig: {}
+    grpc: {}
   rules:
     - name: route-to-extauth
       source:

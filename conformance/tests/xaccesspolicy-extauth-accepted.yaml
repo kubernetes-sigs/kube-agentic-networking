@@ -10,13 +10,13 @@ spec:
       name: conformance-primary
   action: ExternalAuth
   externalAuth:
-    externalAuthProtocol: gRPC
+    protocol: GRPC
     backendRef:
       group: ""
       kind: Service
       name: ext-auth-svc
       port: 50051
-    gRPCAuthConfig: {}
+    grpc: {}
   rules:
     - name: allow-default
       source:
