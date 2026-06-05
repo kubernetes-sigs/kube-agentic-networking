@@ -66,6 +66,36 @@ Key v1alpha1 concepts:
 - Tool allowlists use `authorization.type: Inline` with `mcp.methods` (for example, `tools/call` with `params` listing tool names), not a flat `tools:` list on rules.
 - See the [API reference](reference/spec/) and [quickstart](guides/quickstart/README.md) for current examples.
 
+#### MCP `params` matching
+
+In MCP JSON-RPC requests, the `params` object is method-specific. In `spec.rules[].authorization.mcp.methods[].params`, each listed value is matched against the `name` field in the MCP request's `params` object.
+
+| MCP method | Currently matched field |
+| --- | --- |
+| `prompts/get` | `name` |
+| `tools/call` | `name` |
+| `resources/subscribe` | `name` |
+| `resources/unsubscribe` | `name` |
+| `resources/read` | `name` |
+
+> **Known limitation:** In the MCP protocol, resource methods use `params.uri` rather than `params.name`. The prototype implementation currently matches `params.name` for all methods, including resources. Matching against `params.uri` for resource methods is not yet implemented and will be addressed separately.
+
+For example, a `tools/call` request such as:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "get-sum",
+    "arguments": {"a": 2, "b": 3}
+  },
+  "jsonrpc": "2.0",
+  "id": 1
+}
+```
+
+is matched by a `params` value of `get-sum`.
+
 ## Who is working on this project?
 
 Kube Agentic Networking is a [SIG Network](https://github.com/kubernetes/community/tree/master/sig-network) project.

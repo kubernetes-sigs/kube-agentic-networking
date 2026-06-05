@@ -23,6 +23,20 @@ A prototype implementation exists. **Use the implemented API below**, not the or
 | `serviceAccounts: ["ns/sa"]` shorthand | `source.type: ServiceAccount` + `serviceAccount: { name, namespace? }` |
 | Rule-level external auth | `spec.action: ExternalAuth` + `spec.externalAuth` |
 
+### MCP `params` matching (v1alpha1)
+
+In MCP JSON-RPC requests, the `params` object is method-specific. In `spec.rules[].authorization.mcp.methods[].params`, each listed value is matched against the `name` field in the MCP request's `params` object.
+
+| MCP method | Currently matched field |
+| --- | --- |
+| `prompts/get` | `name` |
+| `tools/call` | `name` |
+| `resources/subscribe` | `name` |
+| `resources/unsubscribe` | `name` |
+| `resources/read` | `name` |
+
+**Known limitation:** In the MCP protocol, resource methods use `params.uri` rather than `params.name`. The prototype implementation currently matches `params.name` for all methods, including resources. Matching against `params.uri` for resource methods is not yet implemented and will be addressed separately.
+
 **Authoritative references:** [`api/v1alpha1/accesspolicy_types.go`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v1alpha1/accesspolicy_types.go), [site API reference](https://kube-agentic-networking.sigs.k8s.io/reference/spec/), [quickstart example](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/site-src/guides/quickstart/policy/e2e.yaml).
 
 # Non-Goals
