@@ -21,7 +21,6 @@ import (
 	"errors"
 	"io/fs"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -162,7 +161,6 @@ func RunConformanceWithOptions(t *testing.T, opts confsuite.ConformanceOptions) 
 	if gw.Annotations == nil {
 		gw.Annotations = make(map[string]string)
 	}
-	gw.Annotations["conformance-workaround"] = time.Now().Format(time.RFC3339)
 	err = opts.Client.Update(ctx, gw)
 	require.NoError(t, err, "error touching Gateway for reconciliation")
 
