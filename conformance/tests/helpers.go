@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
@@ -57,10 +58,10 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 	}
 
 	mcpSessionID := ""
-	err = retry(15, 5*time.Second, func() error {
+	err = wait.PollUntilContextCancel(context.Background(), 2*time.Second, true, func(ctx context.Context) (bool, error) {
 		out, execErr := execMCPCurl(t, host, namespace, podName)
 		if execErr != nil {
-			return execErr
+			return false, execErr
 		}
 
 		// Extract mcp-session-id from headers
@@ -68,11 +69,11 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 		for _, line := range lines {
 			if strings.HasPrefix(strings.ToLower(line), "mcp-session-id:") {
 				mcpSessionID = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
-				return nil
+				return true, nil
 			}
 		}
 
-		return fmt.Errorf("failed to get mcp-session-id from headers")
+		return false, fmt.Errorf("failed to get mcp-session-id from headers")
 	})
 	require.NoError(t, err, "MCP Initialization failed")
 	t.Logf("Obtained MCP Session ID: %s", mcpSessionID)
