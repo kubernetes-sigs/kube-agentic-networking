@@ -72,13 +72,13 @@ var XAccessPolicyBaseProtocolMatch = suite.ConformanceTest{
 
 		// 5. Call tools/list (should succeed)
 		t.Log("Verifying tools/list is allowed")
-		statusCode, err := mcp.checkToolsList(t)
+		statusCode, err := mcp.checkToolsList(ctx, t)
 		require.NoError(t, err, "failed to call tools/list")
 		require.Equal(t, 200, statusCode, "unexpected status code for tools/list")
 
 		// 6. Call 'some-tool' (should be denied with 403 in JSON-RPC)
 		t.Log("Verifying 'some-tool' is denied")
-		err = mcp.checkToolCall(t, "some-tool", `{}`, mcpResponse{
+		mcp.assertToolCall(t, "some-tool", `{}`, mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
 				Error: &mcpError{
@@ -87,11 +87,10 @@ var XAccessPolicyBaseProtocolMatch = suite.ConformanceTest{
 				},
 			},
 		})
-		require.NoError(t, err, "expected tool call to be denied with 403 in JSON-RPC")
 
 		// 7. Close session (should succeed)
 		t.Log("Verifying session close is allowed")
-		statusCode, err = mcp.checkSessionClose(t)
+		statusCode, err = mcp.checkSessionClose(ctx, t)
 		require.NoError(t, err, "failed to close session")
 		require.Equal(t, 200, statusCode, "unexpected status code for session close")
 	},

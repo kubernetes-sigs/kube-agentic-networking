@@ -112,7 +112,7 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 
 		// 6. Call 'get-env' (should be denied with 403 in JSON-RPC)
 		t.Log("Verifying 'get-env' is denied (denied by Allow policy)")
-		err = mcp.checkToolCall(t, "get-env", `{}`, mcpResponse{
+		mcp.assertToolCall(t, "get-env", `{}`, mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
 				Error: &mcpError{
@@ -121,11 +121,10 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 				},
 			},
 		})
-		require.NoError(t, err, "expected tool call to be denied with 403 in JSON-RPC")
 
 		// 7. Call 'echo' (should be denied with 403 in JSON-RPC)
 		t.Log("Verifying 'echo' is denied (denied by ExternalAuth policy)")
-		err = mcp.checkToolCall(t, "echo", `{"message":"hello"}`, mcpResponse{
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`, mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
 				Error: &mcpError{
@@ -134,7 +133,6 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 				},
 			},
 		})
-		require.NoError(t, err, "expected tool call to be denied with 403 in JSON-RPC")
 	},
 }
 

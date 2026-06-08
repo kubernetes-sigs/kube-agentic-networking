@@ -112,7 +112,7 @@ var XAccessPolicyMCPMatching = suite.ConformanceTest{
 
 		// Test tools/call echo -> should be denied (param mismatch).
 		t.Log("Verifying tools/call echo is denied (param mismatch)")
-		err = mcp.checkToolCall(t, "echo", `{"message":"hello"}`, mcpResponse{
+		mcp.assertToolCall(t, "echo", `{"message":"hello"}`, mcpResponse{
 			StatusCode: 200,
 			Body: respBody{
 				Error: &mcpError{
@@ -121,7 +121,6 @@ var XAccessPolicyMCPMatching = suite.ConformanceTest{
 				},
 			},
 		})
-		require.NoError(t, err, "expected tool call to be denied with 403 in JSON-RPC")
 	},
 }
 

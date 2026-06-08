@@ -40,6 +40,8 @@ const (
 	agentCAPath   = "/run/agent-identity-mtls/cluster.local.trust-bundle.pem"
 )
 
+var interval = 2 * time.Second
+
 type mcpTestSession struct {
 	t         *testing.T
 	gatewayIP string
@@ -58,10 +60,11 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 	}
 
 	mcpSessionID := ""
-	err = wait.PollUntilContextCancel(context.Background(), 2*time.Second, true, func(ctx context.Context) (bool, error) {
-		out, execErr := execMCPCurl(t, host, namespace, podName)
+	err = wait.PollUntilContextCancel(t.Context(), interval, true, func(ctx context.Context) (bool, error) {
+		out, execErr := execMCPCurl(ctx, t, host, namespace, podName)
 		if execErr != nil {
-			return false, execErr
+			t.Logf("execMCPCurl failed, will retry: %v", execErr)
+			return false, nil
 		}
 
 		// Extract mcp-session-id from headers
@@ -73,7 +76,8 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 			}
 		}
 
-		return false, fmt.Errorf("failed to get mcp-session-id from headers")
+		t.Logf("mcp-session-id not found in headers, will retry. Output: %q", out)
+		return false, nil
 	})
 	require.NoError(t, err, "MCP Initialization failed")
 	t.Logf("Obtained MCP Session ID: %s", mcpSessionID)
@@ -87,12 +91,12 @@ func initializeMCP(t *testing.T, gatewayIP, namespace, podName string) *mcpTestS
 	}
 }
 
-func execMCPCurl(t *testing.T, gatewayIP, namespace, podName string) (string, error) {
+func execMCPCurl(ctx context.Context, t *testing.T, gatewayIP, namespace, podName string) (string, error) {
 	host, _, err := net.SplitHostPort(gatewayIP)
 	if err != nil {
 		host = gatewayIP
 	}
-	return runKubectlOutput(t, "exec", podName, "-n", namespace, "--",
+	return runKubectlOutput(ctx, t, "exec", podName, "-n", namespace, "--",
 		"curl", "-ks", "-i",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -131,7 +135,7 @@ type mcpContent struct {
 	Text string `json:"text"`
 }
 
-func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) error {
+func (m *mcpTestSession) checkToolCall(ctx context.Context, t *testing.T, toolName, toolArgs string, expected mcpResponse) error {
 	nBig, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
 		return fmt.Errorf("failed to generate random request ID: %w", err)
@@ -141,7 +145,7 @@ func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, 
 
 	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, requestID, toolName, toolArgs)
 
-	out, err := runKubectlOutput(t, "exec", m.podName, "-n", m.namespace, "--",
+	out, err := runKubectlOutput(ctx, t, "exec", m.podName, "-n", m.namespace, "--",
 		"curl", "-ks", "-w", "\n%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -184,8 +188,12 @@ func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, 
 //nolint:unparam
 func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) {
 	// Retry to allow xds update to propagate.
-	err := retry(15, 2*time.Second, func() error {
-		return m.checkToolCall(t, toolName, toolArgs, expected)
+	err := wait.PollUntilContextCancel(t.Context(), interval, true, func(ctx context.Context) (bool, error) {
+		if err := m.checkToolCall(ctx, t, toolName, toolArgs, expected); err != nil {
+			t.Logf("checkToolCall failed, will retry: %v", err)
+			return false, nil
+		}
+		return true, nil
 	})
 	require.NoError(t, err, "Tool call failed after retries")
 }
@@ -246,9 +254,9 @@ func assertMCPResponse(resp respBody, expected mcpResponse, body string) error {
 	return nil
 }
 
-func runKubectlOutput(t *testing.T, args ...string) (string, error) {
+func runKubectlOutput(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.CommandContext(context.Background(), "kubectl", args...)
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -258,22 +266,9 @@ func runKubectlOutput(t *testing.T, args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func retry(attempts int, sleep time.Duration, f func() error) error {
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		err := f()
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		time.Sleep(sleep)
-	}
-	return fmt.Errorf("after %d attempts, last error: %w", attempts, lastErr)
-}
-
 // checkSessionClose sends a DELETE request to close the session and returns HTTP status code.
-func (m *mcpTestSession) checkSessionClose(t *testing.T) (int, error) {
-	out, err := runKubectlOutput(t, "exec", m.podName, "-n", m.namespace, "--",
+func (m *mcpTestSession) checkSessionClose(ctx context.Context, t *testing.T) (int, error) {
+	out, err := runKubectlOutput(ctx, t, "exec", m.podName, "-n", m.namespace, "--",
 		"curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -292,8 +287,8 @@ func (m *mcpTestSession) checkSessionClose(t *testing.T) (int, error) {
 }
 
 // checkToolsList sends a tools/list request and returns HTTP status code.
-func (m *mcpTestSession) checkToolsList(t *testing.T) (int, error) {
-	out, err := runKubectlOutput(t, "exec", m.podName, "-n", m.namespace, "--",
+func (m *mcpTestSession) checkToolsList(ctx context.Context, t *testing.T) (int, error) {
+	out, err := runKubectlOutput(ctx, t, "exec", m.podName, "-n", m.namespace, "--",
 		"curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -322,14 +317,14 @@ type genericRespBody struct {
 }
 
 // checkMCPMethod sends an MCP request and verifies the response.
-func (m *mcpTestSession) checkMCPMethod(t *testing.T, method string, paramsJSON string, expectedError *mcpError) error {
+func (m *mcpTestSession) checkMCPMethod(ctx context.Context, t *testing.T, method string, paramsJSON string, expectedError *mcpError) error {
 	t.Helper()
 	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"%s"}`, method)
 	if paramsJSON != "" {
 		data = fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"%s","params":%s}`, method, paramsJSON)
 	}
 
-	out, err := runKubectlOutput(t, "exec", m.podName, "-n", m.namespace, "--",
+	out, err := runKubectlOutput(ctx, t, "exec", m.podName, "-n", m.namespace, "--",
 		"curl", "-ks", "-w", "\n%{http_code}",
 		"--cert", agentCertPath,
 		"--key", agentKeyPath,
@@ -394,8 +389,12 @@ func (m *mcpTestSession) checkMCPMethod(t *testing.T, method string, paramsJSON 
 
 func (m *mcpTestSession) assertMCPMethod(t *testing.T, method string, paramsJSON string, expectedError *mcpError) {
 	t.Helper()
-	err := retry(15, 2*time.Second, func() error {
-		return m.checkMCPMethod(t, method, paramsJSON, expectedError)
+	err := wait.PollUntilContextCancel(t.Context(), interval, true, func(ctx context.Context) (bool, error) {
+		if err := m.checkMCPMethod(ctx, t, method, paramsJSON, expectedError); err != nil {
+			t.Logf("checkMCPMethod failed, will retry: %v", err)
+			return false, nil
+		}
+		return true, nil
 	})
 	require.NoError(t, err, "MCP method call failed after retries")
 }
@@ -404,17 +403,19 @@ func (m *mcpTestSession) assertMCPMethod(t *testing.T, method string, paramsJSON
 func getTesterPodName(t *testing.T, namespace string) string {
 	t.Helper()
 	var podName string
-	err := retry(30, 2*time.Second, func() error {
-		out, err := runKubectlOutput(t, "get", "pods", "-n", namespace, "-l", "app=conformance-tester", "-o", "jsonpath={.items[0].metadata.name}")
+	err := wait.PollUntilContextCancel(t.Context(), interval, true, func(ctx context.Context) (bool, error) {
+		out, err := runKubectlOutput(ctx, t, "get", "pods", "-n", namespace, "-l", "app=conformance-tester", "-o", "jsonpath={.items[0].metadata.name}")
 		if err != nil {
-			return err
+			t.Logf("runKubectlOutput failed, will retry: %v", err)
+			return false, nil
 		}
 		name := strings.TrimSpace(out)
 		if name == "" {
-			return fmt.Errorf("conformance-tester pod not found")
+			t.Log("conformance-tester pod not found yet, will retry")
+			return false, nil
 		}
 		podName = name
-		return nil
+		return true, nil
 	})
 	require.NoError(t, err, "failed to find conformance-tester pod")
 	return podName

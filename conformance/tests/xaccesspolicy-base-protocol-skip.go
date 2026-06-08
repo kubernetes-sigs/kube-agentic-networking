@@ -18,7 +18,6 @@ package tests
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +50,7 @@ var XAccessPolicyBaseProtocolSkip = suite.ConformanceTest{
 		// 1. Wait for policy to be accepted
 		t.Logf("Waiting for XAccessPolicy %s to be accepted", policyName)
 		policy := &v1alpha1.XAccessPolicy{}
-		err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+		err := wait.PollUntilContextCancel(ctx, interval, true, func(ctx context.Context) (bool, error) {
 			getErr := s.Client.Get(ctx, policyName, policy)
 			if getErr != nil {
 				t.Logf("Error getting XAccessPolicy: %v", getErr)
@@ -71,15 +70,17 @@ var XAccessPolicyBaseProtocolSkip = suite.ConformanceTest{
 
 		// 4. Try to initialize MCP session (should fail with 403)
 		t.Log("Verifying MCP initialization is denied")
-		err = retry(15, 2*time.Second, func() error {
-			out, execErr := execMCPCurl(t, gatewayIP, namespace, testerPodName)
+		err = wait.PollUntilContextCancel(ctx, interval, true, func(ctx context.Context) (bool, error) {
+			out, execErr := execMCPCurl(ctx, t, gatewayIP, namespace, testerPodName)
 			if execErr != nil {
-				return execErr // kubectl error
+				t.Logf("execMCPCurl failed, will retry: %v", execErr)
+				return false, nil // Retry
 			}
 			if !strings.Contains(out, "403") {
-				return fmt.Errorf("expected 403 Forbidden, got response: %s", out)
+				t.Logf("Expected 403 Forbidden, got response: %s. Will retry.", out)
+				return false, nil // Retry
 			}
-			return nil
+			return true, nil
 		})
 		require.NoError(t, err, "expected initialization to be denied")
 	},
