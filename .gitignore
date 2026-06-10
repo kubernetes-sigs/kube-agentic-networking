@@ -50,3 +50,6 @@ site-src/reference/spec.md
 
 # Agentic instructions
 .agents/
+
+# Release artifacts
+release/
