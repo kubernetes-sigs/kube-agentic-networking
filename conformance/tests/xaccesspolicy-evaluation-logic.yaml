@@ -23,25 +23,25 @@ spec:
     spec:
       serviceAccountName: authorino-sa
       containers:
-      - name: authorino
-        image: quay.io/kuadrant/authorino:v0.24.0
-        args:
-        - server
-        - --ext-auth-grpc-port=50051
-        - --ext-auth-http-port=5001
-        - --oidc-http-port=8083
-        - --timeout=0
-        - --watch-namespace=agentic-conformance-infra
-        ports:
-        - containerPort: 50051
-          name: grpc
-          protocol: TCP
-        - containerPort: 5001
-          name: http
-          protocol: TCP
-        - containerPort: 8083
-          name: oidc
-          protocol: TCP
+        - name: authorino
+          image: quay.io/kuadrant/authorino:v0.24.0
+          args:
+            - server
+            - --ext-auth-grpc-port=50051
+            - --ext-auth-http-port=5001
+            - --oidc-http-port=8083
+            - --timeout=0
+            - --watch-namespace=agentic-conformance-infra
+          ports:
+            - containerPort: 50051
+              name: grpc
+              protocol: TCP
+            - containerPort: 5001
+              name: http
+              protocol: TCP
+            - containerPort: 8083
+              name: oidc
+              protocol: TCP
 ---
 apiVersion: v1
 kind: Service
@@ -53,18 +53,18 @@ spec:
   selector:
     app: authorino
   ports:
-  - name: grpc
-    port: 50051
-    targetPort: 50051
-    protocol: TCP
-  - name: http
-    port: 5001
-    targetPort: 5001
-    protocol: TCP
-  - name: oidc
-    port: 8083
-    targetPort: 8083
-    protocol: TCP
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+    - name: http
+      port: 5001
+      targetPort: 5001
+      protocol: TCP
+    - name: oidc
+      port: 8083
+      targetPort: 8083
+      protocol: TCP
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -72,24 +72,24 @@ metadata:
   name: ext-auth-role
   namespace: agentic-conformance-infra
 rules:
-- apiGroups:
-  - authorino.kuadrant.io
-  resources:
-  - authconfigs
-  verbs:
-  - "*"
-- apiGroups:
-  - authorino.kuadrant.io
-  resources:
-  - authconfigs/status
-  verbs:
-  - "*"
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - "*"
+  - apiGroups:
+      - authorino.kuadrant.io
+    resources:
+      - authconfigs
+    verbs:
+      - "*"
+  - apiGroups:
+      - authorino.kuadrant.io
+    resources:
+      - authconfigs/status
+    verbs:
+      - "*"
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - "*"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -97,9 +97,9 @@ metadata:
   name: ext-auth
   namespace: agentic-conformance-infra
 subjects:
-- kind: ServiceAccount
-  name: authorino-sa
-  namespace: agentic-conformance-infra
+  - kind: ServiceAccount
+    name: authorino-sa
+    namespace: agentic-conformance-infra
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -114,17 +114,17 @@ metadata:
     authorino.kuadrant.io/managed-by: authorino
 spec:
   hosts:
-  - '*'
+    - "*"
   authorization:
     "authorized-tools":
       patternMatching:
         patterns:
-        - predicate: |
-            metadata.filter_metadata.mcp_proxy.method == "initialize" ||
-            (metadata.filter_metadata.mcp_proxy.method == "tools/call" &&
-             has(metadata.filter_metadata.mcp_proxy.params) &&
-             has(metadata.filter_metadata.mcp_proxy.params.name) &&
-             metadata.filter_metadata.mcp_proxy.params.name in ["get-sum", "get-env"])
+          - predicate: |
+              metadata.filter_metadata.mcp_proxy.method == "initialize" ||
+              (metadata.filter_metadata.mcp_proxy.method == "tools/call" &&
+               has(metadata.filter_metadata.mcp_proxy.params) &&
+               has(metadata.filter_metadata.mcp_proxy.params.name) &&
+               metadata.filter_metadata.mcp_proxy.params.name in ["get-sum", "get-env"])
 ---
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
@@ -133,9 +133,9 @@ metadata:
   namespace: agentic-conformance-infra
 spec:
   targetRefs:
-  - group: gateway.networking.k8s.io
-    kind: Gateway
-    name: conformance-primary
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: conformance-primary
   action: ExternalAuth
   externalAuth:
     protocol: GRPC
@@ -146,12 +146,12 @@ spec:
       port: 50051
     grpc: {}
   rules:
-  - name: route-to-extauth
-    source:
-      type: ServiceAccount
-      serviceAccount:
-        name: conformance-tester-sa
-        namespace: agentic-conformance-infra
+    - name: route-to-extauth
+      source:
+        type: ServiceAccount
+        serviceAccount:
+          name: conformance-tester-sa
+          namespace: agentic-conformance-infra
 ---
 apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
@@ -160,25 +160,25 @@ metadata:
   namespace: agentic-conformance-infra
 spec:
   targetRefs:
-  - group: gateway.networking.k8s.io
-    kind: Gateway
-    name: conformance-primary
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: conformance-primary
   action: Allow
   rules:
-  - name: allow-get-sum
-    source:
-      type: ServiceAccount
-      serviceAccount:
-        name: conformance-tester-sa
-        namespace: agentic-conformance-infra
-    authorization:
-      type: Inline
-      mcp:
-        mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
-        methods:
-        - name: tools/call
-          params:
-          - "get-sum"
+    - name: allow-get-sum
+      source:
+        type: ServiceAccount
+        serviceAccount:
+          name: conformance-tester-sa
+          namespace: agentic-conformance-infra
+      authorization:
+        type: Inline
+        mcp:
+          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+          methods:
+            - name: tools/call
+              params:
+                - "get-sum"
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
