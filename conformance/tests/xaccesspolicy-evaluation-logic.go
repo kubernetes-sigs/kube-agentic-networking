@@ -38,7 +38,7 @@ import (
 var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyEvaluationLogic",
 	Description: "Verifies the interaction between ExternalAuth and Allow policies targeting the same Gateway.",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway, localfeatures.SupportAccessPolicyExternalAuth},
 	Manifests:   []string{"tests/xaccesspolicy-evaluation-logic.yaml"},
 	Test: func(t *testing.T, s *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

@@ -36,7 +36,7 @@ import (
 var XAccessPolicyExtAuthAccepted = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyExtAuthAccepted",
 	Description: "Verifies that a valid XAccessPolicy with ExternalAuth action targeting a Gateway is accepted by the controller.",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway, localfeatures.SupportAccessPolicyExternalAuth},
 	Manifests:   []string{"tests/xaccesspolicy-extauth-accepted.yaml"},
 	Test: func(t *testing.T, suite *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
