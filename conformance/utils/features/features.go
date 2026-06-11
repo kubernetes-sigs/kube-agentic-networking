@@ -25,6 +25,10 @@ const (
 	// SupportAccessPolicyGateway indicates that the implementation supports
 	// AccessPolicy targeting Gateway resources.
 	SupportAccessPolicyGateway features.FeatureName = "SupportAccessPolicyGateway"
+
+	// SupportAccessPolicySPIFFESource indicates that the implementation supports
+	// AccessPolicy rules with SPIFFE source.
+	SupportAccessPolicySPIFFESource features.FeatureName = "SupportAccessPolicySPIFFESource"
 )
 
 // AgenticCoreFeatures includes all SupportedFeatures needed to be

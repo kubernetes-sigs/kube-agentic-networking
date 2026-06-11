@@ -37,7 +37,7 @@ import (
 var XAccessPolicySPIFFEMatching = suite.ConformanceTest{
 	ShortName:   "XAccessPolicySPIFFEMatching",
 	Description: "Verifies access is allowed for matched SPIFFE ID and denied for others (default deny).",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway, localfeatures.SupportAccessPolicySPIFFESource},
 	Manifests:   []string{"tests/xaccesspolicy-spiffe-matching.yaml"},
 	Test: func(t *testing.T, s *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

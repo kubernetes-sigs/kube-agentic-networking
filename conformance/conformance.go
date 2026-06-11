@@ -93,7 +93,7 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 		BaseManifests:        "resources/base.yaml.tmpl",
 		Debug:                *confflags.ShowDebug,
 		CleanupBaseResources: *confflags.CleanupBaseResources,
-		SupportedFeatures:    sets.New(features.AgenticCoreFeatures.UnsortedList()...),
+		SupportedFeatures:    sets.New(append(features.AgenticCoreFeatures.UnsortedList(), features.SupportAccessPolicySPIFFESource)...),
 		SkipTests:            skipTests,
 		ExemptFeatures:       exemptFeatures,
 		RunTest:              *confflags.RunTest,
