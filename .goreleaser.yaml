@@ -46,5 +46,8 @@ release:
     ## Installation
 
     To install this release, refer to the instructions in the README.md.
-  extra_files:
-    - glob: ./release/*.yaml
+  # extra_files:
+   # - glob: ./release/*.yaml
+
+changelog:
+  disable: true
