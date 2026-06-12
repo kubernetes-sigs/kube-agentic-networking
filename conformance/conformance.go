@@ -19,9 +19,7 @@ package conformance
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -95,7 +93,7 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 		BaseManifests:        "resources/base.yaml.tmpl",
 		Debug:                *confflags.ShowDebug,
 		CleanupBaseResources: *confflags.CleanupBaseResources,
-		SupportedFeatures:    sets.New(features.AgenticCoreFeatures.UnsortedList()...),
+		SupportedFeatures:    sets.New(append(features.AgenticCoreFeatures.UnsortedList(), features.SupportAccessPolicySPIFFESource, features.SupportAccessPolicyExternalAuth)...),
 		SkipTests:            skipTests,
 		ExemptFeatures:       exemptFeatures,
 		RunTest:              *confflags.RunTest,
@@ -149,18 +147,22 @@ func RunConformanceWithOptions(t *testing.T, opts confsuite.ConformanceOptions) 
 	}
 
 	cSuite.Applier.ManifestFS = cSuite.ManifestFS
-	if cSuite.RunTest != "" {
-		idx := slices.IndexFunc(tests.ConformanceTests, func(test confsuite.ConformanceTest) bool {
-			return test.ShortName == cSuite.RunTest
-		})
-		if idx == -1 {
-			require.FailNow(t, fmt.Sprintf("Test %q does not exist", cSuite.RunTest))
-		}
-	}
+	// Setup conformance suite (Ensures GatewayClass is accepted, applies BaseManifests and certs)
+	cSuite.Setup(t, tests.ConformanceTests)
 
-	// Apply base manifests
-	cSuite.Applier.GatewayClass = opts.GatewayClassName
-	cSuite.Applier.MustApplyWithCleanup(t, opts.Client, cSuite.TimeoutConfig, opts.BaseManifests, cSuite.Cleanup)
+	t.Log("Preparing TLS resources for Gateway")
+	err = PrepareTLSResources(ctx, opts.Clientset, "agentic-conformance-infra")
+	require.NoError(t, err, "error preparing TLS resources")
+
+	t.Log("Touching Gateway to force reconciliation")
+	gw := &gatewayv1.Gateway{}
+	err = opts.Client.Get(ctx, client.ObjectKey{Namespace: "agentic-conformance-infra", Name: "conformance-primary"}, gw)
+	require.NoError(t, err, "error getting Gateway to touch")
+	if gw.Annotations == nil {
+		gw.Annotations = make(map[string]string)
+	}
+	err = opts.Client.Update(ctx, gw)
+	require.NoError(t, err, "error touching Gateway for reconciliation")
 
 	t.Log("Waiting for agentic-conformance-infra namespace to be ready")
 	kubernetes.NamespacesMustBeReady(t, opts.Client, cSuite.TimeoutConfig, []string{"agentic-conformance-infra"})
