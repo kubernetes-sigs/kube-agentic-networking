@@ -46,7 +46,8 @@ release:
     ## Installation
 
 
-    To install this release, refer to the instructions in [README.md](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/v{{.Version}}/README.md).
+    To install this release, refer to the instructions in 
+    [README.md](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/v{{.Version}}/README.md).
   # extra_files:
   # - glob: ./release/*.yaml
 
