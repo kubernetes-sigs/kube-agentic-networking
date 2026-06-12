@@ -24,7 +24,7 @@ archives:
   - id: controller
     builds:
       - agentic-net-controller
-    formats: ['tar.gz']
+    formats: ["tar.gz"]
     name_template: >-
       agentic-net-controller_
       {{- title .Os }}_
@@ -32,11 +32,11 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
     format_overrides:
-    - goos: windows
-      formats: ['zip']
+      - goos: windows
+        formats: ["zip"]
 
 checksum:
-  name_template: 'checksums.txt'
+  name_template: "checksums.txt"
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 release:
@@ -47,7 +47,7 @@ release:
 
     To install this release, refer to the instructions in the README.md.
   # extra_files:
-   # - glob: ./release/*.yaml
+  # - glob: ./release/*.yaml
 
 changelog:
   disable: true
