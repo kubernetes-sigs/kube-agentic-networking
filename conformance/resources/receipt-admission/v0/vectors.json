@@ -1,0 +1,301 @@
+{
+  "canonicalization": {
+    "description": "RFC 8785 (JCS) over the JSON object, restricted here to strings, objects, and small integers, so RFC 8785 number formatting is not exercised; a full implementation is required for general objects",
+    "digest_encoding": "hex",
+    "digest_prefix": "sha256:",
+    "hash": "sha256",
+    "profile": "jcs-json-v1"
+  },
+  "schema": "receipt_admission_conformance_vectors.v0",
+  "spec": {
+    "binding_verdicts": {
+      "bound": "recomputed digest of the admitted object equals the committed manifest digest",
+      "digest_mismatch": "committed digest present but != recomputed digest",
+      "missing_commitment": "the chain commits to no manifest digest"
+    },
+    "canonicalization_verdicts": {
+      "all_variants_match": "every raw variant of the same content canonicalizes to one digest",
+      "variant_mismatch": "the profile failed to normalize the variants to a single digest"
+    },
+    "evaluation_order": "resolve the chain reference, then binding, then (for a bound chain) declared-vs-observed grounding. Absence of `chain_reference` means the chain is already resolved / in hand.",
+    "grounding_reasons": {
+      "no_independent_observation": "no observation of the effect at all",
+      "object_attestation_not_effect_observation": "a controller-signed attestation covers the submitted object, not the runtime effect, so it is not confirmation",
+      "observed_diverges_from_declared": "an independent observation disagrees with the declaration",
+      "observed_matches_declared": "confirmed by an independent observation"
+    },
+    "grounding_verdicts": {
+      "confirmed": "bound chain; an independent observed effect matches the declared decision, effect, and target",
+      "contradicted": "bound chain; an independent observed effect diverges in decision, effect, or target (the required failure case)",
+      "unobserved": "bound chain; no independent observation of the effect, so the receipt stays a declaration, never confirmed"
+    },
+    "kubernetes_profile_note": "A canonical profile for real Kubernetes objects (YAML/JSON normalization, defaulting, field ordering) is out of scope here and is the open profile question for the proposal; the agent committing the digest and the controller recomputing it must share one named profile, or recompute is not deterministic across implementations.",
+    "non_claims": [
+      "recompute-only; no producer or signer is trusted",
+      "envelope-neutral; composes with a compound-digest chain without owning its format",
+      "reproducible from these bytes alone, without reading the reference runner",
+      "declaration is not effect; a missing observation is inconclusive, never confirmation"
+    ],
+    "recompute_rule": "The controller recomputes the manifest digest from the object it received and compares it to the chain's committed value; the committed value is never trusted as-is.",
+    "resolution_verdicts": {
+      "unresolvable": "the chain reference is present but cannot be resolved; a committed digest alone is not sufficient to admit"
+    },
+    "rules": [
+      "The chain reference is resolved before anything is verified.",
+      "Binding is evaluated before grounding; grounding is evaluated only for a bound chain.",
+      "Only an independent observation of the effect drives grounding.",
+      "A receipt is the agent session's own account: a declaration, not proof the effect occurred.",
+      "A controller-signed attestation covers the submitted object, not the runtime effect, so it never produces 'confirmed' on its own."
+    ],
+    "signature_scope_note": "Signature and chain-integrity verification is the emitter-side family and is assumed valid in these vectors."
+  },
+  "vectors": [
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "chain_reference": {
+        "present": true,
+        "resolvable": false,
+        "uri": "oci://registry.example/agent-session/receipts:sha256-deadbeef"
+      },
+      "committed_manifest_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+      "expected": {
+        "reason": "chain_reference_unresolvable_digest_alone_insufficient",
+        "resolution": "unresolvable"
+      },
+      "family": "resolution",
+      "id": "r1_chain_reference_unresolvable"
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "committed_manifest_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+      "expected": {
+        "binding": "bound"
+      },
+      "family": "binding",
+      "id": "b1_binding_match"
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "committed_manifest_digest": "sha256:fcdcc8440646b5ab133e5f2f8bf44067dfb2d5d5470a809252bff2e9c3b10abb",
+      "expected": {
+        "binding": "digest_mismatch"
+      },
+      "family": "binding",
+      "id": "b2_binding_digest_mismatch"
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "committed_manifest_digest": null,
+      "expected": {
+        "binding": "missing_commitment"
+      },
+      "family": "binding",
+      "id": "b3_binding_missing_commitment"
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "chain_cryptographically_valid": true,
+      "committed_manifest_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+      "expected": {
+        "binding": "bound",
+        "grounding": "confirmed",
+        "grounding_reason": "observed_matches_declared"
+      },
+      "family": "declared_vs_observed",
+      "id": "g1_observed_confirms",
+      "observed_effect": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-a"
+      },
+      "receipt_declares": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-a"
+      }
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "chain_cryptographically_valid": true,
+      "committed_manifest_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+      "expected": {
+        "binding": "bound",
+        "grounding": "contradicted",
+        "grounding_reason": "observed_diverges_from_declared"
+      },
+      "family": "declared_vs_observed",
+      "id": "g2_observed_contradicts_effect",
+      "observed_effect": {
+        "decision": "deny",
+        "effect": "blocked",
+        "target": "sha256:repo-a"
+      },
+      "receipt_declares": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-a"
+      }
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "chain_cryptographically_valid": true,
+      "committed_manifest_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+      "expected": {
+        "binding": "bound",
+        "grounding": "contradicted",
+        "grounding_reason": "observed_diverges_from_declared"
+      },
+      "family": "declared_vs_observed",
+      "id": "g3_observed_contradicts_target",
+      "observed_effect": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-b"
+      },
+      "receipt_declares": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-a"
+      }
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "chain_cryptographically_valid": true,
+      "committed_manifest_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+      "expected": {
+        "binding": "bound",
+        "grounding": "unobserved",
+        "grounding_reason": "no_independent_observation"
+      },
+      "family": "declared_vs_observed",
+      "id": "g4_effect_unobserved",
+      "observed_effect": null,
+      "receipt_declares": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-a"
+      }
+    },
+    {
+      "admitted_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "chain_cryptographically_valid": true,
+      "committed_manifest_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+      "controller_object_attestation": true,
+      "expected": {
+        "binding": "bound",
+        "grounding": "unobserved",
+        "grounding_reason": "object_attestation_not_effect_observation"
+      },
+      "family": "declared_vs_observed",
+      "id": "g5_controller_object_attested_effect_unobserved",
+      "observed_effect": null,
+      "receipt_declares": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-a"
+      }
+    },
+    {
+      "expected": {
+        "canonicalization": "all_variants_match",
+        "digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0"
+      },
+      "family": "canonicalization",
+      "id": "c1_canonicalization_stress_same_content",
+      "raw_object_variants": [
+        "{\"spec\":{\"replicas\":1},\"metadata\":{\"namespace\":\"ci\",\"name\":\"deploy-key-agent\"},\"kind\":\"Deployment\",\"apiVersion\":\"apps/v1\"}",
+        "{\n  \"apiVersion\": \"apps/v1\",\n  \"kind\": \"Deployment\",\n  \"metadata\": {\n    \"name\": \"deploy-key-agent\",\n    \"namespace\": \"ci\"\n  },\n  \"spec\": { \"replicas\": 1 }\n}"
+      ]
+    }
+  ]
+}
