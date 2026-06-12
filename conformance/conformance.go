@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,8 +47,9 @@ import (
 const GatewayLayerProfileName confsuite.ConformanceProfileName = "Gateway"
 
 var GatewayLayerProfile = confsuite.ConformanceProfile{
-	Name:         GatewayLayerProfileName,
-	CoreFeatures: features.AgenticCoreFeatures,
+	Name:             GatewayLayerProfileName,
+	CoreFeatures:     features.AgenticCoreFeatures,
+	ExtendedFeatures: sets.New(features.SupportAccessPolicySPIFFESource, features.SupportAccessPolicyExternalAuth),
 }
 
 func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
@@ -84,6 +86,13 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 		*confflags.ImplementationContact,
 	)
 
+	supportedFeaturesSet := sets.New(features.AgenticCoreFeatures.UnsortedList()...)
+	if *confflags.SupportedFeatures != "" {
+		for _, f := range strings.Split(*confflags.SupportedFeatures, ",") {
+			supportedFeaturesSet.Insert(gatewayfeatures.FeatureName(strings.TrimSpace(f)))
+		}
+	}
+
 	opts := confsuite.ConformanceOptions{
 		Client:               c,
 		ClientOptions:        clientOptions,
@@ -93,7 +102,7 @@ func DefaultOptions(t *testing.T) confsuite.ConformanceOptions {
 		BaseManifests:        "resources/base.yaml.tmpl",
 		Debug:                *confflags.ShowDebug,
 		CleanupBaseResources: *confflags.CleanupBaseResources,
-		SupportedFeatures:    sets.New(append(features.AgenticCoreFeatures.UnsortedList(), features.SupportAccessPolicySPIFFESource, features.SupportAccessPolicyExternalAuth)...),
+		SupportedFeatures:    supportedFeaturesSet,
 		SkipTests:            skipTests,
 		ExemptFeatures:       exemptFeatures,
 		RunTest:              *confflags.RunTest,
