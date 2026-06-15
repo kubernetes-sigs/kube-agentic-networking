@@ -1,7 +1,7 @@
 # Receipt admission conformance vectors (v0)
 
 Envelope-neutral conformance vectors for the receipt-based admission-control discussion in
-[#243](https://github.com/kubernetes-sigs/kube-agentic-networking/issues/243). They pin four admission
+[#243](https://github.com/kubernetes-sigs/kube-agentic-networking/issues/243). They pin five admission
 concerns, in the order a controller evaluates them, and every expected outcome is reproducible from the
 bytes in `vectors.json` alone.
 
@@ -16,9 +16,21 @@ bytes in `vectors.json` alone.
 - **canonicalization** — the same object content under reordered keys and added whitespace must produce
   one digest, so the profile (not a coincidence of two serializers) is what makes recompute
   interoperable.
+- **stage** — a commitment names the pipeline stage it was computed at, and the kind is fixed per stage
+  value in a closed table: `agent-declared` and `controller-observed-object` are object stages verified
+  by recompute, `observed-effect` is verified by compare. The verb derives from the stage alone, so
+  there is no separate stage-kind field that can drift. The required stage selects the verb, and a
+  commitment whose stage differs rejects with two distinct reasons in both directions: within the object
+  kind a digest mismatch (cross-stage being the pipeline/defaulting case, same-stage being tampering),
+  across kinds a stage-kind mismatch decided before any recompute or compare. This is the defaulting case
+  from the thread: the API server defaults and mutates the object before the validating controller sees
+  it, so an `agent-declared` commitment recomputed at the `controller-observed-object` stage must reject,
+  which is the pipeline, not tampering.
 
 These vectors deliberately do not define the final canonicalization profile for Kubernetes objects;
-they make that open question explicit and stay reproducible independent of it.
+they make that open question explicit and stay reproducible independent of it. The `stage` family
+likewise does not assume a final field name in the proposal; it pins the verification contract a named
+stage field has to satisfy.
 
 ## Format
 
@@ -45,6 +57,9 @@ recomputation, not trusted as supplied.
 - `binding`: `bound` | `digest_mismatch` | `missing_commitment`.
 - `grounding` (bound chains): `confirmed` | `contradicted` | `unobserved`, each with a `grounding_reason`.
 - `canonicalization`: `all_variants_match` | `variant_mismatch`.
+- `stage`: `bound` | `cross_stage_digest_mismatch` | `digest_mismatch` | `stage_kind_mismatch` |
+  `confirmed` | `contradicted` | `unobserved` | `unknown_stage`, each with a `stage_reason`. The
+  `stage -> kind -> verb` table is machine-readable in `spec.stage_model`.
 
 The required failure case is `g2`/`g3`: a cryptographically valid, bound chain whose independent observed
 effect diverges from the declaration. Vector `g5` is the case where a controller-signed attestation
@@ -52,11 +67,15 @@ covers the submitted object but the effect is unobserved; it carries the distinc
 `object_attestation_not_effect_observation`, so attesting the object is never read as observing the
 effect, and it stays `unobserved`.
 
+In the `stage` family, `st3` is the defaulting cross-stage reject (a pipeline digest mismatch, kept
+distinct from the `st4` same-stage tampering reject), and `st5`/`st6` are the cross-kind category error
+rejected before any recompute or compare, in both directions.
+
 ## Scope
 
 Signature and chain-integrity verification is the emitter side and is assumed valid here; these vectors
-isolate resolution, binding, declared-vs-observed, and canonicalization. They are recompute-only and make
-no claim about any implementation. The canonical profile id `jcs-json-v1` is a placeholder for these
+isolate resolution, binding, declared-vs-observed, canonicalization, and stage. They are recompute-only
+and make no claim about any implementation. The canonical profile id `jcs-json-v1` is a placeholder for these
 fixtures; the production Kubernetes object profile (YAML/JSON normalization, defaulting, field ordering)
 is the open question for the proposal, and the committing and recomputing sides must share one named
 profile or recompute is not deterministic across implementations.

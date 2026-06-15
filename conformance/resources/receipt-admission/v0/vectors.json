@@ -45,9 +45,37 @@
       "Binding is evaluated before grounding; grounding is evaluated only for a bound chain.",
       "Only an independent observation of the effect drives grounding.",
       "A receipt is the agent session's own account: a declaration, not proof the effect occurred.",
-      "A controller-signed attestation covers the submitted object, not the runtime effect, so it never produces 'confirmed' on its own."
+      "A controller-signed attestation covers the submitted object, not the runtime effect, so it never produces 'confirmed' on its own.",
+      "A commitment names its stage; the required stage selects the verb. Object stages recompute, the effect stage compares. A cross-kind check is a category error rejected before any verb runs; a cross-stage object check is a pipeline digest mismatch, not tampering."
     ],
-    "signature_scope_note": "Signature and chain-integrity verification is the emitter-side family and is assumed valid in these vectors."
+    "signature_scope_note": "Signature and chain-integrity verification is the emitter-side family and is assumed valid in these vectors.",
+    "stage_model": {
+      "note": "A commitment names the pipeline stage it was computed at. The kind is fixed per stage value in a closed table, so the verification verb derives from the stage alone; there is no separate stage-kind field that can drift out of agreement with stage. Object stages verify by recompute; the effect stage verifies by compare.",
+      "stage_to_kind_to_verb": {
+        "agent-declared": {
+          "kind": "object",
+          "verb": "recompute"
+        },
+        "controller-observed-object": {
+          "kind": "object",
+          "verb": "recompute"
+        },
+        "observed-effect": {
+          "kind": "effect",
+          "verb": "compare"
+        }
+      }
+    },
+    "stage_verdicts": {
+      "bound": "object stage; the commitment digest equals the recompute at the named stage",
+      "confirmed": "effect stage; an independent observation matches the declaration",
+      "contradicted": "effect stage; an independent observation diverges from the declaration",
+      "cross_stage_digest_mismatch": "object kind, commitment stage differs from the recompute stage; a digest mismatch caused by the pipeline (e.g. defaulting), not tampering",
+      "digest_mismatch": "object kind, same stage; the recompute diverges (tampering)",
+      "stage_kind_mismatch": "the required stage and the commitment stage are different kinds; a category error rejected before any recompute or compare",
+      "unknown_stage": "the named stage is not in the closed enum",
+      "unobserved": "effect stage; no independent observation, so the receipt stays a declaration"
+    }
   },
   "vectors": [
     {
@@ -296,6 +324,157 @@
         "{\"spec\":{\"replicas\":1},\"metadata\":{\"namespace\":\"ci\",\"name\":\"deploy-key-agent\"},\"kind\":\"Deployment\",\"apiVersion\":\"apps/v1\"}",
         "{\n  \"apiVersion\": \"apps/v1\",\n  \"kind\": \"Deployment\",\n  \"metadata\": {\n    \"name\": \"deploy-key-agent\",\n    \"namespace\": \"ci\"\n  },\n  \"spec\": { \"replicas\": 1 }\n}"
       ]
+    },
+    {
+      "commitment": {
+        "object_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+        "stage": "agent-declared"
+      },
+      "expected": {
+        "stage": "bound",
+        "stage_reason": "recompute_matches_at_named_stage"
+      },
+      "family": "stage",
+      "id": "st1_agent_declared_bound",
+      "recompute_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "replicas": 1
+        }
+      },
+      "required_stage": "agent-declared"
+    },
+    {
+      "commitment": {
+        "object_digest": "sha256:09ba9cedc033ff71103dcd7efda1f3be9bb6cd2889a34360a87320cec2fe51ba",
+        "stage": "controller-observed-object"
+      },
+      "expected": {
+        "stage": "bound",
+        "stage_reason": "recompute_matches_at_named_stage"
+      },
+      "family": "stage",
+      "id": "st2_controller_observed_bound",
+      "recompute_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "progressDeadlineSeconds": 600,
+          "replicas": 1
+        }
+      },
+      "required_stage": "controller-observed-object"
+    },
+    {
+      "commitment": {
+        "object_digest": "sha256:7229caa820ff06fe2efd4bacd805b0f75891bd66297d234c450d9d30a3a41ff0",
+        "stage": "agent-declared"
+      },
+      "expected": {
+        "stage": "cross_stage_digest_mismatch",
+        "stage_reason": "commitment_stage_differs_from_recompute_stage_pipeline_not_tamper"
+      },
+      "family": "stage",
+      "id": "st3_cross_stage_defaulting_reject",
+      "recompute_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "progressDeadlineSeconds": 600,
+          "replicas": 1
+        }
+      },
+      "required_stage": "controller-observed-object"
+    },
+    {
+      "commitment": {
+        "object_digest": "sha256:09ba9cedc033ff71103dcd7efda1f3be9bb6cd2889a34360a87320cec2fe51ba",
+        "stage": "controller-observed-object"
+      },
+      "expected": {
+        "stage": "digest_mismatch",
+        "stage_reason": "same_stage_recompute_diverges_tamper"
+      },
+      "family": "stage",
+      "id": "st4_same_stage_tamper_reject",
+      "recompute_object": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "deploy-key-agent",
+          "namespace": "ci"
+        },
+        "spec": {
+          "progressDeadlineSeconds": 600,
+          "replicas": 5
+        }
+      },
+      "required_stage": "controller-observed-object"
+    },
+    {
+      "commitment": {
+        "declares": {
+          "decision": "allow",
+          "effect": "create_deploy_key",
+          "target": "sha256:repo-a"
+        },
+        "stage": "observed-effect"
+      },
+      "expected": {
+        "stage": "stage_kind_mismatch",
+        "stage_reason": "cross_kind_decided_before_verb"
+      },
+      "family": "stage",
+      "id": "st5_cross_kind_effect_vs_object_reject",
+      "required_stage": "controller-observed-object"
+    },
+    {
+      "commitment": {
+        "object_digest": "sha256:09ba9cedc033ff71103dcd7efda1f3be9bb6cd2889a34360a87320cec2fe51ba",
+        "stage": "controller-observed-object"
+      },
+      "expected": {
+        "stage": "stage_kind_mismatch",
+        "stage_reason": "cross_kind_decided_before_verb"
+      },
+      "family": "stage",
+      "id": "st6_cross_kind_object_vs_effect_reject",
+      "required_stage": "observed-effect"
+    },
+    {
+      "commitment": {
+        "declares": {
+          "decision": "allow",
+          "effect": "create_deploy_key",
+          "target": "sha256:repo-a"
+        },
+        "stage": "observed-effect"
+      },
+      "expected": {
+        "stage": "confirmed",
+        "stage_reason": "observed_matches_declared"
+      },
+      "family": "stage",
+      "id": "st7_observed_effect_confirmed",
+      "observed_effect": {
+        "decision": "allow",
+        "effect": "create_deploy_key",
+        "target": "sha256:repo-a"
+      },
+      "required_stage": "observed-effect"
     }
   ]
 }
