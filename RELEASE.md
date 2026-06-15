@@ -97,10 +97,11 @@ Once the RC is stable and approved by maintainers:
     git tag -a vX.Y.0 -m "Release vX.Y.0"
     git push upstream vX.Y.0
     ```
-6.  Run `make build-install-yaml` to generate the installation manifests in the `release/` directory.
-7.  Create the GitHub Release pointing to the `vX.Y.0` tag:
-    *   Use the content of `CHANGELOG/X.Y-CHANGELOG.md` as the release description.
-    *   Attach the generated YAML files from the `release/` directory to the release.
+6.  Pushing the tag will automatically trigger the GitHub Actions `release` workflow, which builds the controller binaries, generates installation manifests, and creates a draft GitHub Release with these artifacts attached.
+7.  Once the workflow completes, go to the GitHub Releases page:
+    *   Review the generated draft release.
+    *   Edit the release description to include the content of `CHANGELOG/X.Y-CHANGELOG.md`.
+    *   Publish the release.
 
 ---
 
@@ -131,8 +132,9 @@ Generate release notes between the last patch release (`vX.Y.(Z-1)`) and the new
     git tag -a vX.Y.Z -m "Release vX.Y.Z"
     git push upstream vX.Y.Z
     ```
-2.  Run `make build-install-yaml` to generate the installation manifests in the `release/` directory.
-3.  Publish the GitHub Release targeting `release-X.Y` with the tag `vX.Y.Z`:
-    *   Copy the changelog section for this patch version.
-    *   Attach the generated YAML files from the `release/` directory to the release.
+2.  Pushing the tag will automatically trigger the GitHub Actions `release` workflow, which builds the controller binaries, generates installation manifests, and creates a draft GitHub Release with these artifacts attached.
+3.  Once the workflow completes, go to the GitHub Releases page:
+    *   Review the generated draft release.
+    *   Edit the release description to include the changelog section for this patch version.
+    *   Publish the release.
 
