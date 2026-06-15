@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	discoverylisters "k8s.io/client-go/listers/discovery/v1"
 	"k8s.io/klog/v2"
 
 	corev1 "k8s.io/api/core/v1"
@@ -67,6 +68,7 @@ type Translator struct {
 	gwClient                   gatewayclient.Interface
 	namespaceLister            corev1listers.NamespaceLister
 	serviceLister              corev1listers.ServiceLister
+	endpointSliceLister        discoverylisters.EndpointSliceLister
 	secretLister               corev1listers.SecretLister
 	configMapLister            corev1listers.ConfigMapLister
 	gatewayLister              gatewaylisters.GatewayLister
@@ -82,6 +84,7 @@ func New(
 	gwClient gatewayclient.Interface,
 	namespaceLister corev1listers.NamespaceLister,
 	serviceLister corev1listers.ServiceLister,
+	endpointSliceLister discoverylisters.EndpointSliceLister,
 	secretLister corev1listers.SecretLister,
 	configMapLister corev1listers.ConfigMapLister,
 	gatewayLister gatewaylisters.GatewayLister,
@@ -96,6 +99,7 @@ func New(
 		gwClient,
 		namespaceLister,
 		serviceLister,
+		endpointSliceLister,
 		secretLister,
 		configMapLister,
 		gatewayLister,
@@ -232,7 +236,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 					}
 					httpRouteStatuses[key] = currentParentStatuses
 
-					clusters, err := buildClustersFromRouteBackends(allValidBackends)
+					clusters, err := t.buildClustersFromRouteBackends(allValidBackends)
 					if err != nil {
 						return nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
 					}

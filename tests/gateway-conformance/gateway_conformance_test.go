@@ -84,8 +84,6 @@ func conformanceOpts(t *testing.T) suite.ConformanceOptions {
 var SkipTests = []suite.ConformanceTest{
 	// https://github.com/kubernetes-sigs/kube-agentic-networking/issues/256
 	tests.HTTPRouteHTTPSListener,
-	// Requires EDS to handle headless services without selector.
-	tests.HTTPRouteServiceTypes,
 }
 
 func skipTestsShortNames(skipTests []suite.ConformanceTest) []string {

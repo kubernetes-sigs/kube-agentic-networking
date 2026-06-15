@@ -30,8 +30,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	corev1informers "k8s.io/client-go/informers/core/v1"
+	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	discoverylisters "k8s.io/client-go/listers/discovery/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
@@ -75,6 +77,9 @@ type coreResources struct {
 
 	svcLister corev1listers.ServiceLister
 	svcSynced cache.InformerSynced
+
+	endpointSliceLister discoverylisters.EndpointSliceLister
+	endpointSliceSynced cache.InformerSynced
 
 	secretLister corev1listers.SecretLister
 	secretSynced cache.InformerSynced
@@ -136,6 +141,7 @@ func New(
 	agenticClientSet agenticclient.Interface,
 	namespaceInformer corev1informers.NamespaceInformer,
 	serviceInformer corev1informers.ServiceInformer,
+	endpointSliceInformer discoveryinformers.EndpointSliceInformer,
 	secretInformer corev1informers.SecretInformer,
 	configMapInformer corev1informers.ConfigMapInformer,
 	gatewayClassInformer gatewayinformers.GatewayClassInformer,
@@ -160,15 +166,17 @@ func New(
 
 	c := &Controller{
 		core: coreResources{
-			client:          kubeClientSet,
-			nsLister:        namespaceInformer.Lister(),
-			nsSynced:        namespaceInformer.Informer().HasSynced,
-			svcLister:       serviceInformer.Lister(),
-			svcSynced:       serviceInformer.Informer().HasSynced,
-			secretLister:    secretInformer.Lister(),
-			secretSynced:    secretInformer.Informer().HasSynced,
-			configMapLister: configMapInformer.Lister(),
-			configMapSynced: configMapInformer.Informer().HasSynced,
+			client:              kubeClientSet,
+			nsLister:            namespaceInformer.Lister(),
+			nsSynced:            namespaceInformer.Informer().HasSynced,
+			svcLister:           serviceInformer.Lister(),
+			svcSynced:           serviceInformer.Informer().HasSynced,
+			endpointSliceLister: endpointSliceInformer.Lister(),
+			endpointSliceSynced: endpointSliceInformer.Informer().HasSynced,
+			secretLister:        secretInformer.Lister(),
+			secretSynced:        secretInformer.Informer().HasSynced,
+			configMapLister:     configMapInformer.Lister(),
+			configMapSynced:     configMapInformer.Informer().HasSynced,
 		},
 		gateway: gatewayResources{
 			client:               gwClientSet,
@@ -210,6 +218,7 @@ func New(
 		gwClientSet,
 		namespaceInformer.Lister(),
 		serviceInformer.Lister(),
+		endpointSliceInformer.Lister(),
 		secretInformer.Lister(),
 		configMapInformer.Lister(),
 		gatewayInformer.Lister(),
@@ -241,6 +250,9 @@ func New(
 	if err := c.setupServiceEventHandlers(serviceInformer); err != nil {
 		return nil, err
 	}
+	if err := c.setupEndpointSliceEventHandlers(endpointSliceInformer); err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -260,6 +272,9 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	}
 
 	klog.Info("Waiting for informer caches to sync")
+	// endpointSliceSynced is intentionally excluded: without discovery.k8s.io/endpointslices
+	// RBAC the reflector never becomes synced and would block all workers. Service backends
+	// fall back to STRICT_DNS when the EndpointSlice lister is empty (see translator).
 	if ok := cache.WaitForCacheSync(ctx.Done(),
 		c.core.nsSynced,
 		c.core.svcSynced,
