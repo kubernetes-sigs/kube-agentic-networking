@@ -195,7 +195,9 @@ install_crds() {
   kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 
   header "Installing Project CRDs"
-  kubectl apply -f k8s/crds/
+  for file in k8s/crds/agentic.networking.x-k8s.io_*.yaml; do
+    kubectl apply -f "$file"
+  done
 }
 
 # Function to setup agentic identity

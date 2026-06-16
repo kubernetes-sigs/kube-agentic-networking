@@ -286,3 +286,7 @@ live-docs: api-ref-docs
 .PHONY: api-ref-docs
 api-ref-docs:
 	hack/mkdocs/generate.sh
+
+.PHONY: build-install-yaml
+build-install-yaml: manifests
+	./hack/build-install-yaml.sh

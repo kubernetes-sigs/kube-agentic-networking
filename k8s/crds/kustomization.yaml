@@ -1,0 +1,2 @@
+resources:
+- agentic.networking.x-k8s.io_xaccesspolicies.yaml
