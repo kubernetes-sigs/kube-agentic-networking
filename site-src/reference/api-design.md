@@ -6,7 +6,8 @@ This document describes the design of the project's custom APIs and how they fit
 
 An **XBackend** represents a backend that agents or tools call into—for example, an MCP server. It is namespaced and is referenced by HTTPRoute `BackendRef`s (and by XAccessPolicy targetRefs).
 
-!note: The project is in the process of moving to use the Gateway API's XBackend defined [here](https://github.com/kubernetes-sigs/gateway-api/blob/main/geps/gep-4894/index.md)
+> [!NOTE:] 
+> The project is in the process of moving to use the Gateway API's XBackend defined [here](https://github.com/kubernetes-sigs/gateway-api/blob/main/geps/gep-4894/index.md)
 
 ## XAccessPolicy
 
