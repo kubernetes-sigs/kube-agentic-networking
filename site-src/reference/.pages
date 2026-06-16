@@ -1,3 +1,4 @@
 title: Reference
 nav:
   - API Specification: spec.md
+  - API Design: api-design.md
