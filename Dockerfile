@@ -3,7 +3,7 @@
 
 # This will be overridden at build time by makefile to .go-version
 ARG GO_VERSION=1.26.0
-FROM golang:${GO_VERSION} AS builder
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -16,8 +16,10 @@ RUN go mod download
 # Copy the entire project directory
 COPY . .
 
-# Build
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o agentic-net-controller cmd/agentic-net-controller/main.go
+# Build using cross-compilation
+ARG TARGETOS
+ARG TARGETARCH
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o agentic-net-controller cmd/agentic-net-controller/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
