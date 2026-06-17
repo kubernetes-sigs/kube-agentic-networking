@@ -1,0 +1,38 @@
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
+kind: XAccessPolicy
+metadata:
+  name: e2e-cel-macros
+  namespace: e2e-test-ns
+spec:
+  targetRefs:
+  - group: agentic.networking.x-k8s.io
+    kind: XBackend
+    name: e2e-mcp-backend
+  action: Allow
+  rules:
+  - name: allow-macros
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: e2e-tester-sa
+    authorization:
+      type: CEL
+      cel:
+        expression: >-
+          request.path.startsWith('/mc') &&
+          request.headers['mcp-protocol-version'].contains('2025') &&
+          request.mcp.tool_name.matches('^get-[a-z]+$')
+  # Note: A second rule is added here to allow the base MCP protocol methods (such as "initializate",
+  # tools.list, etc). Using a separate inline rule is more convenient than
+  # trying to manually specify connection methods within CEL rules.
+  # TODO(https://github.com/kubernetes-sigs/kube-agentic-networking/issues/288): Explore allowing base protocol methods
+  # automatically or via CEL configuration to remove the need for this separate rule.
+  - name: allow-base-mcp
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: e2e-tester-sa
+    authorization:
+      type: Inline
+      mcp:
+        mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS

@@ -14,7 +14,7 @@ spec:
           from: Same
 ---
 # Define a Backend resource for server1, which runs in the K8s cluster.
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XBackend
 metadata:
   name: local-mcp-backend
@@ -26,7 +26,7 @@ spec:
     path: /mcp
 ---
 # Define a Backend resource for mcp.deepwiki.com.
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v0alpha0
 kind: XBackend
 metadata:
   name: remote-mcp-backend
@@ -37,17 +37,18 @@ spec:
     port: 443
     path: /mcp
 ---
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: auth-policy-local-mcp
   namespace: quickstart-ns
 spec:
-  # AuthPolicy targets a single HTTPRoute.
+  # XAccessPolicy targets the local MCP XBackend.
   targetRefs:
-    - group: agentic.prototype.x-k8s.io
+    - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: local-mcp-backend
+  action: Allow
   rules:
     - name: tools-for-adk-agent-sa
       source:
@@ -56,21 +57,26 @@ spec:
           name: adk-agent-sa
           namespace: quickstart-ns
       authorization:
-        type: InlineTools
-        tools:
-          - "get-sum"
-          - "get-tiny-image"
+        type: Inline
+        mcp:
+          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+          methods:
+            - name: tools/call
+              params:
+                - "get-sum"
+                - "get-tiny-image"
 ---
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: auth-policy-remote-mcp
   namespace: quickstart-ns
 spec:
   targetRefs:
-    - group: agentic.prototype.x-k8s.io
+    - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
+  action: Allow
   rules:
     - name: tools-for-adk-agent-sa
       source:
@@ -79,9 +85,13 @@ spec:
           name: adk-agent-sa
           namespace: quickstart-ns
       authorization:
-        type: InlineTools
-        tools:
-          - "read_wiki_structure"
+        type: Inline
+        mcp:
+          mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+          methods:
+            - name: tools/call
+              params:
+                - "read_wiki_structure"
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -105,7 +115,7 @@ spec:
               replacePrefixMatch: /mcp
       backendRefs:
         - name: local-mcp-backend # local mcp backend running in the Kubernetes cluster
-          group: agentic.prototype.x-k8s.io
+          group: agentic.networking.x-k8s.io
           kind: XBackend
           namespace: quickstart-ns
 ---
@@ -131,6 +141,6 @@ spec:
               replacePrefixMatch: /mcp
       backendRefs:
         - name: remote-mcp-backend # remote mcp server
-          group: agentic.prototype.x-k8s.io
+          group: agentic.networking.x-k8s.io
           kind: XBackend
           namespace: quickstart-ns

@@ -44,6 +44,10 @@ The project provides high-level rules for local verification:
 - **`make test-e2e`**: Runs the full End-to-End suite against a real `kind` cluster.
   - **Workflow**: It automatically creates a cluster, builds the controller, deploys it with necessary infrastructure (like the Agentic Identity CA), and runs tests from [tests/e2e/](../tests/e2e/).
   - **Debugging**: If the E2E tests fail, the underlying script ([dev/ci/run-e2e.sh](./ci/run-e2e.sh)) will automatically dump cluster-wide resource states and logs to the console for troubleshooting.
+- **`make test-gateway-api-conformance`**: Runs the Gateway API conformance tests.
+  - **Workflow**: It automatically creates a Kind cluster named `kan-conformance`, builds and deploys the controller, and runs the conformance tests from [tests/conformance/](../tests/conformance/).
+  - **Filtering Tests**: You can run a specific test by setting the `RUN_TEST` environment variable. For example: `RUN_TEST="HTTPRouteSimple" make test-gateway-api-conformance`.
+  - **Skipped Tests**: Some tests might be skipped due to known issues or unsupported features. Check [conformance_test.go](../tests/conformance/conformance_test.go) for the current skip list.
 
 ## 4. Continuous Integration (CI)
 

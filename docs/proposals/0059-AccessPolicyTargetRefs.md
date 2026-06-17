@@ -4,23 +4,23 @@ Status: Provisional<br/>
 
 # Allow AccessPolicy to Target Gateway Objects
 
-Currently, the [AccessPolicy](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/docs/proposals/0008-ToolAuthAPI.md#accesspolicy-crd) resource is only allowed to target [Backends](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/docs/proposals/0008-ToolAuthAPI.md#backend-crd).
+Currently, the [XAccessPolicy](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v1alpha1/accesspolicy_types.go) resource is only allowed to target [XBackends](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v0alpha0/backend_types.go).
 
 This has scalability issues when a given Tool Authorization policy needs to be enforced for all the traffic managed by a [Gateway](https://gateway-api.sigs.k8s.io/api-types/gateway/) object.
 
-This proposal allows `AccessPolicy` to target `Gateway` objects, in addition to `Backend` objects with following restrictions:
+This proposal allows `XAccessPolicy` to target `Gateway` objects, in addition to `XBackend` objects with following restrictions:
 
-1. A single `AccessPolicy` object targeting a Gateway and a Backend at the same time is NOT allowed.
+1. A single `XAccessPolicy` object targeting a Gateway and a XBackend at the same time is NOT allowed.
 
-1. It is allowed to have `AccessPolicy` objects targeting a `Gateway` object and `AccessPolicy` objects targeting a `Backend` object behind the `Gateway` object. In this case, the `AccessPolicy` objects targeting the `Gateway` object will be evaluated first. Among the `AccessPolicy` objects targeting the `Gateway` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.
+1. It is allowed to have `XAccessPolicy` objects targeting a `Gateway` object and `XAccessPolicy` objects targeting a `XBackend` object behind the `Gateway` object. In this case, the `XAccessPolicy` objects targeting the `Gateway` object will be evaluated first. Among the `XAccessPolicy` objects targeting the `Gateway` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.
 
-    * If any of the `AccessPolicy` objects targeting the `Gateway` object denies the access, the HTTP request will be denied. The `AccessPolicy` objects targeting the `Backend` object will NOT be evaluated in this case.
+    * If any of the `XAccessPolicy` objects targeting the `Gateway` object denies the access, the HTTP request will be denied. The `XAccessPolicy` objects targeting the `XBackend` object will NOT be evaluated in this case.
 
-    * If all the `AccessPolicy` objects targeting the `Gateway` object allow the access, the `AccessPolicy` objects targeting the `Backend` object will be evaluated. Among the `AccessPolicy` objects targeting the `Backend` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.
+    * If all the `XAccessPolicy` objects targeting the `Gateway` object allow the access, the `XAccessPolicy` objects targeting the `XBackend` object will be evaluated. Among the `XAccessPolicy` objects targeting the `XBackend` object, the ones with earlier creationTimestamp will be evaluated first. For the policies with the same creationTimestamp, the ones appearing first in alphabetical order by `{namespace}/{name}` will be evaluated first.
 
-        * if any of the `AccessPolicy` objects targeting the `Backend` object denies the access, the HTTP request will be denied.
+        * if any of the `XAccessPolicy` objects targeting the `XBackend` object denies the access, the HTTP request will be denied.
 
-        * if all the `AccessPolicy` objects targeting the `Backend` object allow the access, the HTTP request will be allowed.
+        * if all the `XAccessPolicy` objects targeting the `XBackend` object allow the access, the HTTP request will be allowed.
 
 ## Example
 
@@ -30,13 +30,13 @@ We have a Gateway, an HTTPRoute and a Backend:
 
 *   **Gateway**: `prod-gateway`
 *   **HTTPRoute**: `payment-route` (attached to `prod-gateway`, routes to `payment-service`)
-*   **Backend**: `payment-service`
+*   **XBackend**: `payment-service`
 
-We also have the following AccessPolicies applied:
+We also have the following XAccessPolicies applied:
 
 1.  `gateway-policy-audit` (Targets `prod-gateway`). Created at T1.
 2.  `gateway-policy-region` (Targets `prod-gateway`). Created at T2 (T1 < T2).
-3.  `backend-policy-admin` (Targets `payment-service`).
+3.  `backend-policy-admin` (Targets `payment-service` XBackend).
 
 The graph shows the relationships between these resources:
 
@@ -45,16 +45,16 @@ graph TD
     %% 1. Policies at the Top
     subgraph PolicyLayer [Policy Attachments]
         direction LR
-        GPA1(AccessPolicy: gateway-policy-audit)
-        GPR1(AccessPolicy: gateway-policy-region)
-        BPA1(AccessPolicy: backend-policy-admin)
+        GPA1(XAccessPolicy: gateway-policy-audit)
+        GPR1(XAccessPolicy: gateway-policy-region)
+        BPA1(XAccessPolicy: backend-policy-admin)
     end
 
     %% 2. Infrastructure & Routing on the same line
     %% We define the order here: Gateway <-> Route <-> Backend
     GW(Gateway: prod-gateway)
     Route(HTTPRoute: payment-route)
-    BE(Backend: payment-service)
+    BE(XBackend: payment-service)
 
     %% Invisible links to force horizontal alignment
     GW ~~~ Route ~~~ BE
@@ -110,19 +110,19 @@ type AccessPolicySpec struct {
 	// +required
 	// +kubebuilder:validation:MinItems=1
 	// +listType=atomic
-	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.prototype.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.prototype.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
+	// +kubebuilder:validation:XValidation:rule="self.all(x, (x.group == 'agentic.networking.x-k8s.io' && x.kind == 'XBackend') || (x.group == 'gateway.networking.k8s.io' && x.kind == 'Gateway'))",message="TargetRef must have group agentic.networking.x-k8s.io and kind XBackend, or group gateway.networking.k8s.io and kind Gateway"
     // +kubebuilder:validation:XValidation:rule="self.all(ref, ref.kind == self[0].kind)",message="All targetRefs must have the same Kind"
-	TargetRefs []gwapiv1.LocalPolicyTargetReference `json:"targetRefs"`
+	TargetRefs []gwapiv1.LocalPolicyTargetReferenceWithSectionName `json:"targetRefs"`
 }
 ```
 
-Currently, the `InlineTools` type of [AuthorizationRule](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/docs/proposals/0017-DynamicAuth.md) supports a list of tool names, which works well for `AccessPolicy` targeting `Backend` objects. However, it does not work well for `AccessPolicy` targeting `Gateway` objects, because there could be tool name conflicts between different backends behind the same `Gateway`. We will address this in a separate proposal.
+In v1alpha1, the `Inline` authorization type uses `mcp.methods` (for example, `tools/call` with `params`) instead of a flat tool name list. This works well for `XAccessPolicy` targeting `XBackend` objects. It does not work well for `XAccessPolicy` targeting `Gateway` objects, because there could be tool name conflicts between different backends behind the same `Gateway`. We will address this in a separate proposal.
 
 ## Support requirements in implementation
 
 * An implementation MUST support at least one of the following:
 
-    * `AccessPolicy` objects targeting `Gateway` objects
-    * `AccessPolicy` objects targeting `Backend` objects
+    * `XAccessPolicy` objects targeting `Gateway` objects
+    * `XAccessPolicy` objects targeting `XBackend` objects
 
-* If an implementation supports allowing `AccessPolicy` to target both `Gateway` and `Backend` objects, it MUST support the evaluation flow described above.
+* If an implementation supports allowing `XAccessPolicy` to target both `Gateway` and `XBackend` objects, it MUST support the evaluation flow described above.

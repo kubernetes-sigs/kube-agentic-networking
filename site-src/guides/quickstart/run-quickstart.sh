@@ -34,6 +34,11 @@ GATEWAY_API_VERSION="v1.5.0"
 AGENT_UI_PORT="8081"
 AGENT_UI_URL="http://localhost:${AGENT_UI_PORT}/dev-ui/?app=mcp_agent"
 
+# Controller image settings (matches dev/ci/lib.sh)
+CONTROLLER_REGISTRY="us-central1-docker.pkg.dev/k8s-staging-images/agentic-net"
+CONTROLLER_IMAGE_NAME="agentic-networking-controller"
+CONTROLLER_TAG="main"
+
 # Default to HuggingFace, can be overridden with --ollama or --gemini flags
 USE_OLLAMA=false
 OLLAMA_BASE_URL="http://host.docker.internal:11434"
@@ -178,6 +183,24 @@ create_kind_cluster() {
   kubectl config use-context "kind-${CLUSTER_NAME}"
 }
 
+# --- Step 1.5: Install MetalLB ---
+
+install_metallb_step() {
+  info "Step 1.5/9: Installing MetalLB..."
+  # Subshell prevents lib.sh functions from overwriting this script's identically named functions.
+  (source dev/ci/lib.sh && install_metallb)
+}
+
+
+# --- Step 1.6: Build and Load Controller Image ---
+
+build_and_load_controller_image_step() {
+  info "Step 1.6/9: Building controller image from source..."
+  # Subshell prevents lib.sh functions from overwriting this script's identically named functions.
+  (source dev/ci/lib.sh && build_and_load_controller_image \
+    "${CLUSTER_NAME}" "${CONTROLLER_REGISTRY}" "${CONTROLLER_IMAGE_NAME}" "${CONTROLLER_TAG}")
+}
+
 # --- Step 2: Install Gateway API CRDs ---
 
 install_gateway_api_crds() {
@@ -189,8 +212,8 @@ install_gateway_api_crds() {
 
 install_agentic_networking_crds() {
   info "Step 3/9: Installing Agentic Networking CRDs..."
-  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.prototype.x-k8s.io_xbackends.yaml"
-  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.prototype.x-k8s.io_xaccesspolicies.yaml"
+  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.networking.x-k8s.io_xbackends.yaml"
+  kubectl apply -f "${SCRIPT_ROOT}/k8s/crds/agentic.networking.x-k8s.io_xaccesspolicies.yaml"
 }
 
 # --- Step 4: Create Namespaces ---
@@ -226,7 +249,10 @@ deploy_controller() {
       --name=agentic-identity-ca-pool)
   fi
 
-  kubectl apply -f "${SCRIPT_ROOT}/k8s/deploy/deployment.yaml"
+  # Use sed to ensure the deployment uses the locally-built image tag, matching
+  # the approach used by dev/ci/lib.sh deploy_controller().
+  sed "s|\(image: .*/agentic-networking-controller:\).*|\1${CONTROLLER_TAG}|" \
+    "${SCRIPT_ROOT}/k8s/deploy/deployment.yaml" | kubectl apply -f -
   wait_for_deployment "${CONTROLLER_NAMESPACE}" "agentic-net-controller"
 }
 
@@ -240,7 +266,7 @@ apply_policies() {
   local retries=0
   local max_retries=30
   while ! kubectl get deployment -n "${NAMESPACE}" \
-    -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" \
+    -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" \
     -o name 2>/dev/null | grep -q .; do
     retries=$((retries + 1))
     if [[ ${retries} -ge ${max_retries} ]]; then
@@ -252,7 +278,7 @@ apply_policies() {
 
   info "Waiting for Envoy proxy to be ready..."
   kubectl wait --timeout=5m -n "${NAMESPACE}" deployment \
-    -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" \
+    -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" \
     --for=condition=Available
 }
 
@@ -265,7 +291,7 @@ deploy_agent() {
   info "Waiting for Gateway address to be assigned..."
   local gateway_address=""
   local retries=0
-  local max_retries=30
+  local max_retries=60
   while [[ -z "${gateway_address}" ]]; do
     gateway_address=$(kubectl get gateway agentic-net-gateway -n "${NAMESPACE}" -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
     if [[ -n "${gateway_address}" ]]; then
@@ -281,7 +307,7 @@ deploy_agent() {
 
   # Discover service account for the gateway.
   local gateway_sa
-  gateway_sa=$(kubectl get sa -n "${NAMESPACE}" -l "kube-agentic-networking.sigs.k8s.io/gateway-name=agentic-net-gateway" -o jsonpath='{.items[0].metadata.name}')
+  gateway_sa=$(kubectl get sa -n "${NAMESPACE}" -l "gateway.networking.k8s.io/gateway-name=agentic-net-gateway" -o jsonpath='{.items[0].metadata.name}')
   if [[ -z "${gateway_sa}" ]]; then
     error "Could not find service account for the gateway."
     exit 1
@@ -364,6 +390,8 @@ setup_port_forward() {
 # --- Main ---
 
 create_kind_cluster
+install_metallb_step
+build_and_load_controller_image_step
 install_gateway_api_crds
 install_agentic_networking_crds
 create_namespaces

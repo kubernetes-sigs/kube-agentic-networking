@@ -1,0 +1,55 @@
+# goreleaser documentation at https://goreleaser.com
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: agentic-net-controller
+    main: ./cmd/agentic-net-controller
+    binary: agentic-net-controller
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -X 'sigs.k8s.io/kube-agentic-networking/version.CommitSHA={{.Commit}}'
+      - -X 'sigs.k8s.io/kube-agentic-networking/version.BundleVersion={{.Version}}'
+
+archives:
+  - id: controller
+    builds:
+      - agentic-net-controller
+    formats: ["tar.gz"]
+    name_template: >-
+      agentic-net-controller_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+
+checksum:
+  name_template: "checksums.txt"
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+release:
+  draft: true
+  name_template: "Release-v{{.Version}}"
+  header: |
+    ## Installation
+
+
+    To install this release, refer to the instructions in 
+    [README.md](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/v{{.Version}}/README.md).
+  extra_files:
+    - glob: ./release/*.yaml
+
+changelog:
+  disable: true

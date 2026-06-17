@@ -20,6 +20,7 @@ package api
 
 import (
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
+	v1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v1alpha1"
 	internalinterfaces "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/internalinterfaces"
 )
 
@@ -27,6 +28,8 @@ import (
 type Interface interface {
 	// V0alpha0 provides access to shared informers for resources in V0alpha0.
 	V0alpha0() v0alpha0.Interface
+	// V1alpha1 provides access to shared informers for resources in V1alpha1.
+	V1alpha1() v1alpha1.Interface
 }
 
 type group struct {
@@ -43,4 +46,9 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // V0alpha0 returns a new v0alpha0.Interface.
 func (g *group) V0alpha0() v0alpha0.Interface {
 	return v0alpha0.New(g.factory, g.namespace, g.tweakListOptions)
+}
+
+// V1alpha1 returns a new v1alpha1.Interface.
+func (g *group) V1alpha1() v1alpha1.Interface {
+	return v1alpha1.New(g.factory, g.namespace, g.tweakListOptions)
 }

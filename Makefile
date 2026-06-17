@@ -66,23 +66,52 @@ test: test-unit test-cel test-crd ## Run all tests.
 .PHONY: test-unit
 test-unit: ## Run unit tests.
 	$(info ...Running unit tests.)
-	# Only run tests for packages that actually contain test files to avoid warnings and wasted cycles.
-	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./... | xargs go test -race -cover
+	go test -race ./api/... ./pkg/...
 
 .PHONY: test-cel
 test-cel: ## Run CEL tests.
 	$(info ...Running CEL tests.)
-	cd tests && go test -v ./cel/...
+	go test -v ./tests/cel/...
 
 .PHONY: test-crd
 test-crd: ## Run CRD tests.
 	$(info ...Running CRD tests.)
-	cd tests && go test -v ./crd/...
+	go test -v ./tests/crd/...
 
 .PHONY: test-e2e
 test-e2e: ## Run full E2E tests including cluster setup and controller deployment.
 	$(info ...Running full E2E pipeline (setup + test).)
 	./dev/ci/run-e2e.sh
+
+## The below role tests against an existing kubernetes cluster, (using current context). 
+## The expectation is that you have the an agentic-netwokring gateway implementation installed. 
+.PHONY: conformance
+conformance: ## Run agentic-networking conformance tests.
+	$(info ...Running agentic-networking conformance tests.)
+	@if [ -z "$(GATEWAY_CLASS)" ]; then \
+		echo "Error: GATEWAY_CLASS environment variable is not set." >&2; \
+		echo "Please set it, e.g., GATEWAY_CLASS=kube-agentic-networking make conformance" >&2; \
+		exit 1; \
+	fi
+	go test -v ./conformance -run TestConformance -args --gateway-class="$(GATEWAY_CLASS)" --cleanup-base-resources=false
+
+.PHONY: test-gateway-api-conformance
+test-gateway-api-conformance: ## Run full Gateway API conformance tests including cluster setup and controller deployment.
+	$(info ...Running full Gateway API conformance pipeline (setup + test).)
+	RUN_TEST="$(RUN_TEST)" ./dev/ci/run-gateway-api-conformance.sh
+
+.PHONY: test-e2e-only
+test-e2e-only: ## Run E2E tests against the current cluster without setup.
+	@echo "...Running E2E tests against cluster: $$(kubectl config current-context)"
+	cd tests && go clean -testcache && go test -v ./e2e/...
+
+.PHONY: setup-cluster
+setup-cluster: ## Create a local Kind cluster with MetalLB, CRDs, and the controller deployed.
+	./dev/ci/setup-cluster.sh
+
+.PHONY: teardown-cluster
+teardown-cluster: ## Delete the local dev cluster created by setup-cluster.
+	kind delete cluster --name "$${CLUSTER_NAME:-kan-dev}"
 
 .PHONY: verify
 verify: ## Run go vet
@@ -112,8 +141,8 @@ BOILERPLATE_FILE := hack/boilerplate/boilerplate.generatego.txt
 generate: manifests deepcopy register clientsets ## Generate manifests, deepcopy code, and clientsets.
 
 .PHONY: manifests
-manifests: controller-gen ## Generate CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./api/..." output:crd:artifacts:config=k8s/crds
+manifests: ## Generate CustomResourceDefinition objects.
+	go run ./pkg/generator/main.go
 
 .PHONY: deepcopy
 deepcopy: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -133,7 +162,7 @@ clientsets: ## Generate clientsets, listers, and informers.
 		    ./'
 
 .PHONY: register
-register: ## Generate register code for CRDs under ./api/v0alpha0
+register: ## Generate register code for CRDs under ./api/v0alpha0 and ./api/v1alpha1
 	@echo "--- Ensuring code-generator is in module cache..."
 	@go mod download k8s.io/code-generator
 	@echo "+++ Generating register code for api/v0alpha0..."
@@ -141,6 +170,12 @@ register: ## Generate register code for CRDs under ./api/v0alpha0
 		kube::codegen::gen_register \
 		    --boilerplate $(BOILERPLATE_FILE) \
 		    ./api/v0alpha0'
+	@echo "+++ Generating register code for api/v1alpha1..."
+	@bash -c 'source $(CODEGEN_SCRIPT); \
+		kube::codegen::gen_register \
+		    --boilerplate $(BOILERPLATE_FILE) \
+		    ./api/v1alpha1'
+
 
 ## @ Dependencies
 
@@ -212,6 +247,25 @@ dev-reload-agent: ## Build, load and restart ADK agent in Kind with safety check
 	@echo "Restarting adk-agent pods..."
 	kubectl rollout restart deployment/adk-agent -n $(NAMESPACE)
 
+.PHONY: dev-reload-controller
+dev-reload-controller: build ## Build and reload controller image into Kind cluster
+	@if [[ "$(CONTEXT)" != kind-* ]]; then \
+		echo "Error: Current context is '$(CONTEXT)', not a Kind cluster."; \
+		exit 1; \
+	fi
+	@CLUSTER_NAME=$$(echo $(CONTEXT) | sed 's/kind-//'); \
+	echo "Loading image into Kind cluster: $$CLUSTER_NAME..."; \
+	kind load docker-image $(REGISTRY)/$(IMAGE_NAME):$(TAG) --name $$CLUSTER_NAME
+
+	@echo "Updating Deployment in namespace: agentic-net-system..."
+	kubectl patch deployment agentic-net-controller -n agentic-net-system --type=json \
+		-p='[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "IfNotPresent"}]'
+
+	kubectl set image deployment/agentic-net-controller manager=$(REGISTRY)/$(IMAGE_NAME):$(TAG) -n agentic-net-system
+
+	@echo "Restarting agentic-net-controller pods..."
+	kubectl rollout restart deployment/agentic-net-controller -n agentic-net-system
+
 ##@Docs
 
 .PHONY: build-docs
@@ -232,3 +286,7 @@ live-docs: api-ref-docs
 .PHONY: api-ref-docs
 api-ref-docs:
 	hack/mkdocs/generate.sh
+
+.PHONY: build-install-yaml
+build-install-yaml: manifests
+	./hack/build-install-yaml.sh

@@ -30,8 +30,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	corev1informers "k8s.io/client-go/informers/core/v1"
+	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	discoverylisters "k8s.io/client-go/listers/discovery/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
@@ -51,7 +53,9 @@ import (
 
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v0alpha0"
+	agenticinformersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v1alpha1"
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	agenticlistersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/envoy"
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/xds"
@@ -60,7 +64,7 @@ import (
 
 // maxGatewaySyncRetries is the maximum number of rate-limited requeues for a
 // single Gateway key before the worker drops it (avoids infinite hot loops).
-const maxGatewaySyncRetries = 15
+const maxGatewaySyncRetries = 30
 
 // maxBackendFinalizerRetries is the same cap for the XBackend finalizer queue.
 const maxBackendFinalizerRetries = 15
@@ -74,8 +78,14 @@ type coreResources struct {
 	svcLister corev1listers.ServiceLister
 	svcSynced cache.InformerSynced
 
+	endpointSliceLister discoverylisters.EndpointSliceLister
+	endpointSliceSynced cache.InformerSynced
+
 	secretLister corev1listers.SecretLister
 	secretSynced cache.InformerSynced
+
+	configMapLister corev1listers.ConfigMapLister
+	configMapSynced cache.InformerSynced
 }
 
 type gatewayResources struct {
@@ -84,8 +94,9 @@ type gatewayResources struct {
 	gatewayClassLister gatewaylisters.GatewayClassLister
 	gatewayClassSynced cache.InformerSynced
 
-	gatewayLister gatewaylisters.GatewayLister
-	gatewaySynced cache.InformerSynced
+	gatewayLister  gatewaylisters.GatewayLister
+	gatewayIndexer cache.Indexer
+	gatewaySynced  cache.InformerSynced
 
 	httprouteLister      gatewaylisters.HTTPRouteLister
 	httprouteIndexer     cache.Indexer
@@ -100,7 +111,7 @@ type agenticNetResources struct {
 	backendLister agenticlisters.XBackendLister
 	backendSynced cache.InformerSynced
 
-	accessPolicyLister  agenticlisters.XAccessPolicyLister
+	accessPolicyLister  agenticlistersv1alpha1.XAccessPolicyLister
 	accessPolicyIndexer cache.Indexer
 	accessPolicySynced  cache.InformerSynced
 }
@@ -130,34 +141,49 @@ func New(
 	agenticClientSet agenticclient.Interface,
 	namespaceInformer corev1informers.NamespaceInformer,
 	serviceInformer corev1informers.ServiceInformer,
+	endpointSliceInformer discoveryinformers.EndpointSliceInformer,
 	secretInformer corev1informers.SecretInformer,
+	configMapInformer corev1informers.ConfigMapInformer,
 	gatewayClassInformer gatewayinformers.GatewayClassInformer,
 	gatewayInformer gatewayinformers.GatewayInformer,
 	httprouteInformer gatewayinformers.HTTPRouteInformer,
 	referenceGrantInformer gatewayinformersv1beta1.ReferenceGrantInformer,
 	backendInformer agenticinformers.XBackendInformer,
-	accessPolicyInformer agenticinformers.XAccessPolicyInformer,
+	accessPolicyInformer agenticinformersv1alpha1.XAccessPolicyInformer,
 ) (*Controller, error) {
 	apInformer := accessPolicyInformer.Informer()
 	if err := apInformer.AddIndexers(cache.Indexers{AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc}); err != nil {
 		return nil, fmt.Errorf("add AccessPolicy targetRef index: %w", err)
 	}
 
+	if err := httprouteInformer.Informer().AddIndexers(cache.Indexers{HTTPRouteBackendRefNamespaceIndex: HTTPRouteBackendRefNamespaceIndexFunc}); err != nil {
+		return nil, fmt.Errorf("add HTTPRoute backend reference namespace index: %w", err)
+	}
+
+	if err := gatewayInformer.Informer().AddIndexers(cache.Indexers{GatewaySecretRefNamespaceIndex: GatewaySecretRefNamespaceIndexFunc}); err != nil {
+		return nil, fmt.Errorf("add Gateway secret reference namespace index: %w", err)
+	}
+
 	c := &Controller{
 		core: coreResources{
-			client:       kubeClientSet,
-			nsLister:     namespaceInformer.Lister(),
-			nsSynced:     namespaceInformer.Informer().HasSynced,
-			svcLister:    serviceInformer.Lister(),
-			svcSynced:    serviceInformer.Informer().HasSynced,
-			secretLister: secretInformer.Lister(),
-			secretSynced: secretInformer.Informer().HasSynced,
+			client:              kubeClientSet,
+			nsLister:            namespaceInformer.Lister(),
+			nsSynced:            namespaceInformer.Informer().HasSynced,
+			svcLister:           serviceInformer.Lister(),
+			svcSynced:           serviceInformer.Informer().HasSynced,
+			endpointSliceLister: endpointSliceInformer.Lister(),
+			endpointSliceSynced: endpointSliceInformer.Informer().HasSynced,
+			secretLister:        secretInformer.Lister(),
+			secretSynced:        secretInformer.Informer().HasSynced,
+			configMapLister:     configMapInformer.Lister(),
+			configMapSynced:     configMapInformer.Informer().HasSynced,
 		},
 		gateway: gatewayResources{
 			client:               gwClientSet,
 			gatewayClassLister:   gatewayClassInformer.Lister(),
 			gatewayClassSynced:   gatewayClassInformer.Informer().HasSynced,
 			gatewayLister:        gatewayInformer.Lister(),
+			gatewayIndexer:       gatewayInformer.Informer().GetIndexer(),
 			gatewaySynced:        gatewayInformer.Informer().HasSynced,
 			httprouteLister:      httprouteInformer.Lister(),
 			httprouteIndexer:     httprouteInformer.Informer().GetIndexer(),
@@ -192,7 +218,9 @@ func New(
 		gwClientSet,
 		namespaceInformer.Lister(),
 		serviceInformer.Lister(),
+		endpointSliceInformer.Lister(),
 		secretInformer.Lister(),
+		configMapInformer.Lister(),
 		gatewayInformer.Lister(),
 		httprouteInformer.Lister(),
 		referenceGrantInformer.Lister(),
@@ -210,6 +238,9 @@ func New(
 	if err := c.setupHTTPRouteEventHandlers(httprouteInformer); err != nil {
 		return nil, err
 	}
+	if err := c.setupReferenceGrantEventHandlers(referenceGrantInformer); err != nil {
+		return nil, err
+	}
 	if err := c.setupBackendEventHandlers(backendInformer); err != nil {
 		return nil, err
 	}
@@ -217,6 +248,9 @@ func New(
 		return nil, err
 	}
 	if err := c.setupServiceEventHandlers(serviceInformer); err != nil {
+		return nil, err
+	}
+	if err := c.setupEndpointSliceEventHandlers(endpointSliceInformer); err != nil {
 		return nil, err
 	}
 
@@ -238,10 +272,14 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	}
 
 	klog.Info("Waiting for informer caches to sync")
+	// endpointSliceSynced is intentionally excluded: without discovery.k8s.io/endpointslices
+	// RBAC the reflector never becomes synced and would block all workers. Service backends
+	// fall back to STRICT_DNS when the EndpointSlice lister is empty (see translator).
 	if ok := cache.WaitForCacheSync(ctx.Done(),
 		c.core.nsSynced,
 		c.core.svcSynced,
 		c.core.secretSynced,
+		c.core.configMapSynced,
 		c.gateway.gatewayClassSynced,
 		c.gateway.gatewaySynced,
 		c.gateway.httprouteSynced,
@@ -398,45 +436,47 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 
 	// Ensure Envoy proxy deployment and service exist.
 	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
-	proxyIP, err := rm.EnsureProxyExist(ctx)
+	proxyAddress, err := rm.EnsureProxyExist(ctx)
 	if err != nil {
-		return err
+		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, err)
+		return errors.Join(err, updateErr)
 	}
 
 	// TODO: Add support for IPv6?
 	newGW.Status.Addresses = []gatewayv1.GatewayStatusAddress{}
-	if net.ParseIP(proxyIP) != nil {
+	if net.ParseIP(proxyAddress) != nil {
+		// proxyAddress is an IP address
 		newGW.Status.Addresses = append(newGW.Status.Addresses,
 			gatewayv1.GatewayStatusAddress{
 				Type:  ptr.To(gatewayv1.IPAddressType),
-				Value: proxyIP,
+				Value: proxyAddress,
+			})
+	} else {
+		// proxyAddress is a hostname
+		newGW.Status.Addresses = append(newGW.Status.Addresses,
+			gatewayv1.GatewayStatusAddress{
+				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Value: proxyAddress,
 			})
 	}
 
-	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyIP", proxyIP)
+	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyAddress", proxyAddress)
 
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
 	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
-		// TODO: Update Gateway status with the error.
-		return fmt.Errorf("failed to translate gateway to xDS resources: %w", err)
+		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, fmt.Errorf("failed to translate gateway to xDS resources: %w", err))
+		return errors.Join(err, updateErr)
 	}
 
 	logger.Info("Translated gateway to xDS resources")
 
 	newGW.Status.Listeners = listenerStatuses
 	// Update the xDS server with the new resources.
-	err = c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
-
-	setGatewayConditions(newGW, listenerStatuses, err)
-
-	if !reflect.DeepEqual(gateway.Status, newGW.Status) {
-		if err := c.updateGatewayStatus(ctx, newGW.Namespace, newGW.Name, &newGW.Status); err != nil {
-			return fmt.Errorf("failed to update gateway status: %w", err)
-		}
-		logger.Info("Updated gateway status")
-	}
-	return c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
+	xdsErr := c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
+	updateGatewayStatusErr := updateGatewayStatus(ctx, c, gateway, newGW, listenerStatuses, xdsErr)
+	updateHTTPRouteStatusErr := c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
+	return errors.Join(xdsErr, updateGatewayStatusErr, updateHTTPRouteStatusErr)
 }
 
 func (c *Controller) updateGatewayRemoveFinalizer(ctx context.Context, namespace, name string) error {
@@ -455,6 +495,23 @@ func (c *Controller) updateGatewayRemoveFinalizer(ctx context.Context, namespace
 		_, err = c.gateway.client.GatewayV1().Gateways(namespace).Update(ctx, u, metav1.UpdateOptions{})
 		return err
 	})
+}
+
+// updateGatewayStatus updates the Gateway status in the API server if it has changed.
+// Note: this function modifies newGW.
+func updateGatewayStatus(ctx context.Context, c *Controller, gateway *gatewayv1.Gateway, newGW *gatewayv1.Gateway, listenerStatuses []gatewayv1.ListenerStatus, syncErr error) error {
+	setGatewayConditions(newGW, listenerStatuses, syncErr)
+
+	if reflect.DeepEqual(gateway.Status, newGW.Status) {
+		return nil
+	}
+
+	if _, statusErr := c.gateway.client.GatewayV1().Gateways(newGW.Namespace).UpdateStatus(ctx, newGW, metav1.UpdateOptions{}); statusErr != nil {
+		klog.FromContext(ctx).Error(statusErr, "failed to update gateway status")
+		return fmt.Errorf("failed to update gateway status: %w", statusErr)
+	}
+	klog.FromContext(ctx).Info("Updated gateway status")
+	return nil
 }
 
 // ensureGatewayFinalizer adds the controller finalizer via the API when missing.
@@ -490,22 +547,6 @@ func (c *Controller) ensureGatewayFinalizer(ctx context.Context, namespace, name
 	}
 	nowHas := sets.New(fresh.Finalizers...).Has(constants.GatewayFinalizer)
 	return !hadFinalizer && nowHas, nil
-}
-
-func (c *Controller) updateGatewayStatus(ctx context.Context, namespace, name string, desired *gatewayv1.GatewayStatus) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest, err := c.gateway.gatewayLister.Gateways(namespace).Get(name)
-		if err != nil {
-			return err
-		}
-		if reflect.DeepEqual(latest.Status, *desired) {
-			return nil
-		}
-		u := latest.DeepCopy()
-		u.Status = *desired.DeepCopy()
-		_, err = c.gateway.client.GatewayV1().Gateways(namespace).UpdateStatus(ctx, u, metav1.UpdateOptions{})
-		return err
-	})
 }
 
 // hasHTTPRoutesReferencingGateway returns true if any HTTPRoute has a ParentRef to the given Gateway.

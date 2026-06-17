@@ -15,5 +15,5 @@ limitations under the License.
 */
 
 // +k8s:deepcopy-gen=package
-// +groupName=agentic.prototype.x-k8s.io
+// +groupName=agentic.networking.x-k8s.io
 package v0alpha0

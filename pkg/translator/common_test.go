@@ -24,10 +24,14 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 )
 
-func newTestGateway(name, ns string) *gatewayv1.Gateway {
-	return &gatewayv1.Gateway{
+// Suppress linter as ns always receives the same value: "quickstart-ns"
+//
+//nolint:unparam
+func newTestGateway(name, ns string, certRefs []gatewayv1.SecretObjectReference, frontendConfig *gatewayv1.FrontendTLSConfig) *gatewayv1.Gateway {
+	gw := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: "cloud-provider-kind",
@@ -41,8 +45,22 @@ func newTestGateway(name, ns string) *gatewayv1.Gateway {
 			}},
 		},
 	}
+	if len(certRefs) > 0 {
+		gw.Spec.Listeners[0].TLS = &gatewayv1.ListenerTLSConfig{
+			CertificateRefs: certRefs,
+		}
+	}
+	if frontendConfig != nil {
+		gw.Spec.TLS = &gatewayv1.GatewayTLSConfig{
+			Frontend: frontendConfig,
+		}
+	}
+	return gw
 }
 
+// Suppress linter as ns always receives the same value: "quickstart-ns"
+//
+//nolint:unparam
 func newTestBackend(name, ns string) *agenticv0alpha0.XBackend {
 	return &agenticv0alpha0.XBackend{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
@@ -81,16 +99,16 @@ func newTestHTTPRoute(name, ns, gwName, backendName string) *gatewayv1.HTTPRoute
 	}
 }
 
-func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *agenticv0alpha0.XAccessPolicy {
+func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *agenticv1alpha1.XAccessPolicy {
 	var group string
 	if targetKind == "Gateway" {
 		group = gatewayv1.GroupName
 	} else {
 		group = agenticv0alpha0.GroupName
 	}
-	return &agenticv0alpha0.XAccessPolicy{
+	return &agenticv1alpha1.XAccessPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec: agenticv0alpha0.AccessPolicySpec{
+		Spec: agenticv1alpha1.AccessPolicySpec{
 			TargetRefs: []gatewayv1.LocalPolicyTargetReferenceWithSectionName{{
 				LocalPolicyTargetReference: gatewayv1.LocalPolicyTargetReference{
 					Group: gatewayv1.Group(group),
@@ -98,22 +116,23 @@ func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *ag
 					Name:  gatewayv1.ObjectName(targetName),
 				},
 			}},
-			Rules: []agenticv0alpha0.AccessRule{{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			Rules: []agenticv1alpha1.AccessRule{{
 				Name: "rule-1",
-				Source: agenticv0alpha0.Source{
-					Type:   agenticv0alpha0.AuthorizationSourceTypeSPIFFE,
-					SPIFFE: (*agenticv0alpha0.AuthorizationSourceSPIFFE)(&principal),
+				Source: agenticv1alpha1.AccessRuleSource{
+					Type:   agenticv1alpha1.AuthorizationSourceTypeSPIFFE,
+					SPIFFE: (*agenticv1alpha1.AuthorizationSourceSPIFFE)(&principal),
 				},
 			}},
 		},
-		Status: agenticv0alpha0.AccessPolicyStatus{
+		Status: agenticv1alpha1.AccessPolicyStatus{
 			Ancestors: []gatewayv1.PolicyAncestorStatus{
 				{
 					Conditions: []metav1.Condition{
 						{
-							Type:               string(agenticv0alpha0.PolicyConditionAccepted),
+							Type:               string(agenticv1alpha1.PolicyConditionAccepted),
 							Status:             metav1.ConditionTrue,
-							Reason:             string(agenticv0alpha0.PolicyReasonAccepted),
+							Reason:             string(agenticv1alpha1.PolicyReasonAccepted),
 							LastTransitionTime: metav1.Now(),
 						},
 					},
@@ -123,6 +142,10 @@ func newTestAccessPolicy(name, ns, targetName, targetKind, principal string) *ag
 	}
 }
 
+// Suppress linter as ns always receives the same value: "quickstart-ns"
+// Suppress linter as port always receives 3001
+//
+//nolint:unparam
 func newTestService(name, ns string, port int32) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},

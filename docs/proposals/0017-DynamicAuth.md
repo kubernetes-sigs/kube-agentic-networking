@@ -17,6 +17,20 @@ A set of new fields proposed to be added the AccessPolicy API can be used in con
 
 This API is **provisional** and subject to change without prior notice. Vendors and integrators should not implement or rely on it, and it must not be enabled in production environments until a stable version is released.
 
+### Implementation status (v1alpha1)
+
+Partially implemented in the prototype:
+
+| Proposal concept | v1alpha1 status |
+|----------------|-----------------|
+| `InlineTools` + flat `tools:` list | **`Inline`** + `mcp.methods` (e.g. `tools/call` with `params`) |
+| Rule-level `ExternalAuth` | **`spec.action: ExternalAuth`** + `spec.externalAuth` |
+| `CEL` authorization | Implemented (`authorization.type: CEL`) |
+| OIDC / JWT sources | **Not implemented** |
+| Dynamic tool discovery without enumeration | **Not implemented** |
+
+See [`api/v1alpha1/accesspolicy_types.go`](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/api/v1alpha1/accesspolicy_types.go) and the [site API reference](https://kube-agentic-networking.sigs.k8s.io/reference/spec/). YAML examples below reflect the original proposal, not the implemented API.
+
 ----
 
 ## Non-Goals
@@ -370,28 +384,26 @@ spec:
 
 ### Common Expression Language (CEL) for authorization
 
-Common Expression Language (CEL) expressions in AccessPolicy resources have access to a structured context that provides information about the request and the verified identity. Understanding this context is essential for writing effective authorization rules.
+Common Expression Language (CEL) expressions in AccessPolicy resources are evaluated by the implementation that enforces the policy. This proposal standardizes the API field that carries a CEL expression, but does not standardize a portable CEL variable vocabulary at this time.
 
-#### Available Context Variables
+#### CEL Context Vocabulary
 
-##### `request` Object
+Each implementation defines the structured context available to CEL expressions, including available variables, field names, types, missing-field behavior, and protocol-specific objects. Implementations MUST document their supported CEL context for AccessPolicy, and users SHOULD treat CEL expressions as implementation-specific unless a future proposal standardizes a common vocabulary.
 
-The `request` object contains information about the incoming request to the Backend:
+This keeps the API interoperable at the policy shape level while avoiding a premature lowest-common-denominator vocabulary. Existing dataplanes already expose similar request concepts with incompatible semantics. For example, Envoy documents its CEL-facing [attribute vocabulary](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/attributes), while agentgateway documents its [CEL context](https://agentgateway.dev/docs/standalone/latest/reference/cel/cel-context/) and richer [header/query helper behavior](https://github.com/agentgateway/agentgateway/blob/dd018791553486e10e830cc7e6279c965e4051ea/schema/cel-functions.md#header-views):
 
-| Field | Type | Description | Example |
-|-------|------|-------------|---------|
-| `request.method` | `string` | HTTP method | `"POST"` |
-| `request.path` | `string` | Request path | `"/mcp"` |
-| `request.headers` | `map<string, string>` | HTTP headers (lowercase keys) | `{"content-type": "application/json"}` |
-| `request.mcp.method` | `string` | MCP method name | `"tools/call"` |
-| `request.mcp.tool_name` | `string` | Name of the MCP tool being invoked | `"add"`, `"subtract"` |
-| `request.mcp.params` | `map<string, dyn>` | MCP tool parameters | `{"a": 5, "b": 3}` |
+| Concept | Envoy attribute vocabulary | agentgateway vocabulary | Portability concern |
+|---------|----------------------------|-------------------------|---------------------|
+| HTTP request path without query string | `request.url_path` | `request.path` | The same logical value has different field names. |
+| HTTP request path with query string | `request.path` | `request.pathAndQuery` | The same field name, `request.path`, means different things across dataplanes. |
+| HTTP request headers | `request.headers` is a `map<string, string>` and duplicate values are comma-concatenated | `request.headers` is a header view with direct lookup plus methods such as `join()`, `raw()`, and `split()` | Header cardinality, joining, raw value preservation, case handling, and convenience accessors differ. |
+| MCP request details | Not defined by Envoy's generic HTTP attribute vocabulary | Implementations may expose MCP-specific fields such as method, tool name, and params | Protocol-specific objects are necessarily tied to the implementation and backend type. |
 
-**Note**: The `request.mcp.*` fields are only available when the Backend type is MCP. Future backend types may provide different protocol-specific fields.
+The examples in this proposal use illustrative CEL expressions only. An implementation may support expressions such as `request.mcp.tool_name in identity.authorized_tools`, but the exact names and types of `request`, `identity`, and any protocol-specific objects are implementation-defined.
 
 ##### `identity` Object
 
-The `identity` object is set to one of the following based on the identity source used to verify the request:
+Implementations also define how verified identity information is exposed to CEL. Common options include:
 
 - For inline SPIFFE identities: it's a synthetic object with a single field:
   - `identity.spiffe_id` (string): the SPIFFE ID of the verified identity.

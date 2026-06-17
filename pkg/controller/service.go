@@ -131,7 +131,7 @@ func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefs(svc *corev1.Se
 	for _, obj := range objs {
 		route := obj.(*gatewayv1.HTTPRoute)
 		// Cross-namespace refs require a ReferenceGrant in the backend namespace.
-		if !translator.AllowedByReferenceGrant(route.Namespace, svc.Namespace, c.gateway.referenceGrantLister) {
+		if !translator.AllowedByReferenceGrant(route.Namespace, gatewayv1.GroupName, "HTTPRoute", svc.Namespace, "", "Service", svc.Name, c.gateway.referenceGrantLister) {
 			continue
 		}
 		klog.V(4).InfoS(
@@ -163,7 +163,7 @@ func (c *Controller) enqueueGatewaysForServiceDirectHTTPRouteRefsList(svc *corev
 					backendNS = string(*backend.Namespace)
 				}
 				if backendNS == svc.Namespace && string(backend.Name) == svc.Name {
-					if !translator.AllowedByReferenceGrant(route.Namespace, backendNS, c.gateway.referenceGrantLister) {
+					if !translator.AllowedByReferenceGrant(route.Namespace, gatewayv1.GroupName, "HTTPRoute", backendNS, "", "Service", string(backend.Name), c.gateway.referenceGrantLister) {
 						continue
 					}
 					matched = true

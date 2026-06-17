@@ -37,20 +37,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	discoverylisters "k8s.io/client-go/listers/discovery/v1"
 	"k8s.io/klog/v2"
 
+	corev1 "k8s.io/api/core/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
 
 	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
+	agenticlistersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
-)
-
-const (
-	// The default port for external authorization services if not specified in the BackendRef.
-	defaultExternalAuthPort = 5000
 )
 
 type ControllerError struct {
@@ -70,11 +68,13 @@ type Translator struct {
 	gwClient                   gatewayclient.Interface
 	namespaceLister            corev1listers.NamespaceLister
 	serviceLister              corev1listers.ServiceLister
+	endpointSliceLister        discoverylisters.EndpointSliceLister
 	secretLister               corev1listers.SecretLister
+	configMapLister            corev1listers.ConfigMapLister
 	gatewayLister              gatewaylisters.GatewayLister
 	httprouteLister            gatewaylisters.HTTPRouteLister
 	referenceGrantLister       gatewaylistersv1beta1.ReferenceGrantLister // optional, for Service ref cross-namespace validation
-	accessPolicyLister         agenticlisters.XAccessPolicyLister
+	accessPolicyLister         agenticlistersv1alpha1.XAccessPolicyLister
 	backendLister              agenticlisters.XBackendLister
 }
 
@@ -84,11 +84,13 @@ func New(
 	gwClient gatewayclient.Interface,
 	namespaceLister corev1listers.NamespaceLister,
 	serviceLister corev1listers.ServiceLister,
+	endpointSliceLister discoverylisters.EndpointSliceLister,
 	secretLister corev1listers.SecretLister,
+	configMapLister corev1listers.ConfigMapLister,
 	gatewayLister gatewaylisters.GatewayLister,
 	httpRouteLister gatewaylisters.HTTPRouteLister,
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister,
-	accessPolicyLister agenticlisters.XAccessPolicyLister,
+	accessPolicyLister agenticlistersv1alpha1.XAccessPolicyLister,
 	backendLister agenticlisters.XBackendLister,
 ) *Translator {
 	return &Translator{
@@ -97,7 +99,9 @@ func New(
 		gwClient,
 		namespaceLister,
 		serviceLister,
+		endpointSliceLister,
 		secretLister,
+		configMapLister,
 		gatewayLister,
 		httpRouteLister,
 		referenceGrantLister,
@@ -131,37 +135,14 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 	map[types.NamespacedName][]gatewayv1.RouteParentStatus, // GRPCRoutes
 	error,
 ) {
-	httpRouteStatuses := make(map[types.NamespacedName][]gatewayv1.RouteParentStatus)
-	routesByListener := make(map[gatewayv1.SectionName][]*gatewayv1.HTTPRoute)
-
-	// 1. List HTTPRoutes referencing this Gateway
-	allHTTPRoutesForGateway := t.getHTTPRoutesForGateway(gateway)
-	// 2. Validate each HTTPRoute and group accepted ones by listener
-	for _, httpRoute := range allHTTPRoutesForGateway {
-		key := types.NamespacedName{Name: httpRoute.Name, Namespace: httpRoute.Namespace}
-		parentStatuses, acceptingListeners := t.validateHTTPRoute(gateway, httpRoute)
-
-		// Store the definitive status for the route.
-		if len(parentStatuses) > 0 {
-			httpRouteStatuses[key] = parentStatuses
-		}
-		// If the route was accepted, associate it with the listeners that accepted it.
-		if len(acceptingListeners) > 0 {
-			// Associate the accepted route with the listeners that will handle it.
-			// Use a set to prevent adding a route multiple times to the same listener.
-			processedListeners := make(map[gatewayv1.SectionName]bool)
-			for _, listener := range acceptingListeners {
-				if _, ok := processedListeners[listener.Name]; !ok {
-					routesByListener[listener.Name] = append(routesByListener[listener.Name], httpRoute)
-					processedListeners[listener.Name] = true
-				}
-			}
-		}
-	}
+	routesByListener, httpRouteStatuses := t.HTTPRoutesAndStatuses(gateway)
 
 	// Start building Envoy config using only the pre-validated and accepted routes
 	envoyRoutes := []envoyproxytypes.Resource{}
 	allListenerStatuses := make(map[gatewayv1.SectionName]gatewayv1.ListenerStatus)
+
+	envoySecrets := []envoyproxytypes.Resource{}
+	seenSecrets := make(map[string]bool)
 
 	// 3. Build Envoy Clusters for any external auth configs referenced by AccessPolicies
 	envoyClusters := buildExtAuthzBackendClusters(t.accessPolicyLister)
@@ -186,7 +167,6 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 		// All these listeners have the same port
 		for _, listener := range listeners {
-			var attachedRoutes int32
 			listenerStatus := gatewayv1.ListenerStatus{
 				Name:           listener.Name,
 				SupportedKinds: []gatewayv1.RouteGroupKind{},
@@ -226,6 +206,16 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				})
 			}
 
+			// secret extraction
+			if listener.Protocol == gatewayv1.HTTPSProtocolType {
+				certValid, caValid := t.processHTTPSListenerSecrets(gateway, listener, &listenerStatus, &envoySecrets, seenSecrets)
+				if !certValid || !caValid {
+					allListenerStatuses[listener.Name] = listenerStatus
+					// Do not continue here, allow counting attached routes even if references are unresolved.
+					// The listener will still be marked as not programmed and skipped for Envoy config generation.
+				}
+			}
+
 			//nolint:exhaustive // Other protocols such as GRPCRoutes are currently not supported
 			switch listener.Protocol {
 			case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
@@ -246,7 +236,7 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 					}
 					httpRouteStatuses[key] = currentParentStatuses
 
-					clusters, err := buildClustersFromRouteBackends(allValidBackends)
+					clusters, err := t.buildClustersFromRouteBackends(allValidBackends)
 					if err != nil {
 						return nil, nil, nil, nil, fmt.Errorf("failed to build clusters from HTTPRoute %s/%s: %w", httpRoute.Namespace, httpRoute.Name, err)
 					}
@@ -256,7 +246,6 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 					// Aggregate Envoy routes into VirtualHosts.
 					if routes != nil {
-						attachedRoutes++
 						// 7. Put routes into virtual hosts for each intersecting hostname
 						// Get the domain for this listener's VirtualHost.
 						vhostDomains := getIntersectingHostnames(listener, httpRoute.Spec.Hostnames)
@@ -288,7 +277,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 
 			// 8. translate listener into a filter chain (HTTP connection manager that references route config 'route-<port>')
 			filterChain, err := t.translateListenerToFilterChain(listener, routeName, gateway)
-			if err != nil {
+			switch {
+			case err != nil:
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
 					Status:             metav1.ConditionFalse,
@@ -296,7 +286,15 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 					Message:            fmt.Sprintf("Failed to program listener: %v", err),
 					ObservedGeneration: gateway.Generation,
 				})
-			} else {
+			case meta.IsStatusConditionFalse(listenerStatus.Conditions, string(gatewayv1.ListenerConditionResolvedRefs)):
+				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+					Type:               string(gatewayv1.ListenerConditionProgrammed),
+					Status:             metav1.ConditionFalse,
+					Reason:             string(gatewayv1.ListenerReasonInvalid),
+					Message:            "Listener has unresolved references",
+					ObservedGeneration: gateway.Generation,
+				})
+			default:
 				meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 					Type:               string(gatewayv1.ListenerConditionProgrammed),
 					Status:             metav1.ConditionTrue,
@@ -308,7 +306,8 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 				filterChains = append(filterChains, filterChain)
 			}
 
-			listenerStatus.AttachedRoutes = attachedRoutes
+			//nolint:gosec // G115: Number of routes on a listener is well within int32 range.
+			listenerStatus.AttachedRoutes = int32(len(routesByListener[listener.Name]))
 			meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
 				Type:               string(gatewayv1.ListenerConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -371,8 +370,192 @@ func (t *Translator) buildEnvoyResourcesForGateway(gateway *gatewayv1.Gateway) (
 			resourcev3.ListenerType: finalEnvoyListeners,
 			resourcev3.RouteType:    envoyRoutes,
 			resourcev3.ClusterType:  clustersSlice,
+			resourcev3.SecretType:   envoySecrets,
 		}, orderedStatuses,
 		httpRouteStatuses, nil, nil
+}
+
+func (t *Translator) HTTPRoutesAndStatuses(gateway *gatewayv1.Gateway) (
+	map[gatewayv1.SectionName][]*gatewayv1.HTTPRoute,
+	map[types.NamespacedName][]gatewayv1.RouteParentStatus,
+) {
+	httpRouteStatuses := make(map[types.NamespacedName][]gatewayv1.RouteParentStatus)
+	routesByListener := make(map[gatewayv1.SectionName][]*gatewayv1.HTTPRoute)
+
+	allHTTPRoutesForGateway := t.getHTTPRoutesForGateway(gateway)
+	for _, httpRoute := range allHTTPRoutesForGateway {
+		key := types.NamespacedName{Name: httpRoute.Name, Namespace: httpRoute.Namespace}
+		parentStatuses, acceptingListeners := t.validateHTTPRoute(gateway, httpRoute)
+
+		if len(parentStatuses) > 0 {
+			httpRouteStatuses[key] = parentStatuses
+		}
+		if len(acceptingListeners) > 0 {
+			processedListeners := make(map[gatewayv1.SectionName]bool)
+			for _, listener := range acceptingListeners {
+				if _, ok := processedListeners[listener.Name]; !ok {
+					routesByListener[listener.Name] = append(routesByListener[listener.Name], httpRoute)
+					processedListeners[listener.Name] = true
+				}
+			}
+		}
+	}
+	return routesByListener, httpRouteStatuses
+}
+
+// extractCertificateRefs extract certificate references from gateway and listener
+// It always returns the first certificate reference and ca reference, and whether there are multiple certificate references and ca references.
+// we do not support multiple certificate references and ca references for now.
+func extractCertificateRefs(gateway *gatewayv1.Gateway, lis gatewayv1.Listener) (*gatewayv1.SecretObjectReference, *gatewayv1.ObjectReference, bool, bool) {
+	var certRef *gatewayv1.SecretObjectReference
+	var caRef *gatewayv1.ObjectReference
+	var hasMultipleCerts bool
+	var hasMultipleCAs bool
+
+	if lis.TLS != nil && len(lis.TLS.CertificateRefs) > 0 {
+		certRef = &lis.TLS.CertificateRefs[0]
+		if len(lis.TLS.CertificateRefs) > 1 {
+			hasMultipleCerts = true
+		}
+	}
+
+	if gateway.Spec.TLS != nil && gateway.Spec.TLS.Frontend != nil {
+		var matchedPort bool
+		for _, p := range gateway.Spec.TLS.Frontend.PerPort {
+			if p.Port == lis.Port {
+				if p.TLS.Validation != nil && len(p.TLS.Validation.CACertificateRefs) > 0 {
+					caRef = &p.TLS.Validation.CACertificateRefs[0]
+					if len(p.TLS.Validation.CACertificateRefs) > 1 {
+						hasMultipleCAs = true
+					}
+				}
+				matchedPort = true
+				break
+			}
+		}
+		if !matchedPort && gateway.Spec.TLS.Frontend.Default.Validation != nil && len(gateway.Spec.TLS.Frontend.Default.Validation.CACertificateRefs) > 0 {
+			caRef = &gateway.Spec.TLS.Frontend.Default.Validation.CACertificateRefs[0]
+			if len(gateway.Spec.TLS.Frontend.Default.Validation.CACertificateRefs) > 1 {
+				hasMultipleCAs = true
+			}
+		}
+	}
+	return certRef, caRef, hasMultipleCerts, hasMultipleCAs
+}
+
+func (t *Translator) processHTTPSListenerSecrets(
+	gateway *gatewayv1.Gateway,
+	listener gatewayv1.Listener,
+	listenerStatus *gatewayv1.ListenerStatus,
+	envoySecrets *[]envoyproxytypes.Resource,
+	seenSecrets map[string]bool,
+) (bool, bool) {
+	certRef, caRef, _, _ := extractCertificateRefs(gateway, listener)
+
+	certValid := t.resolveCertificate(gateway, certRef, listenerStatus, envoySecrets, seenSecrets)
+	caValid := t.resolveCACertificate(gateway, caRef, listenerStatus, envoySecrets, seenSecrets)
+
+	if certValid && caValid && certRef != nil && caRef == nil {
+		meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
+			Message:            "Gateway is set with CertificateRefs, but recommend to set CACertificateRefs too for mTLS",
+			ObservedGeneration: gateway.Generation,
+		})
+	}
+
+	if !certValid || !caValid {
+		meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionAccepted),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonNoValidCACertificate),
+			Message:            "Invalid certificate or CA certificate configuration",
+			ObservedGeneration: gateway.Generation,
+		})
+		meta.SetStatusCondition(&listenerStatus.Conditions, metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionProgrammed),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(gatewayv1.ListenerReasonInvalid),
+			Message:            "Invalid certificate or CA certificate configuration",
+			ObservedGeneration: gateway.Generation,
+		})
+	}
+
+	return certValid, caValid
+}
+
+func (t *Translator) resolveCertificate(
+	gateway *gatewayv1.Gateway,
+	certRef *gatewayv1.SecretObjectReference,
+	listenerStatus *gatewayv1.ListenerStatus,
+	envoySecrets *[]envoyproxytypes.Resource,
+	seenSecrets map[string]bool,
+) bool {
+	if certRef == nil {
+		return true
+	}
+
+	// 1. Validate the reference and secret data using validateCertificateRef
+	if cond := t.validateCertificateRef(gateway, *certRef); cond != nil {
+		meta.SetStatusCondition(&listenerStatus.Conditions, *cond)
+		return false
+	}
+
+	// 2. Resolve the secret
+	ns := gateway.Namespace
+	if certRef.Namespace != nil {
+		ns = string(*certRef.Namespace)
+	}
+	secretName := string(certRef.Name)
+	sdsName := fmt.Sprintf("%s-%s", ns, secretName)
+
+	secret, _ := t.secretLister.Secrets(ns).Get(secretName)
+	certBytes := secret.Data[corev1.TLSCertKey]
+	keyBytes := secret.Data[corev1.TLSPrivateKeyKey]
+
+	if !seenSecrets[sdsName] {
+		envoySecret := newTLSCertificateSecret(sdsName, certBytes, keyBytes)
+		*envoySecrets = append(*envoySecrets, envoySecret)
+		seenSecrets[sdsName] = true
+	}
+	return true
+}
+
+func (t *Translator) resolveCACertificate(
+	gateway *gatewayv1.Gateway,
+	caRef *gatewayv1.ObjectReference,
+	listenerStatus *gatewayv1.ListenerStatus,
+	envoySecrets *[]envoyproxytypes.Resource,
+	seenSecrets map[string]bool,
+) bool {
+	if caRef == nil {
+		return true
+	}
+	// 1. Validate the reference and ConfigMap data using validateCACertificateRef
+	if cond := t.validateCACertificateRef(gateway, *caRef); cond != nil {
+		meta.SetStatusCondition(&listenerStatus.Conditions, *cond)
+		return false
+	}
+
+	// 2. Resolve the CA certificate
+	ns := gateway.Namespace
+	if caRef.Namespace != nil {
+		ns = string(*caRef.Namespace)
+	}
+	configMapName := string(caRef.Name)
+	sdsName := fmt.Sprintf("%s-%s", ns, configMapName)
+
+	cm, _ := t.configMapLister.ConfigMaps(ns).Get(configMapName)
+	caStr := cm.Data[corev1.ServiceAccountRootCAKey]
+
+	if !seenSecrets[sdsName] {
+		envoySecret := newValidationContextSecret(sdsName, []byte(caStr))
+		*envoySecrets = append(*envoySecrets, envoySecret)
+		seenSecrets[sdsName] = true
+	}
+
+	return true
 }
 
 func getSupportedKinds(listener gatewayv1.Listener) ([]gatewayv1.RouteGroupKind, bool) {
@@ -446,6 +629,9 @@ func (t *Translator) validateHTTPRoute(
 	// This is a property of the route itself, independent of any parent.
 	resolvedRefsCondition := metav1.Condition{
 		Type:               string(gatewayv1.RouteConditionResolvedRefs),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(gatewayv1.RouteReasonResolvedRefs),
+		Message:            "All references resolved",
 		ObservedGeneration: httpRoute.Generation,
 		LastTransitionTime: metav1.Now(),
 	}
@@ -529,7 +715,7 @@ func (t *Translator) validateHTTPRoute(
 	return parentStatuses, allAcceptingListeners
 }
 
-func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolicyLister) map[string]envoyproxytypes.Resource {
+func buildExtAuthzBackendClusters(accessPolicyLister agenticlistersv1alpha1.XAccessPolicyLister) map[string]envoyproxytypes.Resource {
 	clusters := make(map[string]envoyproxytypes.Resource)
 	accessPolicies, err := accessPolicyLister.List(labels.Everything())
 	if err != nil {
@@ -538,53 +724,51 @@ func buildExtAuthzBackendClusters(accessPolicyLister agenticlisters.XAccessPolic
 	}
 
 	for _, ap := range accessPolicies {
-		for _, rule := range ap.Spec.Rules {
-			if rule.Authorization == nil || rule.Authorization.ExternalAuth == nil {
-				continue
-			}
-			extAuth := rule.Authorization.ExternalAuth
-			backendRef := extAuth.BackendRef
-			clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuth.ExternalAuthProtocol))
-			if _, ok := clusters[clusterName]; ok {
-				continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
-			}
-			serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
-			servicePort := uint32(defaultExternalAuthPort)
-			if backendRef.Port != nil {
-				//nolint:gosec // G115: port values are within valid uint32 bounds
-				servicePort = uint32(*backendRef.Port)
-			}
-			cluster := &clusterv3.Cluster{
-				Name:                 clusterName,
-				ConnectTimeout:       durationpb.New(defaultConnectTimeout),
-				ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
-				LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
-				LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
-			}
-			switch extAuth.ExternalAuthProtocol {
-			case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
-				opts := &httpv3.HttpProtocolOptions{
-					UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
-						ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
-							ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
-								Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
-							},
+		if ap.Spec.ExternalAuth == nil {
+			continue
+		}
+		extAuth := ap.Spec.ExternalAuth
+		backendRef := extAuth.BackendRef
+		clusterName := clusterNameForBackendRefAndProtocol(backendRef, ap.GetNamespace(), string(extAuth.ExternalAuthProtocol))
+		if _, ok := clusters[clusterName]; ok {
+			continue // Cluster already exists for this backendRef and protocol, skip to avoid duplicates.
+		}
+		serviceFQDN := fqdnFromBackendRef(backendRef, ap.GetNamespace())
+		servicePort := uint32(constants.DefaultExternalAuthPort)
+		if backendRef.Port != nil {
+			//nolint:gosec // G115: port values are within valid uint32 bounds
+			servicePort = uint32(*backendRef.Port)
+		}
+		cluster := &clusterv3.Cluster{
+			Name:                 clusterName,
+			ConnectTimeout:       durationpb.New(constants.DefaultConnectTimeout),
+			ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STRICT_DNS},
+			LoadAssignment:       createClusterLoadAssignment(clusterName, serviceFQDN, servicePort),
+			LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
+		}
+		switch extAuth.ExternalAuthProtocol {
+		case gatewayv1.HTTPRouteExternalAuthGRPCProtocol:
+			opts := &httpv3.HttpProtocolOptions{
+				UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
+					ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
+						ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+							Http2ProtocolOptions: &corev3.Http2ProtocolOptions{},
 						},
 					},
-				}
-				optsAny, err := anypb.New(opts)
-				if err != nil {
-					klog.Errorf("failed to marshal typed extension config for cluster %s: %v", clusterName, err)
-					continue
-				}
-				cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
-					string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
-				}
-			case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
-				// HTTP/1.1 is the default protocol, no special configuration needed
+				},
 			}
-			clusters[clusterName] = cluster
+			optsAny, err := anypb.New(opts)
+			if err != nil {
+				klog.Errorf("failed to marshal typed extension config for cluster %s: %v", clusterName, err)
+				continue
+			}
+			cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+				string(opts.ProtoReflect().Descriptor().FullName()): optsAny,
+			}
+		case gatewayv1.HTTPRouteExternalAuthHTTPProtocol:
+			// HTTP/1.1 is the default protocol, no special configuration needed
 		}
+		clusters[clusterName] = cluster
 	}
 	return clusters
 }

@@ -24,6 +24,7 @@ import (
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
+	v1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 )
 
 // GenericInformer is type of SharedIndexInformer which will locate and delegate to other
@@ -52,11 +53,15 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-	// Group=agentic.prototype.x-k8s.io, Version=v0alpha0
+	// Group=agentic.networking.x-k8s.io, Version=v0alpha0
 	case v0alpha0.SchemeGroupVersion.WithResource("xaccesspolicies"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Agentic().V0alpha0().XAccessPolicies().Informer()}, nil
 	case v0alpha0.SchemeGroupVersion.WithResource("xbackends"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Agentic().V0alpha0().XBackends().Informer()}, nil
+
+		// Group=agentic.networking.x-k8s.io, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithResource("xaccesspolicies"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Agentic().V1alpha1().XAccessPolicies().Informer()}, nil
 
 	}
 

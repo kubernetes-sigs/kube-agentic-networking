@@ -13,8 +13,8 @@ In this example, we'll use [Authorino](https://github.com/kuadrant/authorino)[^1
 [^1]: Authorino is a Kubernetes-native authorization service that is part of the [Kuadrant](https://kuadrant.io/) CNCF project.
 
 The agent will attempt to access tools from two MCP servers:
-1. **Local MCP backend**: Controlled by an inline tool allowlist (`InlineTools` authorization type)
-2. **Remote MCP backend**: Controlled by an external authorizer (`ExternalAuth` authorization type)
+1. **Local MCP backend**: Controlled by an `XAccessPolicy` with `action: Allow` and inline MCP method allowlisting (`authorization.type: Inline`)
+2. **Remote MCP backend**: Controlled by an `XAccessPolicy` with `action: ExternalAuth` that delegates to an external authorizer
 
 In this example, the external authorizer enforces a **repository-based access policy** — the agent can only access specific approved GitHub repositories when using remote MCP tools.
 
@@ -127,23 +127,32 @@ The `run-external-auth-quickstart.sh` script performs the following steps:
    - Installs Authorino Operator (using Helm)
    - Creates an instance of the authorization service
    - Configures repository-based access rules (only specific approved repos) for all hosts delegating authorization to the service
-3. **Applies external auth policies** by updating the `XAccessPolicy` for the remote MCP backend to use `ExternalAuth` type
+3. **Applies external auth policies** by updating the `XAccessPolicy` for the remote MCP backend to set `spec.action: ExternalAuth`
 
 ## Understanding External Authorization Policies
 
 The key difference in this quickstart is the `XAccessPolicy` for the remote MCP backend. Let's examine how it's configured:
 
 ```yaml
-apiVersion: agentic.prototype.x-k8s.io/v0alpha0
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
 kind: XAccessPolicy
 metadata:
   name: auth-policy-remote-mcp
   namespace: quickstart-ns
 spec:
   targetRefs:
-    - group: agentic.prototype.x-k8s.io
+    - group: agentic.networking.x-k8s.io
       kind: XBackend
       name: remote-mcp-backend
+  action: ExternalAuth
+  externalAuth:
+    backendRef:
+      kind: Service
+      name: authorino-authorino-authorization
+      namespace: authorino-operator
+      port: 50051
+    protocol: GRPC
+    grpc: {}
   rules:
     - name: ext-authorizer-for-adk-agent-sa
       source:
@@ -151,23 +160,13 @@ spec:
         serviceAccount:
           name: adk-agent-sa
           namespace: quickstart-ns
-      authorization:
-        type: ExternalAuth
-        externalAuth:
-          backendRef:
-            kind: Service
-            name: authorino-authorino-authorization
-            namespace: authorino-operator
-            port: 50051
-          protocol: GRPC
-          grpc: {}
 ```
 
 **Key components:**
 
-- **`authorization.type: ExternalAuth`**: Delegates authorization decisions to an external service instead of using inline rules
+- **`action: ExternalAuth`**: Delegates authorization decisions to an external service instead of using inline rules
 - **`externalAuth.backendRef`**: Points to the external authorization service
-- **`protocol: GRPC`**: Specifies the protocol to communicate with the external authorizer
+- **`externalAuth.protocol: GRPC`**: Specifies the protocol to communicate with the external authorizer
 
 When the agent attempts to call a tool on the remote MCP backend, the gateway will:
 1. Intercept the request
@@ -200,7 +199,7 @@ spec:
 
 This Rego policy extracts the `repoName` argument from the tool call parameters and allows access only if the repository is in the allowed list.
 
-**Key insight**: While inline `InlineTools` authorization can only allow/deny tools by name, external authorization can inspect **tool arguments** and make context-aware decisions. This enables fine-grained, argument-level policy enforcement.
+**Key insight**: While inline `Allow` policies with `authorization.type: Inline` can only allow/deny tools by name (via `tools/call` `params`), external authorization can inspect **tool arguments** and make context-aware decisions. This enables fine-grained, argument-level policy enforcement.
 
 ## Chat with the Agent
 
@@ -298,9 +297,9 @@ Simply update the `externalAuth.backendRef` in your `XAccessPolicy` to point to 
 
 A: In the reference implementation, if the gateway cannot reach the external authorizer, the default behavior is to **deny** the request. This fail-closed approach ensures that access is not granted when the authorization system is down. The specific failure behavior may vary depending on your Agentic Networking implementation and gateway configuration.
 
-**Q: Can I combine `InlineTools` and `ExternalAuth` in the same policy?**
+**Q: Can I combine inline allowlists and external authorization on the same backend?**
 
-A: Yes, you can create multiple rules targeting the same gateway or backend, each with different sources and authorization types. However, there is currently a maximum of one authorization rule with type `ExternalAuth` per policy, but a policy can combine multiple `InlineTools` rules with one `ExternalAuth` rule. The controller will merge these rules appropriately.
+A: Yes, but use **separate `XAccessPolicy` resources** — each policy has one `spec.action` (`Allow` or `ExternalAuth`). This quickstart does exactly that: one `Allow` policy for the local backend and one `ExternalAuth` policy for the remote backend. On a single target, `ExternalAuth` policies are evaluated first; if they allow the request, all `Allow` policies on that target must also allow it.
 
 **Q: How does the external authorizer receive request context?**
 

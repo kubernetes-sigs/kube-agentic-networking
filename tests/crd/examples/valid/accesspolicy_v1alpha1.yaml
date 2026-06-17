@@ -1,0 +1,27 @@
+apiVersion: agentic.networking.x-k8s.io/v1alpha1
+kind: XAccessPolicy
+metadata:
+  name: valid-policy-v1alpha1
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: my-gateway
+  action: Allow
+  rules:
+  - name: allow-sa
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: my-sa
+  - name: allow-spiffe
+    source:
+      type: SPIFFE
+      spiffe: spiffe://example.com/my-service
+    authorization:
+      type: Inline
+      mcp:
+        methods:
+        - name: tools/call
+          params:
+          - param1
