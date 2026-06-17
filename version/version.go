@@ -30,5 +30,5 @@ const (
 	BundleVersionAnnotation = "agentic.networking.x-k8s.io/bundle-version"
 
 	// BundleVersion is the value used for labeling the version of kube-agentic-networking.
-	BundleVersion = "v0.0.0-dev"
+	BundleVersion = "v0.1.0"
 )
