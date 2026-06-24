@@ -482,13 +482,14 @@ function envoy_on_response(handle)
 
   if match then
     meta:set("agentic_obs", "event.action", "allow")
-    meta:set("agentic_obs", "event.outcome", "success")
-  elseif mcp_method == "tools/call" then
+  else
     meta:set("agentic_obs", "event.action", "deny")
-    meta:set("agentic_obs", "event.outcome", "success")
   end
+  -- event.outcome=failure (e.g. extAuthz engine error) is not detectable here since
+  -- the Lua response handler only sees metadata written during the request, not filter-level failures.
+  meta:set("agentic_obs", "event.outcome", "success")
 
-  if mcp_method == "tools/call" then
+  if mcp_method ~= "" then
     meta:set("agentic_obs", "event.kind", "event")
     meta:set("agentic_obs", "event.category", "authorization")
   end
