@@ -19,8 +19,9 @@ Status: Provisional<br/>
 ## Summary
 
 KAN has no mechanism to discover what tools an MCP backend exposes. Operators
-must manually enumerate tool names in `XAccessPolicy` rules, and there is no
-feedback loop when tools are added, removed, or misconfigured on backends.
+who write `Inline` `XAccessPolicy` rules must manually enumerate tool names,
+and there is no feedback loop when tools are added, removed, or misconfigured
+on backends.
 
 This proposal adds optional, opt-in tool discovery to KAN: a controller that
 connects to MCP backends, calls `tools/list`, validates the results, and
@@ -376,11 +377,21 @@ For each XToolInventory, the controller:
 
 The existing XAccessPolicy reconciler is extended to cross-reference
 `rules[].authorization.mcp.methods[].params[]` against
-`XToolInventory.status.discoveredTools` for the policy's target backend:
+`XToolInventory.status.discoveredTools` for the policy's target backend.
 
-- The reconciler finds the XToolInventory whose `spec.backendRef` matches the
+This validation applies to `Inline` authorization rules, which enumerate tool
+names explicitly via `params[]`. It does not apply to `CEL` authorization
+rules, which can match tools dynamically (e.g.,
+`request.mcp.tool_name.startsWith('verify_')`). A pattern-based CEL rule does
+not reference a fixed tool name to verify, so it is not meaningfully validated
+against a discovered tool list and does not go stale the same way an explicit
+enumeration does.
+
+For Inline rules, the reconciler:
+
+- Finds the XToolInventory whose `spec.backendRef` matches the
   policy's `targetRef`.
-- Tool names in `params[]` (for `tools/call` method entries) are compared
+- Compares tool names in `params[]` (for `tools/call` method entries)
   against `discoveredTools[].name`.
 - If a tool name doesn't match, the unverified tool names are surfaced in the
   `Accepted` condition's `message` field on the relevant ancestor entry
