@@ -26,8 +26,7 @@ This proposal adds optional, opt-in tool discovery to KAN: a controller that
 connects to MCP backends, calls `tools/list`, validates the results, and
 surfaces discovered tools in a dedicated `XToolInventory` resource (one per
 backend, linked via `backendRef`). This enables policy validation against real
-backend state, operator visibility via `kubectl`, and a foundation for future
-capabilities like response filtering. Discovery is advisory (i.e., it enhances
+backend state and operator visibility via `kubectl`. Discovery is advisory (i.e., it enhances
 observability but does not affect policy enforcement). Backends without
 discovery enabled continue to work exactly as they do today.
 
