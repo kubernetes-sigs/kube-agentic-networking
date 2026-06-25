@@ -104,10 +104,11 @@ type AccessRule struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 	// Source specifies the source of the request.
-	// +required
-	Source AccessRuleSource `json:"source"`
-	// Authorization specifies the authorization rule to be applied to requests from the source.
-	// If omitted, all access from the specified source is allowed.
+	// If omitted, requests from any source are allowed.
+	// +optional
+	Source AccessRuleSource `json:"source,omitempty"`
+	// Authorization specifies the authorization rule to be applied to requests matching the source criteria.
+	// If omitted, all access matching the source criteria is allowed.
 	// +optional
 	Authorization *AuthorizationRule `json:"authorization,omitempty"`
 }
@@ -118,8 +119,8 @@ type AccessRule struct {
 // Similarly, either SPIFFE or Serviceaccount can be set based on the type.
 type AccessRuleSource struct {
 	// +unionDiscriminator
-	// +required
-	Type AuthorizationSourceType `json:"type"`
+	// +optional
+	Type AuthorizationSourceType `json:"type,omitempty"`
 
 	// spiffe specifies an identity that is matched by this rule.
 	//
@@ -185,6 +186,46 @@ type AuthorizationRule struct {
 	// +unionDiscriminator
 	// +required
 	Type AuthorizationRuleType `json:"type"`
+
+	// Methods is a list of HTTP methods to match against.
+	// If specified, the request method must match one of the items in the list (OR semantics across list items).
+	// If empty or omitted, any HTTP method is allowed.
+	// +kubebuilder:validation:MaxItems=9
+	// +listType=set
+	// +optional
+	Methods []HTTPMethod `json:"methods,omitempty"`
+
+	// Paths is a list of HTTP request path matchers to match against.
+	// If specified, the request path must match one of the items in the list (OR semantics across list items).
+	// If empty or omitted, any request path is allowed.
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=atomic
+	// +optional
+	Paths []HTTPPathMatch `json:"paths,omitempty"`
+
+	// Headers is a list of HTTP request header matchers to match against.
+	// All specified headers must match (AND semantics across list items).
+	// If empty or omitted, no header checking is applied.
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=atomic
+	// +optional
+	Headers []HTTPHeaderMatch `json:"headers,omitempty"`
+
+	// Hosts is a list of HTTP request host matchers to match against.
+	// If specified, the request host / authority header must match one of the items in the list (OR semantics across list items).
+	// If empty or omitted, any host is allowed.
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=set
+	// +optional
+	Hosts []Hostname `json:"hosts,omitempty"`
+
+	// Ports is a list of destination ports to match against.
+	// If specified, the request destination port must match one of the items in the list (OR semantics across list items).
+	// If empty or omitted, any destination port is allowed.
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=set
+	// +optional
+	Ports []PortNumber `json:"ports,omitempty"`
 
 	// MCP defines MCP-specific matching criteria.
 	// If omitted, the policy does not check MCP-level parameters, allowing all MCP traffic that
