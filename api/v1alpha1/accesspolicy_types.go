@@ -245,16 +245,31 @@ type MCPMethod struct {
 	// +required
 	Name MCPMethodName `json:"name"`
 
-	// Params allows matching against specific arguments in the MCP request.
-	// Only valid for 'get', 'call', 'subscribe', 'unsubscribe', and 'read' methods.
-	// If empty or omitted, parameter-level allowlisting is not applied, meaning the method
-	// is authorized regardless of the arguments passed in the request.
+	// Params lists values to match against the "name" field in the MCP JSON-RPC request's
+	// "params" object. In the current prototype implementation, all supported methods
+	// (prompts/get, tools/call, resources/subscribe, resources/unsubscribe, and
+	// resources/read) match against "params.name".
+	//
+	// Note: In the MCP protocol, resources/subscribe, resources/unsubscribe, and
+	// resources/read use "params.uri" rather than "params.name". Matching against
+	// "params.uri" for resource methods is not yet implemented and will be addressed
+	// separately.
+	//
+	// For example, a tools/call request with params {"name":"get-sum","arguments":{"a":2,"b":3}}
+	// is matched by a param value of "get-sum".
+	//
+	// Only valid for prompts/get, tools/call, resources/subscribe, resources/unsubscribe,
+	// and resources/read. If empty or omitted, parameter-level allowlisting is not applied,
+	// meaning the method is authorized regardless of the arguments passed in the request.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=10
 	Params []MCPMethodParam `json:"params,omitempty"`
 }
 
+// MCPMethodParam is a value to match against the "name" field in the MCP JSON-RPC
+// request's "params" object. See MCPMethod.Params for current matching behavior
+// and known limitations for resource methods.
 // +kubebuilder:validation:MaxLength=20
 type MCPMethodParam string
 
