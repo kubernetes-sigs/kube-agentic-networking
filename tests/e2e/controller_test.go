@@ -50,6 +50,8 @@ const (
 	testClientCertPath = "/tmp/mtls-client/tls.crt"
 	testClientKeyPath  = "/tmp/mtls-client/tls.key"
 	testClientCAPath   = "/tmp/mtls-client/ca.crt"
+
+	defaultMCPPath = "/mcp"
 )
 
 // TestControllerE2E verifies the core functionality of the agentic networking controller including:
@@ -739,13 +741,17 @@ func runKubectl(t *testing.T, args ...string) {
 // applyToNamespace reads a manifest file, replaces all occurrences of "e2e-test-ns"
 // with the actual namespace, and applies it to the cluster.
 func applyToNamespace(t *testing.T, manifestPath, namespace string) {
+	applyManifestReplacing(t, manifestPath, namespace, "e2e-test-ns")
+}
+
+// applyManifestReplacing reads a manifest file, replaces placeholderNamespace with namespace, and applies it.
+func applyManifestReplacing(t *testing.T, manifestPath, namespace, placeholderNamespace string) {
 	content, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("failed to read manifest %s: %v", manifestPath, err)
 	}
 
-	// Replace all occurrences of e2e-test-ns with the actual namespace
-	modifiedContent := strings.ReplaceAll(string(content), "e2e-test-ns", namespace)
+	modifiedContent := strings.ReplaceAll(string(content), placeholderNamespace, namespace)
 
 	cmd := exec.CommandContext(context.Background(), "kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(modifiedContent)
@@ -807,27 +813,35 @@ type mcpTestSession struct {
 	t         *testing.T
 	gatewayIP string
 	sessionID string
+	mcpPath   string
 	pod       types.NamespacedName
 	certPath  string
 	keyPath   string
 	caPath    string
 }
 
-func initializeMCP(t *testing.T, gatewayIP string, pod types.NamespacedName) *mcpTestSession {
-	return initializeMCPWithCerts(t, gatewayIP, pod, agentCertPath, agentKeyPath, agentCAPath)
+func mcpGatewayURL(gatewayIP, mcpPath string) string {
+	if mcpPath == "" {
+		mcpPath = defaultMCPPath
+	}
+	return fmt.Sprintf("https://%s:10001%s", gatewayIP, mcpPath)
 }
 
-func initializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.NamespacedName, certPath, keyPath, caPath string) *mcpTestSession {
-	t.Logf("Initialize MCP session for pod %s", pod)
+func initializeMCP(t *testing.T, gatewayIP string, pod types.NamespacedName) *mcpTestSession {
+	return initializeMCPWithCerts(t, gatewayIP, pod, defaultMCPPath, agentCertPath, agentKeyPath, agentCAPath)
+}
+
+func tryInitializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.NamespacedName, mcpPath, certPath, keyPath, caPath string) (*mcpTestSession, error) {
+	t.Helper()
+	t.Logf("Initialize MCP session for pod %s at %s", pod, mcpPath)
 
 	mcpSessionID := ""
 	err := retry(5, 10*time.Second, func() error {
-		out, err := execMCPCurl(t, gatewayIP, pod, certPath, keyPath, caPath)
+		out, err := execMCPCurl(t, gatewayIP, pod, mcpPath, certPath, keyPath, caPath)
 		if err != nil {
 			return err
 		}
 
-		// Extract mcp-session-id from headers
 		lines := strings.Split(out, "\r\n")
 		for _, line := range lines {
 			if strings.HasPrefix(strings.ToLower(line), "mcp-session-id:") {
@@ -839,14 +853,39 @@ func initializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.Namespaced
 		return fmt.Errorf("failed to get mcp-session-id from headers")
 	})
 	if err != nil {
-		t.Fatalf("MCP Initialization failed for pod %s: %v", pod, err)
+		return nil, err
 	}
 	t.Logf("Obtained MCP Session ID for %s: %s", pod, mcpSessionID)
+	return newMCPTestSession(t, gatewayIP, mcpSessionID, mcpPath, pod, certPath, keyPath, caPath), nil
+}
 
+func initializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.NamespacedName, mcpPath, certPath, keyPath, caPath string) *mcpTestSession {
+	mcp, err := tryInitializeMCPWithCerts(t, gatewayIP, pod, mcpPath, certPath, keyPath, caPath)
+	if err != nil {
+		t.Fatalf("MCP Initialization failed for pod %s: %v", pod, err)
+	}
+	return mcp
+}
+
+// initializeMCPWithCertsOptional is like initializeMCPWithCerts but returns false instead of
+// failing the test when initialization does not succeed (e.g. remote MCP unreachable in CI).
+func initializeMCPWithCertsOptional(t *testing.T, gatewayIP string, pod types.NamespacedName, mcpPath, certPath, keyPath, caPath string) (*mcpTestSession, bool) {
+	t.Helper()
+	mcp, err := tryInitializeMCPWithCerts(t, gatewayIP, pod, mcpPath, certPath, keyPath, caPath)
+	if err != nil {
+		t.Logf("MCP initialization unavailable for pod %s at %s: %v", pod, mcpPath, err)
+		return nil, false
+	}
+	return mcp, true
+}
+
+func newMCPTestSession(t *testing.T, gatewayIP, sessionID, mcpPath string, pod types.NamespacedName, certPath, keyPath, caPath string) *mcpTestSession {
+	t.Helper()
 	return &mcpTestSession{
 		t:         t,
 		gatewayIP: gatewayIP,
-		sessionID: mcpSessionID,
+		sessionID: sessionID,
+		mcpPath:   mcpPath,
 		pod:       pod,
 		certPath:  certPath,
 		keyPath:   keyPath,
@@ -854,7 +893,7 @@ func initializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.Namespaced
 	}
 }
 
-func execMCPCurl(t *testing.T, gatewayIP string, pod types.NamespacedName, certPath, keyPath, caPath string) (string, error) {
+func execMCPCurl(t *testing.T, gatewayIP string, pod types.NamespacedName, mcpPath, certPath, keyPath, caPath string) (string, error) {
 	return runKubectlOutput(t, "exec", pod.Name, "-n", pod.Namespace, "--",
 		"curl", "-ks", "-i",
 		"--cert", certPath,
@@ -864,7 +903,7 @@ func execMCPCurl(t *testing.T, gatewayIP string, pod types.NamespacedName, certP
 		"-H", "Accept: application/json, text/event-stream",
 		"-H", "mcp-protocol-version: 2025-11-25",
 		"--data-raw", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0.0"}}}`,
-		fmt.Sprintf("https://%s:10001/mcp", gatewayIP))
+		mcpGatewayURL(gatewayIP, mcpPath))
 }
 
 type mcpResponse struct {
@@ -894,18 +933,17 @@ type mcpContent struct {
 	Text string `json:"text"`
 }
 
-func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) error {
+func (m *mcpTestSession) doMCPRequest(t *testing.T, method, paramsJSON string) (requestID int, httpCode int, resp respBody, rawBody string, err error) {
 	nBig, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
-		return fmt.Errorf("failed to generate random request ID: %w", err)
+		return 0, 0, respBody{}, "", fmt.Errorf("failed to generate random request ID: %w", err)
 	}
-	requestID := int(nBig.Int64())
-	expected.Body.ID = requestID
+	requestID = int(nBig.Int64())
 
-	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, requestID, toolName, toolArgs)
+	data := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"%s","params":%s}`, requestID, method, paramsJSON)
 
 	if m.pod.Name == "" || m.pod.Namespace == "" {
-		return fmt.Errorf("invalid pod reference in MCP session: %v", m.pod)
+		return 0, 0, respBody{}, "", fmt.Errorf("invalid pod reference in MCP session: %v", m.pod)
 	}
 
 	out, err := runKubectlOutput(t, "exec", m.pod.Name, "-n", m.pod.Namespace, "--",
@@ -918,34 +956,59 @@ func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, 
 		"-H", "mcp-protocol-version: 2025-11-25",
 		"-H", fmt.Sprintf("mcp-session-id: %s", m.sessionID),
 		"--data-raw", data,
-		fmt.Sprintf("https://%s:10001/mcp", m.gatewayIP))
+		mcpGatewayURL(m.gatewayIP, m.mcpPath))
 	if err != nil {
-		return fmt.Errorf("failed to call tool: %w", err)
+		return 0, 0, respBody{}, "", fmt.Errorf("failed MCP request %q: %w", method, err)
 	}
 
 	out = strings.TrimSpace(out)
 	lines := strings.Split(out, "\n")
 	if len(lines) == 0 {
-		return fmt.Errorf("empty response from gateway")
+		return 0, 0, respBody{}, "", fmt.Errorf("empty response from gateway")
 	}
 
-	// Check HTTP status code
 	codeStr := strings.TrimSpace(lines[len(lines)-1])
-	code, err := strconv.Atoi(codeStr)
+	httpCode, err = strconv.Atoi(codeStr)
 	if err != nil {
-		return fmt.Errorf("failed to parse HTTP status code from response: %q", codeStr)
-	}
-	if expected.StatusCode != 0 && code != expected.StatusCode {
-		return fmt.Errorf("unexpected HTTP status code: got %d, want %d", code, expected.StatusCode)
+		return 0, 0, respBody{}, "", fmt.Errorf("failed to parse HTTP status code from response: %q", codeStr)
 	}
 
-	body := strings.TrimSpace(strings.Join(lines[:len(lines)-1], "\n"))
-	resp, err := parseMCPResponse(body)
+	rawBody = strings.TrimSpace(strings.Join(lines[:len(lines)-1], "\n"))
+	resp, err = parseMCPResponse(rawBody)
+	if err != nil {
+		return 0, 0, respBody{}, "", err
+	}
+
+	return requestID, httpCode, resp, rawBody, nil
+}
+
+func (m *mcpTestSession) checkMCPAllowed(t *testing.T, method, paramsJSON string) error {
+	_, _, resp, rawBody, err := m.doMCPRequest(t, method, paramsJSON)
 	if err != nil {
 		return err
 	}
+	if resp.Error != nil && resp.Error.Code == 403 {
+		return fmt.Errorf("MCP method %q forbidden: %s", method, resp.Error.Message)
+	}
+	if resp.Result == nil && resp.Error == nil {
+		return fmt.Errorf("MCP method %q returned no result or error\nbody: %s", method, rawBody)
+	}
+	return nil
+}
 
-	return assertMCPResponse(resp, expected, body)
+func (m *mcpTestSession) checkToolCall(t *testing.T, toolName, toolArgs string, expected mcpResponse) error {
+	paramsJSON := fmt.Sprintf(`{"name":"%s","arguments":%s}`, toolName, toolArgs)
+	requestID, httpCode, resp, rawBody, err := m.doMCPRequest(t, "tools/call", paramsJSON)
+	if err != nil {
+		return err
+	}
+	expected.Body.ID = requestID
+
+	if expected.StatusCode != 0 && httpCode != expected.StatusCode {
+		return fmt.Errorf("unexpected HTTP status code: got %d, want %d", httpCode, expected.StatusCode)
+	}
+
+	return assertMCPResponse(resp, expected, rawBody)
 }
 
 func parseMCPResponse(body string) (respBody, error) {
@@ -1013,6 +1076,42 @@ func (m *mcpTestSession) assertToolCall(t *testing.T, toolName, toolArgs string,
 		t.Fatalf("Tool call %q failed after retries: %v", toolName, err)
 	}
 	t.Logf("Tool call %q from pod %s: got expected response.", toolName, m.pod)
+}
+
+func (m *mcpTestSession) assertToolCallForbidden(t *testing.T, toolName, toolArgs string) {
+	m.assertToolCall(t, toolName, toolArgs, mcpResponse{
+		StatusCode: 200,
+		Body: respBody{
+			JSONRPC: "2.0",
+			Error: &mcpError{
+				Code:    403,
+				Message: "Access to this tool is forbidden.",
+			},
+		},
+	})
+}
+
+func (m *mcpTestSession) assertMCPRequestAllowed(t *testing.T, method, paramsJSON string) {
+	t.Helper()
+	err := retry(10, 2*time.Second, func() error {
+		return m.checkMCPAllowed(t, method, paramsJSON)
+	})
+	if err != nil {
+		t.Fatalf("MCP request %q expected to be allowed: %v", method, err)
+	}
+	t.Logf("MCP request %q from pod %s: allowed as expected.", method, m.pod)
+}
+
+func (m *mcpTestSession) assertToolCallAllowed(t *testing.T, toolName, toolArgs string) {
+	t.Helper()
+	paramsJSON := fmt.Sprintf(`{"name":"%s","arguments":%s}`, toolName, toolArgs)
+	err := retry(10, 2*time.Second, func() error {
+		return m.checkMCPAllowed(t, "tools/call", paramsJSON)
+	})
+	if err != nil {
+		t.Fatalf("Tool call %q expected to be allowed: %v", toolName, err)
+	}
+	t.Logf("Tool call %q from pod %s: allowed as expected.", toolName, m.pod)
 }
 
 func TestGatewayTLS(t *testing.T) {
@@ -1100,7 +1199,7 @@ func TestGatewayTLS(t *testing.T) {
 		writePodFile(t, namespace, podName, testClientKeyPath, clientKeyDefault)
 		writePodFile(t, namespace, podName, testClientCAPath, caCertPEM1)
 
-		mcp := initializeMCPWithCerts(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName},
+		mcp := initializeMCPWithCerts(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName}, defaultMCPPath,
 			testClientCertPath, testClientKeyPath, testClientCAPath)
 
 		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
@@ -1142,7 +1241,7 @@ func TestGatewayTLS(t *testing.T) {
 		writePodFile(t, namespace, podName, testClientCertPath, clientCert1)
 		writePodFile(t, namespace, podName, testClientKeyPath, clientKey1)
 
-		mcp := initializeMCPWithCerts(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName},
+		mcp := initializeMCPWithCerts(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName}, defaultMCPPath,
 			testClientCertPath, testClientKeyPath, testClientCAPath)
 
 		mcp.assertToolCall(t, "echo", `{"message":"hello"}`,
@@ -1186,7 +1285,7 @@ func TestGatewayTLS(t *testing.T) {
 		writePodFile(t, namespace, podName, testClientKeyPath, clientKey2)
 
 		err := retry(5, 5*time.Second, func() error {
-			stdout, e := execMCPCurl(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName},
+			stdout, e := execMCPCurl(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName}, defaultMCPPath,
 				testClientCertPath, testClientKeyPath, testClientCAPath)
 			if e == nil {
 				return fmt.Errorf("expected curl to fail but it succeeded with output: %s", stdout)
