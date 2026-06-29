@@ -377,7 +377,7 @@ func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName stri
 			},
 		},
 		HttpFilters: httpFilters,
-		Tracing:     buildTracingConfig(),
+		Tracing:     buildTracingConfig(t.tracingSampleRate),
 	}
 	hcmAny, err := anypb.New(hcmConfig)
 	if err != nil {
@@ -440,11 +440,11 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 
 // buildTracingConfig creates tracing configuration with custom tags that expose
 // shadow RBAC metadata, caller identity, and derived security event attributes on gateway spans.
-func buildTracingConfig() *hcm.HttpConnectionManager_Tracing {
+func buildTracingConfig(sampleRate float64) *hcm.HttpConnectionManager_Tracing {
 	return &hcm.HttpConnectionManager_Tracing{
-		RandomSampling:    &typev3.Percent{Value: 100.0},
-		ClientSampling:    &typev3.Percent{Value: 100.0},
-		OverallSampling:   &typev3.Percent{Value: 100.0},
+		RandomSampling:  &typev3.Percent{Value: sampleRate},
+		ClientSampling:  &typev3.Percent{Value: 100.0}, // always honor incoming sampled traceparent to preserve agent-to-gateway trace linkage
+		OverallSampling: &typev3.Percent{Value: sampleRate},
 		SpawnUpstreamSpan: wrapperspb.Bool(true),
 		CustomTags: []*tracingv3.CustomTag{
 			buildMetadataTag("security_rule.name", "envoy.filters.http.rbac", "shadow_effective_policy_id"),

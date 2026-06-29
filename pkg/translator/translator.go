@@ -74,6 +74,7 @@ type Translator struct {
 	referenceGrantLister       gatewaylistersv1beta1.ReferenceGrantLister // optional, for Service ref cross-namespace validation
 	accessPolicyLister         agenticlistersv1alpha1.XAccessPolicyLister
 	backendLister              agenticlisters.XBackendLister
+	tracingSampleRate          float64
 }
 
 func New(
@@ -89,6 +90,7 @@ func New(
 	referenceGrantLister gatewaylistersv1beta1.ReferenceGrantLister,
 	accessPolicyLister agenticlistersv1alpha1.XAccessPolicyLister,
 	backendLister agenticlisters.XBackendLister,
+	tracingSampleRate float64,
 ) *Translator {
 	return &Translator{
 		agenticIdentityTrustDomain,
@@ -103,6 +105,7 @@ func New(
 		referenceGrantLister,
 		accessPolicyLister,
 		backendLister,
+		tracingSampleRate,
 	}
 }
 
