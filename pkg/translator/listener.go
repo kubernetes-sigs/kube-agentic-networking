@@ -25,11 +25,15 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	ext_authzv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_authz/v3"
+	luav3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/lua/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	udpproxy "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/udp/udp_proxy/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	metadatav3 "github.com/envoyproxy/go-control-plane/envoy/type/metadata/v3"
+	tracingv3 "github.com/envoyproxy/go-control-plane/envoy/type/tracing/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -373,6 +377,7 @@ func (t *Translator) buildHTTPFilterChain(lis gatewayv1.Listener, routeName stri
 			},
 		},
 		HttpFilters: httpFilters,
+		Tracing:     buildTracingConfig(t.tracingSampleRate),
 	}
 	hcmAny, err := anypb.New(hcmConfig)
 	if err != nil {
@@ -433,6 +438,111 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 	}, nil
 }
 
+// buildTracingConfig creates tracing configuration with custom tags that expose
+// shadow RBAC metadata, caller identity, and derived security event attributes on gateway spans.
+func buildTracingConfig(sampleRate float64) *hcm.HttpConnectionManager_Tracing {
+	return &hcm.HttpConnectionManager_Tracing{
+		RandomSampling:  &typev3.Percent{Value: sampleRate},
+		ClientSampling:  &typev3.Percent{Value: 100.0}, // always honor incoming sampled traceparent to preserve agent-to-gateway trace linkage
+		OverallSampling: &typev3.Percent{Value: sampleRate},
+		SpawnUpstreamSpan: wrapperspb.Bool(true),
+		CustomTags: []*tracingv3.CustomTag{
+			buildMetadataTag("security_rule.name", "envoy.filters.http.rbac", "shadow_effective_policy_id"),
+			buildMetadataTag("peer.spiffe.id", "envoy.filters.http.rbac", "principal"),
+			buildMetadataTag("security_rule.match", constants.ObservabilityMetadataNamespace, "security_rule.match"),
+			buildMetadataTag("event.action", constants.ObservabilityMetadataNamespace, "event.action"),
+			buildMetadataTag("event.outcome", constants.ObservabilityMetadataNamespace, "event.outcome"),
+			buildMetadataTag("event.kind", constants.ObservabilityMetadataNamespace, "event.kind"),
+			buildMetadataTag("event.category", constants.ObservabilityMetadataNamespace, "event.category"),
+			buildMetadataTag("mcp.method.name", constants.ObservabilityMetadataNamespace, "mcp.method.name"),
+			buildMetadataTag("component", constants.ObservabilityMetadataNamespace, "component"),
+		},
+	}
+}
+
+const observabilityLuaScript = `
+function envoy_on_response(handle)
+  local meta = handle:streamInfo():dynamicMetadata()
+  local rbac = meta:get("envoy.filters.http.rbac")
+  local mcp = meta:get("mcp_proxy")
+
+  local rule_name = ""
+  if rbac then
+    rule_name = rbac["shadow_effective_policy_id"] or ""
+  end
+
+  local mcp_method = ""
+  if mcp then
+    mcp_method = mcp["method"] or ""
+  end
+
+  local match = (rule_name ~= "")
+  meta:set("agentic_obs", "security_rule.match", match)
+  meta:set("agentic_obs", "component", "envoy.gateway")
+
+  if match then
+    meta:set("agentic_obs", "event.action", "allow")
+  else
+    meta:set("agentic_obs", "event.action", "deny")
+  end
+  -- event.outcome=failure (e.g. extAuthz engine error) is not detectable here since
+  -- the Lua response handler only sees metadata written during the request, not filter-level failures.
+  meta:set("agentic_obs", "event.outcome", "success")
+
+  if mcp_method ~= "" then
+    meta:set("agentic_obs", "event.kind", "event")
+    meta:set("agentic_obs", "event.category", "authorization")
+  end
+  if mcp_method ~= "" then
+    meta:set("agentic_obs", "mcp.method.name", mcp_method)
+  end
+end
+`
+
+func buildObservabilityLuaFilter() (*hcm.HttpFilter, error) {
+	luaCfg := &luav3.Lua{
+		DefaultSourceCode: &corev3.DataSource{
+			Specifier: &corev3.DataSource_InlineString{InlineString: observabilityLuaScript},
+		},
+	}
+	luaAny, err := anypb.New(luaCfg)
+	if err != nil {
+		return nil, err
+	}
+	return &hcm.HttpFilter{
+		Name: constants.ObservabilityLuaFilterName,
+		ConfigType: &hcm.HttpFilter_TypedConfig{
+			TypedConfig: luaAny,
+		},
+	}, nil
+}
+
+func buildMetadataTag(tag, filter string, pathKeys ...string) *tracingv3.CustomTag {
+	segments := make([]*metadatav3.MetadataKey_PathSegment, len(pathKeys))
+	for i, k := range pathKeys {
+		segments[i] = &metadatav3.MetadataKey_PathSegment{
+			Segment: &metadatav3.MetadataKey_PathSegment_Key{Key: k},
+		}
+	}
+	return &tracingv3.CustomTag{
+		Tag: tag,
+		Type: &tracingv3.CustomTag_Metadata_{
+			Metadata: &tracingv3.CustomTag_Metadata{
+				Kind: &metadatav3.MetadataKind{
+					Kind: &metadatav3.MetadataKind_Request_{
+						Request: &metadatav3.MetadataKind_Request{},
+					},
+				},
+				MetadataKey: &metadatav3.MetadataKey{
+					Key:  filter,
+					Path: segments,
+				},
+				DefaultValue: "",
+			},
+		},
+	}
+}
+
 func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
 	// 1. Add MCP filter.
 	mcpFilter, err := buildMCPFilter()
@@ -459,7 +569,13 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 		return nil, err
 	}
 
-	// 5. Add router filter.
+	// 5. Add observability Lua filter (derives security event attributes from RBAC/MCP metadata).
+	obsLuaFilter, err := buildObservabilityLuaFilter()
+	if err != nil {
+		return nil, err
+	}
+
+	// 6. Add router filter.
 	routerFilter, err := buildRouterFilter()
 	if err != nil {
 		return nil, err
@@ -506,6 +622,7 @@ func (t *Translator) buildHTTPFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFi
 	if backendAllowFilter != nil {
 		filters = append(filters, backendAllowFilter)
 	}
+	filters = append(filters, obsLuaFilter)
 	filters = append(filters, routerFilter)
 
 	return filters, nil

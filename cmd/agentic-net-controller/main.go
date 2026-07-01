@@ -58,6 +58,8 @@ var (
 	shardingPodUID          = flag.String("sharding-pod-uid", "", "(Work Sharding) The pod UID of the controller")
 	shardingApplicationName = flag.String("sharding-application-name", "", "(Work Sharding) The application name to disambiguate Leases")
 
+	tracingSampleRate = flag.Float64("tracing-sampling-rate", 100.0, "Percentage of requests to sample for tracing (0.0-100.0)")
+
 	enableAgenticIdentitySigner = flag.Bool("enable-agentic-identity-signer", false, fmt.Sprintf("Run controller for %s", agenticidentitysigner.Name))
 	agenticIdentityTrustDomain  = flag.String("agentic-identity-trust-domain", "", "The SPIFFE trust domain for issued certificates")
 	agenticIdentityCAPoolFile   = flag.String("agentic-identity-ca-pool", "", fmt.Sprintf("File that contains the CA pool state for %s", agenticidentitysigner.Name))
@@ -119,6 +121,7 @@ func main() {
 		ctx,
 		*agenticIdentityTrustDomain,
 		*proxyImage,
+		*tracingSampleRate,
 		kubeClient,
 		gatewayClientset,
 		agenticClientset,

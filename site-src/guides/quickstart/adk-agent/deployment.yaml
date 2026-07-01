@@ -63,6 +63,27 @@ spec:
                 secretKeyRef:
                   name: hf-secret
                   key: hf-token-key
+            # OpenTelemetry configuration
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.quickstart-ns.svc.cluster.local:4318"
+            - name: OTEL_SERVICE_NAME
+              value: "adk-agent"
+            # Enable ADK OpenTelemetry integration
+            - name: ADK_ENABLE_OTEL
+              value: "true"
+            - name: OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED
+              value: "true"
+            # Ensure trace context propagation
+            - name: OTEL_PROPAGATORS
+              value: "tracecontext,baggage"
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
         - name: envoy
           image: envoyproxy/envoy:v1.36-latest
           imagePullPolicy: Always

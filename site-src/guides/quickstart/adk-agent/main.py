@@ -20,6 +20,10 @@ import uvicorn
 from fastapi import FastAPI
 from google.adk.cli.fast_api import get_fast_api_app
 
+from otel_instrumentation import setup_otel_tracing, instrument_fastapi
+
+setup_otel_tracing(service_name="adk-agent")
+
 # Get the directory where main.py is located
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Example session service URI (e.g., SQLite)
@@ -37,6 +41,8 @@ app: FastAPI = get_fast_api_app(
     allow_origins=ALLOWED_ORIGINS,
     web=SERVE_WEB_INTERFACE,
 )
+
+instrument_fastapi(app)
 
 # You can add more FastAPI routes or configurations below if needed
 # Example:

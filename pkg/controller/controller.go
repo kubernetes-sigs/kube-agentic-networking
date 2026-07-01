@@ -136,6 +136,7 @@ func New(
 	ctx context.Context,
 	agenticIdentityTrustDomain string,
 	envoyImage string,
+	tracingSampleRate float64,
 	kubeClientSet kubernetes.Interface,
 	gwClientSet gatewayclient.Interface,
 	agenticClientSet agenticclient.Interface,
@@ -226,6 +227,7 @@ func New(
 		referenceGrantInformer.Lister(),
 		accessPolicyInformer.Lister(),
 		backendInformer.Lister(),
+		tracingSampleRate,
 	)
 
 	// Setup event handlers for all relevant resources.

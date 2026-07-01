@@ -771,6 +771,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				nil, // referenceGrantLister
 				agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister(),
 				agenticInformerFactory.Agentic().V0alpha0().XBackends().Lister(),
+				100.0,
 			)
 
 			// Populate Informer caches

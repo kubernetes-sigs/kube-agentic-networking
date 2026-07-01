@@ -227,6 +227,7 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 			}
 
 			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
+			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 		}
 	}
 
@@ -357,6 +358,9 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 			}
 		}
 
+		// Shadow rules serve two purposes depending on the action type:
+		// - ExternalAuth: RBAC_DENY shadow rules write dynamic metadata used as a gate to fire the ext_authz call.
+		// - Allow: RBAC_ALLOW shadow rules mirror enforcement so shadow stats expose which rule matched for tracing.
 		// Handle ExternalAuth at policy level
 		if accessPolicy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth && accessPolicy.Spec.ExternalAuth != nil {
 			hash, err := externalAuthUniqueID(accessPolicy.Spec.ExternalAuth)
@@ -372,7 +376,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
 			}
 
-			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
+			addPolicyToRBACShadowRulesForExtAuth(rbacConfig, policyName, rbacPolicy)
 			// Ensure the regular Rules section transparently allows all traffic through so that secondary policies evaluate non-matching streams.
 			allowAllPolicy := &rbacconfigv3.Policy{
 				Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
@@ -387,6 +391,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
 			}
 			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
+			addPolicyToRBACShadowRules(rbacConfig, policyName, rbacPolicy)
 		}
 	}
 
@@ -621,11 +626,23 @@ func addPolicyToRBACRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rb
 	rbacConfig.Rules.Policies[policyName] = policy
 }
 
-// addPolicyToRBACShadowRules mutates the RBAC config by adding the given policy to the ShadowRules section with the specified name.
+// addPolicyToRBACShadowRules adds the policy to ShadowRules with RBAC_ALLOW, mirroring enforcement so shadow stats
+// expose the matching rule for tracing.
 func addPolicyToRBACShadowRules(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
 	if rbacConfig.GetShadowRules() == nil {
 		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
-			Action:   rbacconfigv3.RBAC_DENY, // the action for the shadow rule doesn't really matter in this case since we only use it to trigger ext_authz from emitted stats
+			Action:   rbacconfigv3.RBAC_ALLOW,
+			Policies: map[string]*rbacconfigv3.Policy{},
+		}
+	}
+	rbacConfig.ShadowRules.Policies[policyName] = policy
+}
+
+// addPolicyToRBACShadowRulesForExtAuth uses RBAC_DENY to trigger ext_authz from emitted stats.
+func addPolicyToRBACShadowRulesForExtAuth(rbacConfig *rbacv3.RBAC, policyName string, policy *rbacconfigv3.Policy) {
+	if rbacConfig.GetShadowRules() == nil {
+		rbacConfig.ShadowRules = &rbacconfigv3.RBAC{
+			Action:   rbacconfigv3.RBAC_DENY,
 			Policies: map[string]*rbacconfigv3.Policy{},
 		}
 	}

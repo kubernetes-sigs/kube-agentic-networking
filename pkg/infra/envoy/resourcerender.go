@@ -51,10 +51,12 @@ var spiffeIdentityTemplate string
 var spiffeTrustTemplate string
 
 type bootstrapConfigData struct {
-	Cluster             string
-	ID                  string
-	ControlPlaneAddress string
-	ControlPlanePort    int
+	Cluster              string
+	ID                   string
+	ControlPlaneAddress  string
+	ControlPlanePort     int
+	OtelCollectorAddress string
+	OtelCollectorPort    int
 }
 
 type sdsConfigData struct {
@@ -65,16 +67,18 @@ type sdsConfigData struct {
 }
 
 // generateEnvoyBootstrapConfig returns an envoy config generated from config data
-func generateEnvoyBootstrapConfig(cluster, id string) (string, error) {
+func generateEnvoyBootstrapConfig(cluster, id, namespace string) (string, error) {
 	if cluster == "" || id == "" {
 		return "", fmt.Errorf("missing parameters for envoy config")
 	}
 
 	data := &bootstrapConfigData{
-		Cluster:             cluster,
-		ID:                  id,
-		ControlPlaneAddress: fmt.Sprintf("%s.%s.svc.cluster.local", constants.XDSServerServiceName, constants.AgenticNetSystemNamespace),
-		ControlPlanePort:    15001,
+		Cluster:              cluster,
+		ID:                   id,
+		ControlPlaneAddress:  fmt.Sprintf("%s.%s.svc.cluster.local", constants.XDSServerServiceName, constants.AgenticNetSystemNamespace),
+		ControlPlanePort:     15001,
+		OtelCollectorAddress: fmt.Sprintf("otel-collector.%s.svc.cluster.local", namespace),
+		OtelCollectorPort:    4317,
 	}
 
 	t, err := template.New("gateway-config").Parse(bootstrapTemplate)
@@ -137,7 +141,7 @@ func (r *ResourceManager) renderConfigMap() (*corev1.ConfigMap, error) {
 	bootstrap, err := generateEnvoyBootstrapConfig(types.NamespacedName{
 		Namespace: r.gw.Namespace,
 		Name:      r.gw.Name,
-	}.String(), r.nodeID)
+	}.String(), r.nodeID, r.gw.Namespace)
 	if err != nil {
 		return nil, err
 	}
