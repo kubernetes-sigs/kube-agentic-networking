@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
@@ -225,11 +226,11 @@ func TestBuildDownstreamTLSContext(t *testing.T) {
 }
 
 func TestTranslateListenerToFilterChain(t *testing.T) {
-	agenticClient := agenticclient.NewSimpleClientset()
+	agenticClient := agenticclient.NewClientset()
 	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 	accessPolicyLister := agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
 
-	gwClient := gatewayclient.NewSimpleClientset()
+	gwClient := gatewayclient.NewClientset()
 	gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
 	httprouteLister := gwInformerFactory.Gateway().V1().HTTPRoutes().Lister()
 
@@ -283,7 +284,7 @@ func TestTranslateListenerToFilterChain(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fc, err := translator.translateListenerToFilterChain(tc.listener, "route-config", gw)
+			fc, err := translator.translateListenerToFilterChain(tc.listener, "route-config", gw, newTranslationErrors())
 			if err != nil {
 				t.Fatalf("failed to translate listener: %v", err)
 			}
@@ -472,7 +473,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agenticClient := agenticclient.NewSimpleClientset(tt.policies...)
+			agenticClient := agenticclient.NewClientset(tt.policies...)
 			agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
 			lister := agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
 
@@ -485,7 +486,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 			for i, r := range tt.routes {
 				gwObjs[i] = r
 			}
-			gwClient := gatewayclient.NewSimpleClientset(gwObjs...)
+			gwClient := gatewayclient.NewClientset(gwObjs...)
 			gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
 			for _, r := range tt.routes {
 				_ = gwInformerFactory.Gateway().V1().HTTPRoutes().Informer().GetIndexer().Add(r)
@@ -497,7 +498,7 @@ func TestBuildHTTPFilters(t *testing.T) {
 			}
 			gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
 
-			filters, err := tr.buildHTTPFilters(gw)
+			filters, err := tr.buildHTTPFilters(gw, newTranslationErrors())
 			if err != nil {
 				t.Fatalf("Failed to build filters: %v", err)
 			}
@@ -584,7 +585,7 @@ func TestBuildExtAuthzFiltersOldestFirst(t *testing.T) {
 	}
 	gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
 
-	filters, err := tr.buildExtAuthzFilters(gw)
+	filters, err := tr.buildExtAuthzFilters(gw, nil)
 	if err != nil {
 		t.Fatalf("Failed to build filters: %v", err)
 	}
@@ -1227,5 +1228,52 @@ func TestValidateCACertificateRef(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildExtAuthzRecordsTranslationIssueForHTTPNonServiceBackend(t *testing.T) {
+	ns := "test-ns"
+	gwName := "test-gw"
+	kind := gatewayv1.Kind("XBackend")
+	p := newTestAccessPolicy("bad-http-ext", ns, gwName, "Gateway", "spiffe://cluster.local/ns/ns1/sa/sa1")
+	p.Spec.Action = agenticv1alpha1.ActionTypeExternalAuth
+	p.Spec.ExternalAuth = &gatewayv1.HTTPExternalAuthFilter{
+		ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthHTTPProtocol,
+		HTTPAuthConfig:       &gatewayv1.HTTPAuthConfig{Path: "/check"},
+		BackendRef: gatewayv1.BackendObjectReference{
+			Name: "auth",
+			Kind: &kind,
+		},
+	}
+
+	agenticClient := agenticclient.NewClientset(p)
+	agenticInformerFactory := agenticinformers.NewSharedInformerFactory(agenticClient, 0)
+	_ = agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Add(p)
+	lister := agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
+
+	gwClient := gatewayclient.NewClientset()
+	gwInformerFactory := gatewayinformers.NewSharedInformerFactory(gwClient, 0)
+	tr := &Translator{
+		accessPolicyLister: lister,
+		httprouteLister:    gwInformerFactory.Gateway().V1().HTTPRoutes().Lister(),
+	}
+	gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gwName, Namespace: ns}}
+
+	coll := newTranslationErrors()
+	_, err := tr.buildExtAuthzFilters(gw, coll)
+	if err != nil {
+		t.Fatalf("buildExtAuthzFilters: %v", err)
+	}
+	snap := coll.policyIssues()
+	nn := types.NamespacedName{Namespace: ns, Name: "bad-http-ext"}
+	msgs, ok := snap[nn]
+	if !ok || len(msgs) == 0 {
+		t.Fatalf("expected translation issue for policy %v, got %#v", nn, snap)
+	}
+	if !strings.Contains(msgs[0], "build external authorization filter") {
+		t.Errorf("expected build error in message: %q", msgs[0])
+	}
+	if !strings.Contains(msgs[0], "XBackend") {
+		t.Errorf("expected unsupported backend kind in message: %q", msgs[0])
 	}
 }

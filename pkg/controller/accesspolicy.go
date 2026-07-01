@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -39,28 +40,7 @@ import (
 	agenticinformersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 	helpersv1alpha1 "sigs.k8s.io/kube-agentic-networking/pkg/helpers"
-	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
-
-// AccessPolicyTargetRefIndex is the index name for looking up AccessPolicies by target ref (namespace/name of XBackend).
-const AccessPolicyTargetRefIndex = "targetRef"
-
-// accessPolicyTargetRefIndexFunc indexes AccessPolicies by each XBackend targetRef (namespace/name).
-// Used by the informer cache to support O(1) lookup of policies targeting a given backend.
-func accessPolicyTargetRefIndexFunc(obj interface{}) ([]string, error) {
-	policy, ok := obj.(*agenticv1alpha1.XAccessPolicy)
-	if !ok {
-		return nil, nil
-	}
-	var keys []string
-	for _, targetRef := range policy.Spec.TargetRefs {
-		if !isXBackendTargetRef(targetRef) {
-			continue
-		}
-		keys = append(keys, policy.Namespace+"/"+string(targetRef.Name))
-	}
-	return keys, nil
-}
 
 func (c *Controller) setupAccessPolicyEventHandlers(accessPolicyInformer agenticinformersv1alpha1.XAccessPolicyInformer) error {
 	_, err := accessPolicyInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -80,11 +60,6 @@ func (c *Controller) onAccessPolicyAdd(obj interface{}) {
 		return
 	}
 
-	// Validate CEL expressions.
-	if !c.validateCELSpec(context.Background(), policy) {
-		return
-	}
-
 	c.enqueueGatewaysForAccessPolicy(policy)
 }
 
@@ -100,11 +75,6 @@ func (c *Controller) onAccessPolicyUpdate(old, newObj interface{}) {
 			if !c.isPolicyUnderTargetLimit(context.Background(), newPolicy) {
 				return
 			}
-		}
-
-		// Validate CEL expressions.
-		if !c.validateCELSpec(context.Background(), newPolicy) {
-			return
 		}
 
 		c.enqueueGatewaysForAccessPolicy(newPolicy)
@@ -266,7 +236,7 @@ func (c *Controller) isPolicyUnderTargetLimit(ctx context.Context, policy *agent
 	// 3. Update status for all targets based on the overall result.
 	for _, targetRef := range policy.Spec.TargetRefs {
 		reason := agenticv1alpha1.PolicyReasonAccepted
-		message := "AccessPolicy accepted for target"
+		message := accessPolicyAcceptedMessage
 
 		if !shouldAccept {
 			reason = agenticv1alpha1.PolicyLimitPerTargetExceeded
@@ -363,31 +333,78 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 	})
 }
 
-// validateCELSpec validates that all CEL expressions in the policy are syntactically valid.
-// It returns true if all expressions are valid, false otherwise.
-// It also updates the policy status accordingly.
-func (c *Controller) validateCELSpec(ctx context.Context, policy *agenticv1alpha1.XAccessPolicy) bool {
-	if policy.Spec.Rules == nil {
-		return true
-	}
-
-	for _, rule := range policy.Spec.Rules {
-		if rule.Authorization != nil && rule.Authorization.Type == agenticv1alpha1.AuthorizationRuleTypeCEL && rule.Authorization.CEL != nil {
-			if _, err := translator.CompileCelExpression(rule.Authorization.CEL.Expression); err != nil {
-				msg := fmt.Sprintf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
-				c.rejectPolicyForAllTargets(ctx, policy, msg)
-				return false
-			}
+// filterEmptyStrings returns a copy of ss without "" elements.
+func filterEmptyStrings(ss []string) []string {
+	var out []string
+	for _, s := range ss {
+		if s != "" {
+			out = append(out, s)
 		}
 	}
-
-	return true
+	return out
 }
 
-func (c *Controller) rejectPolicyForAllTargets(ctx context.Context, policy *agenticv1alpha1.XAccessPolicy, message string) {
-	for _, targetRef := range policy.Spec.TargetRefs {
-		if err := c.updateAccessPolicyStatus(ctx, policy, targetRef, false, agenticv1alpha1.PolicyReasonInvalidCEL, message); err != nil {
-			runtime.HandleError(fmt.Errorf("failed to update AccessPolicy status: %w", err))
+const (
+	accessPolicyAcceptedMessage    = "AccessPolicy accepted for target"
+	accessPolicySkippedRulesPrefix = "some rules were not programmed"
+	accessPolicyStaleInvalidReason = string(gwapiv1.PolicyReasonInvalid)
+)
+
+func accessPolicyNeedsTranslationStatusRefresh(policy *agenticv1alpha1.XAccessPolicy) bool {
+	for _, anc := range policy.Status.Ancestors {
+		cond := meta.FindStatusCondition(anc.Conditions, string(agenticv1alpha1.PolicyConditionAccepted))
+		if cond == nil {
+			continue
+		}
+		// Clear status left by older reconciliations that marked the whole policy Invalid.
+		if cond.Status == metav1.ConditionFalse && cond.Reason == accessPolicyStaleInvalidReason {
+			return true
+		}
+		if cond.Status == metav1.ConditionTrue && strings.Contains(cond.Message, accessPolicySkippedRulesPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func accessPolicyTranslationWarningMessage(skippedRuleMsgs []string) string {
+	return fmt.Sprintf("%s; %s: %s", accessPolicyAcceptedMessage, accessPolicySkippedRulesPrefix,
+		strings.Join(deduplicateStrings(filterEmptyStrings(skippedRuleMsgs)), "; "))
+}
+
+// reconcileAccessPolicyTranslationStatus updates XAccessPolicy status when the translator skips rules.
+// Skipped rules are treated as "never match" at enforcement time; the policy stays Accepted so it
+// remains attached (default deny for allow policies when no rules match). Valid rules in the same
+// policy continue to be enforced.
+//
+// ListAccessPoliciesAttachedToGateway defines which policies are in scope for this Gateway sync.
+// The translator's issues map only contains policies that reported errors this pass; policies that
+// now translate cleanly but still carry a skipped-rules warning (or stale Invalid from older code)
+// are reset via isPolicyUnderTargetLimit when issues omits the policy.
+func (c *Controller) reconcileAccessPolicyTranslationStatus(ctx context.Context, gateway *gwapiv1.Gateway, issues map[types.NamespacedName][]string) {
+	attached, err := c.translator.ListAccessPoliciesAttachedToGateway(gateway)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("list AccessPolicies attached to gateway: %w", err))
+		return
+	}
+	for _, policy := range attached {
+		nn := types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}
+		if msgs, hasErr := issues[nn]; hasErr {
+			if !helpersv1alpha1.IsXAccessPolicyAccepted(policy) {
+				if !c.isPolicyUnderTargetLimit(ctx, policy) {
+					continue
+				}
+			}
+			msg := accessPolicyTranslationWarningMessage(msgs)
+			for _, tr := range policy.Spec.TargetRefs {
+				if err := c.updateAccessPolicyStatus(ctx, policy, tr, true, agenticv1alpha1.PolicyReasonAccepted, msg); err != nil {
+					runtime.HandleError(fmt.Errorf("update AccessPolicy %s status for skipped rules: %w", nn, err))
+				}
+			}
+			continue
+		}
+		if accessPolicyNeedsTranslationStatusRefresh(policy) {
+			_ = c.isPolicyUnderTargetLimit(ctx, policy)
 		}
 	}
 }
