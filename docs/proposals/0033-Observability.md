@@ -39,17 +39,19 @@ Where OpenTelemetry does not define attributes for permission enforcement outcom
 |-----------|--------|-------------|
 | `event.action` | `allow`, `deny` | Action taken due to the policy check |
 | `event.outcome` | `success`, `failure`, `unknown` | Outcome of the check itself |
+| `security_rule.implicit` | `true` | Present and `true` when the span represents built-in fallback behavior rather than a user-defined rule. Absent on spans produced by explicit rules. |
 
 These can be considered for inclusion in an existing or new OpenTelemetry semantic convention registry.
 
 ### Per-Rule Evaluation Spans
 
-For authorization and guardrail checks, emit an `mcp.authorization.rule` or `mcp.guardrail.rule` child span for each rule evaluated within the parent span. Each child span records:
+For authorization and guardrail checks, implementations should emit a single `mcp.authorization.rule` or `mcp.guardrail.rule` child span identifying the rule that determined the outcome. Each span records:
 - `security_rule.name` — the rule identifier
-- `security_rule.match` — whether the rule matched (`true`/`false`)
-- `event.action` — the action the rule would take (`allow`/`deny`)
+- `event.action` — the action taken (`allow`/`deny`)
 
-Evaluation stops at the determining rule. For authorization, if no allow rule matches, emit an explicit `default-deny` rule span (`security_rule.name: default-deny`, `security_rule.match: true`, `event.action: deny`) to make the implicit default-deny behavior visible in traces.
+This span represents decisive attribution — which rule caused the outcome — rather than a full evaluation log. Implementations may additionally emit spans for rules that were evaluated but did not contribute to the decision, which can be useful for audit purposes; in that case `security_rule.match` should be set to `true`/`false` to indicate whether each rule matched.
+
+For authorization, if no explicit allow rule matches, implementations should emit an `mcp.authorization.rule` span with `security_rule.name: default-deny`, `security_rule.implicit: true`, and `event.action: deny` to make the implicit default-deny behavior visible in traces, rather than leaving the denial attributed only to the parent span. The `security_rule.implicit: true` attribute distinguishes this span from any user-defined rule that might share the same name.
 
 ## Retries
 
@@ -145,22 +147,10 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
     │   ├─ error.message: "User role 'support_agent' lacks privileges for customer_data.delete"
     │   ├─ status: ERROR
     │   │
-    │   ├─► Span: mcp.authorization.rule         [span_id: 9c1d2e3f]
-    │   │   ├─ security_rule.name: read_only_support
-    │   │   ├─ security_rule.match: false
-    │   │   ├─ event.action: allow
-    │   │   └─ event.outcome: success
-    │   │
-    │   ├─► Span: mcp.authorization.rule         [span_id: 1d2e3f4a]
-    │   │   ├─ security_rule.name: admin_only_delete
-    │   │   ├─ security_rule.match: false
-    │   │   ├─ event.action: allow
-    │   │   └─ event.outcome: success
-    │   │
     │   └─► Span: mcp.authorization.rule         [span_id: 2e3f4a5b]
     │       ├─ security_rule.name: default-deny
-    │       ├─ security_rule.match: true
-    │       ├─ event.action: allow
+    │       ├─ security_rule.implicit: true
+    │       ├─ event.action: deny
     │       └─ event.outcome: success
     │
     │
@@ -267,12 +257,6 @@ Span: mcp.gateway.request                       [span_id: 5e6f7a8b]
     │   ├─ error.type: GuardrailViolationError
     │   ├─ error.message: "PII detected: SSN, Credit Card"
     │   ├─ status: ERROR
-    │   │
-    │   ├─► Span: mcp.guardrail.rule             [span_id: 9c1d2e3f]
-    │   │   ├─ security_rule.name: block_profanity
-    │   │   ├─ security_rule.match: false
-    │   │   ├─ event.action: deny
-    │   │   └─ event.outcome: success
     │   │
     │   └─► Span: mcp.guardrail.rule             [span_id: 1d2e3f4a]
     │       ├─ security_rule.name: block_sensitive_pii
