@@ -12,6 +12,7 @@ Status: Provisional<br/>
 
 | Date | Change |
 |------|--------|
+| 2026-07-02 | Added support for the MCP `ttlMs` freshness hint (SEP #2549) as the primary refetch bound, clamped by `spec.maxPollInterval`, with `tools/list_changed` as immediate invalidation. Scoped policy validation to `Inline` rules. Addresses review feedback from @david-martin and @shachartal. |
 | 2026-05-25 | Major revision: replaced `XBackend.status.discoveredTools` with a dedicated `XToolInventory` CRD (1:1 with XBackend via `backendRef`). Updated all examples to `agentic.networking.x-k8s.io/v1alpha1` with method-based matching (`mcp.methods[].params[]`). Changed default poll interval from 30s to 5m. Added hybrid creation model (explicit + annotation-triggered). Motivated by community feedback from @keithmattix and @david-martin. |
 | 2026-04-06 | Added A2A scoping non-goal. |
 | 2026-03-16 | Initial proposal. |
@@ -111,8 +112,8 @@ in the policy's `Accepted` condition message if any tool name doesn't match.
 **CUJ 3: Backend adds a new tool.**
 A tool developer deploys a new version of their MCP server with an additional
 tool. The discovery controller detects the change (via `tools/list_changed`
-notification or the next poll) and updates the `XToolInventory` status.
-Existing `XAccessPolicy` resources that don't include the new tool are
+notification, TTL expiry, or the next poll) and updates the `XToolInventory`
+status. Existing `XAccessPolicy` resources that don't include the new tool are
 unaffected; the operator can add it when ready.
 
 **CUJ 4: Backend exposes an invalid tool.**
@@ -178,10 +179,20 @@ type XToolInventorySpec struct {
     BackendRef gwapiv1.LocalObjectReference `json:"backendRef"`
 
     // PollInterval is the interval between discovery polls for backends
-    // that do not support tools/list_changed notifications.
+    // that do not support tools/list_changed notifications and do not
+    // advertise a ttlMs freshness hint on their tools/list response.
     // Defaults to 5 minutes.
     // +optional
     PollInterval *metav1.Duration `json:"pollInterval,omitempty"`
+
+    // MaxPollInterval bounds how long the controller will honor a
+    // server-advertised ttlMs before re-fetching. It defends against a
+    // misconfigured or malicious server setting an excessively long ttlMs
+    // that would otherwise cause the inventory to serve stale data. The
+    // effective refetch interval is min(server ttlMs, MaxPollInterval).
+    // Defaults to 30 minutes.
+    // +optional
+    MaxPollInterval *metav1.Duration `json:"maxPollInterval,omitempty"`
 }
 
 type XToolInventoryStatus struct {
@@ -202,6 +213,13 @@ type XToolInventoryStatus struct {
     // tools/list call to the referenced backend.
     // +optional
     LastDiscoveryTime *metav1.Time `json:"lastDiscoveryTime,omitempty"`
+
+    // ObservedTTL reflects the ttlMs freshness hint advertised by the
+    // backend on its most recent tools/list response, if any. It is
+    // observed state, not a control knob; the operator bounds it via
+    // spec.maxPollInterval.
+    // +optional
+    ObservedTTL *metav1.Duration `json:"observedTTL,omitempty"`
 }
 
 type DiscoveredTool struct {
@@ -363,13 +381,26 @@ For each XToolInventory, the controller:
    Tools with invalid schemas are rejected and logged as Warning events on the
    XToolInventory resource.
 5. **Updates** `XToolInventory.status.discoveredTools[]` with validated tools
-   only.
+   only, and records any server-advertised `ttlMs` in `status.observedTTL`.
 6. **Maintains a persistent connection** to backends that declare the
    `listChanged` capability, listening for `tools/list_changed` notifications
    to trigger immediate re-discovery.
-7. **Falls back to polling** (configurable via `spec.pollInterval`, default 5m)
-   for backends that don't support `list_changed`, and as a periodic
-   consistency check for all backends.
+7. **Determines the refetch interval** using the freshness signals available,
+   in priority order:
+   - If the backend advertises a `ttlMs` on its `tools/list` response (per the
+     MCP caching hints in [SEP #2549](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2549)),
+     the controller refetches after `min(ttlMs, spec.maxPollInterval)`. The
+     `maxPollInterval` bound guards against a misconfigured or malicious server
+     advertising an excessively long TTL that would defeat the purpose of
+     surfacing fresh data to policy authors.
+   - A `tools/list_changed` notification invalidates the cached result
+     immediately, regardless of the TTL.
+   - For backends that advertise neither, the controller falls back to polling
+     at `spec.pollInterval` (default 5m).
+   Note that the MCP spec frames `ttlMs` as an on-access freshness hint rather
+   than a polling interval; the discovery controller deliberately uses it as a
+   refetch bound, applying jitter and backoff, which is the trade-off this
+   proposal asks the community to accept for a control-plane inventory.
 8. **Detects drift** by diffing new vs. old tool sets and emits Kubernetes
    Events when tools are added, removed, or fail validation.
 
@@ -522,6 +553,13 @@ lifecycle.
    `spec.pollInterval` on XToolInventory.
 4. **Hybrid creation model.** Operators can pre-create XToolInventory resources
    or let the controller auto-create them via annotation. Is this acceptable?
+5. **Freshness signals: TTL vs. notifications.** We propose honoring a
+   server-advertised `ttlMs` ([MCP SEP #2549](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2549))
+   as the primary refetch bound, clamped by `spec.maxPollInterval` to defend
+   against excessively long TTLs, with `tools/list_changed` notifications as an
+   immediate invalidation signal. Is the community comfortable with using
+   `ttlMs` as a refetch bound (rather than the on-access freshness hint the MCP
+   spec describes) for a control-plane inventory?
 
 ### Phase 3
 
@@ -547,6 +585,8 @@ deferred pending Backend spec stabilization.
 - [gateway-api PR #4488](https://github.com/kubernetes-sigs/gateway-api/pull/4488) — Upstream Backend resource
 - [AI Gateway WG Proposal 10](https://github.com/kubernetes-sigs/wg-ai-gateway/blob/main/proposals/10-egress-gateways.md) — Egress gateways with MCP protocol support
 - [MCP Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25) — Current MCP spec with tool annotations, pagination, schema requirements
+- [MCP SEP #2549](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2549) — TTL (`ttlMs`) freshness hints for list results
+- [MCP spec release candidate (2026-07-28)](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) — Release candidate introducing the `ttlMs` caching hints
 - [Kuadrant/mcp-gateway issue #662](https://github.com/Kuadrant/mcp-gateway/issues/662) — Schema validation gap
 - [Kuadrant/mcp-gateway issue #629](https://github.com/Kuadrant/mcp-gateway/issues/629) — Status usability issues motivating dedicated CRD
 - [Kuadrant/mcp-gateway PR #329](https://github.com/Kuadrant/mcp-gateway/pull/329) — tools/list_changed support
