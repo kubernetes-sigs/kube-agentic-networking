@@ -1071,3 +1071,87 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 		}
 	}
 }
+
+func TestTranslateInlineAttributesToRBACPermission(t *testing.T) {
+	tests := []struct {
+		name  string
+		auth  *agenticv1alpha1.AuthorizationRule
+		check func(*testing.T, *rbacconfigv3.Permission)
+	}{
+		{
+			name: "nil auth",
+			auth: nil,
+			check: func(t *testing.T, p *rbacconfigv3.Permission) {
+				if p != nil {
+					t.Errorf("expected nil permission for nil auth")
+				}
+			},
+		},
+		{
+			name: "methods and paths",
+			auth: &agenticv1alpha1.AuthorizationRule{
+				Methods: []agenticv1alpha1.HTTPMethod{"GET", "POST"},
+				Paths: []agenticv1alpha1.HTTPPathMatch{
+					{Value: func(s string) *string { return &s }("/health")},
+				},
+			},
+			check: func(t *testing.T, p *rbacconfigv3.Permission) {
+				andRules := p.GetAndRules()
+				if andRules == nil || len(andRules.GetRules()) != 2 {
+					t.Fatalf("expected AndRules with 2 rules")
+				}
+			},
+		},
+		{
+			name: "headers, hosts, and ports",
+			auth: &agenticv1alpha1.AuthorizationRule{
+				Headers: []agenticv1alpha1.HTTPHeaderMatch{
+					{Name: "x-role", Value: "admin"},
+				},
+				Hosts: []agenticv1alpha1.Hostname{".example.com"},
+				Ports: []agenticv1alpha1.PortNumber{8080},
+			},
+			check: func(t *testing.T, p *rbacconfigv3.Permission) {
+				andRules := p.GetAndRules()
+				if andRules == nil || len(andRules.GetRules()) != 3 {
+					t.Fatalf("expected AndRules with 3 rules, got %v", p)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := translateInlineAttributesToRBACPermission(tt.auth)
+			tt.check(t, got)
+		})
+	}
+}
+
+func TestTranslateAccessRuleToRBACPolicy(t *testing.T) {
+	tr := &Translator{}
+	rule := agenticv1alpha1.AccessRule{
+		Name: "test-rule",
+		Authorization: &agenticv1alpha1.AuthorizationRule{
+			Type:    agenticv1alpha1.AuthorizationRuleTypeInline,
+			Methods: []agenticv1alpha1.HTTPMethod{"GET"},
+			MCP: agenticv1alpha1.MCPAttributes{
+				Methods: []agenticv1alpha1.MCPMethod{
+					{Name: "tools/call"},
+				},
+			},
+		},
+	}
+	policy := tr.translateAccessRuleToRBACPolicy("default", rule)
+	if policy == nil {
+		t.Fatalf("expected policy, got nil")
+	}
+	perms := policy.GetPermissions()
+	if len(perms) != 1 {
+		t.Fatalf("expected 1 combined permission, got %d", len(perms))
+	}
+	andRules := perms[0].GetAndRules()
+	if andRules == nil || len(andRules.GetRules()) != 2 {
+		t.Fatalf("expected combined AndRules with 2 rules")
+	}
+}

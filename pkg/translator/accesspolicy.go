@@ -181,49 +181,9 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 	for _, policy := range policies {
 		for _, rule := range policy.Spec.Rules {
 			policyName := rule.Name
-			source := t.ruleSourceToPrincipalName(policy.Namespace, rule.Source)
-
-			var principalIDs []*rbacconfigv3.Principal
-			if source != "" {
-				principalIDs = append(principalIDs, &rbacconfigv3.Principal{
-					Identifier: &rbacconfigv3.Principal_Authenticated_{
-						Authenticated: &rbacconfigv3.Principal_Authenticated{
-							PrincipalName: &matcherv3.StringMatcher{
-								MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
-							},
-						},
-					},
-				})
-			}
-			if len(principalIDs) == 0 {
-				principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
-			}
-
-			rbacPolicy := &rbacconfigv3.Policy{
-				Principals: principalIDs,
-			}
-
-			if rule.Authorization != nil {
-				switch rule.Authorization.Type {
-				case agenticv1alpha1.AuthorizationRuleTypeInline:
-					if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
-						rbacPolicy.Permissions = permissions
-					}
-				case agenticv1alpha1.AuthorizationRuleTypeCEL:
-					if rule.Authorization.CEL != nil {
-						ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
-						if err != nil {
-							klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
-							continue
-						}
-						rbacPolicy.Condition = ast.Expr()
-						rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
-					}
-				}
-			}
-
-			if len(rbacPolicy.GetPermissions()) == 0 {
-				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
+			rbacPolicy := t.translateAccessRuleToRBACPolicy(policy.Namespace, rule)
+			if rbacPolicy == nil {
+				continue
 			}
 
 			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
@@ -314,47 +274,9 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	for _, rule := range accessPolicy.Spec.Rules {
 		policyName := rule.Name
 
-		source := t.ruleSourceToPrincipalName(accessPolicy.Namespace, rule.Source)
-
-		var principalIDs []*rbacconfigv3.Principal
-		if source != "" {
-			principalIDs = append(principalIDs, &rbacconfigv3.Principal{
-				Identifier: &rbacconfigv3.Principal_Authenticated_{
-					Authenticated: &rbacconfigv3.Principal_Authenticated{
-						PrincipalName: &matcherv3.StringMatcher{
-							MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
-						},
-					},
-				},
-			})
-		}
-
-		if len(principalIDs) == 0 {
-			principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
-		}
-
-		rbacPolicy := &rbacconfigv3.Policy{
-			Principals: principalIDs,
-		}
-
-		if rule.Authorization != nil {
-			switch rule.Authorization.Type {
-			case agenticv1alpha1.AuthorizationRuleTypeInline:
-				// TODO: Only MCP is currently supported. Add support for more generic inline auth in the future
-				if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
-					rbacPolicy.Permissions = permissions
-				}
-			case agenticv1alpha1.AuthorizationRuleTypeCEL:
-				if rule.Authorization.CEL != nil {
-					ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
-					if err != nil {
-						klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
-						continue
-					}
-					rbacPolicy.Condition = ast.Expr()
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
-				}
-			}
+		rbacPolicy := t.translateAccessRuleToRBACPolicy(accessPolicy.Namespace, rule)
+		if rbacPolicy == nil {
+			continue
 		}
 
 		// Handle ExternalAuth at policy level
@@ -391,6 +313,265 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	}
 
 	return rbacConfig
+}
+
+func (t *Translator) translateAccessRuleToRBACPolicy(policyNamespace string, rule agenticv1alpha1.AccessRule) *rbacconfigv3.Policy {
+	source := t.ruleSourceToPrincipalName(policyNamespace, rule.Source)
+
+	var principalIDs []*rbacconfigv3.Principal
+	if source != "" {
+		principalIDs = append(principalIDs, &rbacconfigv3.Principal{
+			Identifier: &rbacconfigv3.Principal_Authenticated_{
+				Authenticated: &rbacconfigv3.Principal_Authenticated{
+					PrincipalName: &matcherv3.StringMatcher{
+						MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
+					},
+				},
+			},
+		})
+	}
+	if len(principalIDs) == 0 {
+		principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
+	}
+
+	rbacPolicy := &rbacconfigv3.Policy{
+		Principals: principalIDs,
+	}
+
+	var authPerms []*rbacconfigv3.Permission
+	if rule.Authorization != nil {
+		switch rule.Authorization.Type {
+		case agenticv1alpha1.AuthorizationRuleTypeInline:
+			httpPerm := translateInlineAttributesToRBACPermission(rule.Authorization)
+			hasHTTP := httpPerm != nil
+			hasMCP := len(rule.Authorization.MCP.Methods) > 0 || rule.Authorization.MCP.MCPBaseProtocolMethodsOption == agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch
+
+			switch {
+			case hasHTTP && !hasMCP:
+				authPerms = []*rbacconfigv3.Permission{httpPerm}
+			case !hasHTTP && hasMCP:
+				authPerms = t.translateMCPToRBACPermissions(&rule.Authorization.MCP)
+			case hasHTTP && hasMCP:
+				mcpPerms := t.translateMCPToRBACPermissions(&rule.Authorization.MCP)
+				for _, mp := range mcpPerms {
+					authPerms = append(authPerms, &rbacconfigv3.Permission{
+						Rule: &rbacconfigv3.Permission_AndRules{
+							AndRules: &rbacconfigv3.Permission_Set{
+								Rules: []*rbacconfigv3.Permission{httpPerm, mp},
+							},
+						},
+					})
+				}
+			default:
+				authPerms = []*rbacconfigv3.Permission{buildAnyPermission()}
+			}
+		case agenticv1alpha1.AuthorizationRuleTypeCEL:
+			if rule.Authorization.CEL != nil {
+				ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
+				if err != nil {
+					klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
+					return nil
+				}
+				rbacPolicy.Condition = ast.Expr()
+				authPerms = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
+			}
+		}
+	}
+
+	if len(authPerms) == 0 {
+		rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
+	} else {
+		rbacPolicy.Permissions = authPerms
+	}
+
+	return rbacPolicy
+}
+
+func translateInlineAttributesToRBACPermission(auth *agenticv1alpha1.AuthorizationRule) *rbacconfigv3.Permission {
+	if auth == nil {
+		return nil
+	}
+
+	var rules []*rbacconfigv3.Permission
+
+	// 1. Methods
+	if len(auth.Methods) > 0 {
+		var methodRules []*rbacconfigv3.Permission
+		for _, method := range auth.Methods {
+			methodRules = append(methodRules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_Header{
+					Header: &routev3.HeaderMatcher{
+						Name: ":method",
+						HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
+							StringMatch: &matcherv3.StringMatcher{
+								MatchPattern: &matcherv3.StringMatcher_Exact{Exact: string(method)},
+							},
+						},
+					},
+				},
+			})
+		}
+		if len(methodRules) == 1 {
+			rules = append(rules, methodRules[0])
+		} else {
+			rules = append(rules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_OrRules{
+					OrRules: &rbacconfigv3.Permission_Set{Rules: methodRules},
+				},
+			})
+		}
+	}
+
+	// 2. Paths
+	if len(auth.Paths) > 0 {
+		var pathRules []*rbacconfigv3.Permission
+		for _, path := range auth.Paths {
+			if sm := translateHTTPPathMatch(path); sm != nil {
+				pathRules = append(pathRules, &rbacconfigv3.Permission{
+					Rule: &rbacconfigv3.Permission_UrlPath{
+						UrlPath: &matcherv3.PathMatcher{
+							Rule: &matcherv3.PathMatcher_Path{Path: sm},
+						},
+					},
+				})
+			}
+		}
+		if len(pathRules) == 1 {
+			rules = append(rules, pathRules[0])
+		} else if len(pathRules) > 1 {
+			rules = append(rules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_OrRules{
+					OrRules: &rbacconfigv3.Permission_Set{Rules: pathRules},
+				},
+			})
+		}
+	}
+
+	// 3. Hosts
+	if len(auth.Hosts) > 0 {
+		var hostRules []*rbacconfigv3.Permission
+		for _, host := range auth.Hosts {
+			hostRules = append(hostRules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_Header{
+					Header: &routev3.HeaderMatcher{
+						Name: ":authority",
+						HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
+							StringMatch: &matcherv3.StringMatcher{
+								MatchPattern: &matcherv3.StringMatcher_Exact{Exact: string(host)},
+							},
+						},
+					},
+				},
+			})
+		}
+		if len(hostRules) == 1 {
+			rules = append(rules, hostRules[0])
+		} else if len(hostRules) > 1 {
+			rules = append(rules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_OrRules{
+					OrRules: &rbacconfigv3.Permission_Set{Rules: hostRules},
+				},
+			})
+		}
+	}
+
+	// 4. Ports
+	if len(auth.Ports) > 0 {
+		var portRules []*rbacconfigv3.Permission
+		for _, port := range auth.Ports {
+			if port < 0 {
+				continue
+			}
+			portRules = append(portRules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_DestinationPort{
+					DestinationPort: uint32(port),
+				},
+			})
+		}
+		if len(portRules) == 1 {
+			rules = append(rules, portRules[0])
+		} else {
+			rules = append(rules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_OrRules{
+					OrRules: &rbacconfigv3.Permission_Set{Rules: portRules},
+				},
+			})
+		}
+	}
+
+	// 5. Headers (AND across headers)
+	for _, h := range auth.Headers {
+		if hm := translateHTTPHeaderMatch(h); hm != nil {
+			rules = append(rules, &rbacconfigv3.Permission{
+				Rule: &rbacconfigv3.Permission_Header{Header: hm},
+			})
+		}
+	}
+
+	if len(rules) == 0 {
+		return nil
+	}
+	if len(rules) == 1 {
+		return rules[0]
+	}
+	return &rbacconfigv3.Permission{
+		Rule: &rbacconfigv3.Permission_AndRules{
+			AndRules: &rbacconfigv3.Permission_Set{Rules: rules},
+		},
+	}
+}
+
+func translateHTTPPathMatch(path agenticv1alpha1.HTTPPathMatch) *matcherv3.StringMatcher {
+	val := ""
+	if path.Value != nil {
+		val = *path.Value
+	}
+	sm := &matcherv3.StringMatcher{}
+	matchType := agenticv1alpha1.PathMatchPathPrefix
+	if path.Type != nil {
+		matchType = *path.Type
+	}
+	switch matchType {
+	case agenticv1alpha1.PathMatchExact:
+		sm.MatchPattern = &matcherv3.StringMatcher_Exact{Exact: val}
+	case agenticv1alpha1.PathMatchPathPrefix:
+		sm.MatchPattern = &matcherv3.StringMatcher_Prefix{Prefix: val}
+	case agenticv1alpha1.PathMatchRegularExpression:
+		sm.MatchPattern = &matcherv3.StringMatcher_SafeRegex{
+			SafeRegex: &matcherv3.RegexMatcher{
+				EngineType: &matcherv3.RegexMatcher_GoogleRe2{GoogleRe2: &matcherv3.RegexMatcher_GoogleRE2{}},
+				Regex:      val,
+			},
+		}
+	default:
+		return nil
+	}
+	return sm
+}
+
+func translateHTTPHeaderMatch(header agenticv1alpha1.HTTPHeaderMatch) *routev3.HeaderMatcher {
+	sm := &matcherv3.StringMatcher{}
+	matchType := agenticv1alpha1.HeaderMatchExact
+	if header.Type != nil {
+		matchType = *header.Type
+	}
+	switch matchType {
+	case agenticv1alpha1.HeaderMatchExact:
+		sm.MatchPattern = &matcherv3.StringMatcher_Exact{Exact: header.Value}
+	case agenticv1alpha1.HeaderMatchRegularExpression:
+		sm.MatchPattern = &matcherv3.StringMatcher_SafeRegex{
+			SafeRegex: &matcherv3.RegexMatcher{
+				EngineType: &matcherv3.RegexMatcher_GoogleRe2{GoogleRe2: &matcherv3.RegexMatcher_GoogleRE2{}},
+				Regex:      header.Value,
+			},
+		}
+	default:
+		return nil
+	}
+	return &routev3.HeaderMatcher{
+		Name:                 string(header.Name),
+		HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: sm},
+	}
 }
 
 func (t *Translator) translateMCPToRBACPermissions(mcp *agenticv1alpha1.MCPAttributes) []*rbacconfigv3.Permission {
