@@ -672,13 +672,7 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				}
 				return p
 			}(),
-			expectedRules: map[string]expectedRule{
-				"rule-1": {
-					principal:           "spiffe://example.com/ns/default/sa/caller",
-					permissions:         []string{},
-					expectAnyPermission: true,
-				},
-			},
+			expectedRules: map[string]expectedRule{},
 		},
 		{
 			name:         "one rule with nil authorization",
@@ -874,6 +868,74 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergeAllowPoliciesToRBAC(t *testing.T) {
+	denyByDefault := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "deny-by-default"},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "deny-all-tools",
+					Source: agenticv1alpha1.AccessRuleSource{
+						Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE,
+						SPIFFE: func() *agenticv1alpha1.AuthorizationSourceSPIFFE {
+							s := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://example.com/ns/default/sa/caller")
+							return &s
+						}(),
+					},
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP: agenticv1alpha1.MCPAttributes{
+							Methods: []agenticv1alpha1.MCPMethod{},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	allowOneTool := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "allow-one-tool"},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "allow-tool-a",
+					Source: agenticv1alpha1.AccessRuleSource{
+						Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE,
+						SPIFFE: func() *agenticv1alpha1.AuthorizationSourceSPIFFE {
+							s := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://example.com/ns/default/sa/caller")
+							return &s
+						}(),
+					},
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP: agenticv1alpha1.MCPAttributes{
+							Methods: []agenticv1alpha1.MCPMethod{
+								{
+									Name:   "tools/call",
+									Params: []agenticv1alpha1.MCPMethodParam{"tool-a"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
+	rbac := tr.mergeAllowPoliciesToRBAC([]*agenticv1alpha1.XAccessPolicy{denyByDefault, allowOneTool})
+
+	expectedRules := map[string]expectedRule{
+		"default/allow-one-tool/allow-tool-a": {
+			principal:   "spiffe://example.com/ns/default/sa/caller",
+			permissions: []string{"tool-a"},
+		},
+	}
+	verifyRBAC(t, rbac.GetRules(), expectedRules)
 }
 
 func TestBuildAllowMCPSessionClosePolicy(t *testing.T) {

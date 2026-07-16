@@ -180,57 +180,72 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 
 	for _, policy := range policies {
 		for _, rule := range policy.Spec.Rules {
-			policyName := rule.Name
-			source := t.ruleSourceToPrincipalName(policy.Namespace, rule.Source)
-
-			var principalIDs []*rbacconfigv3.Principal
-			if source != "" {
-				principalIDs = append(principalIDs, &rbacconfigv3.Principal{
-					Identifier: &rbacconfigv3.Principal_Authenticated_{
-						Authenticated: &rbacconfigv3.Principal_Authenticated{
-							PrincipalName: &matcherv3.StringMatcher{
-								MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
-							},
-						},
-					},
-				})
+			rbacPolicy, ok := t.buildAllowRBACPolicyFromRule(policy.Namespace, rule)
+			if !ok {
+				continue
 			}
-			if len(principalIDs) == 0 {
-				principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
-			}
-
-			rbacPolicy := &rbacconfigv3.Policy{
-				Principals: principalIDs,
-			}
-
-			if rule.Authorization != nil {
-				switch rule.Authorization.Type {
-				case agenticv1alpha1.AuthorizationRuleTypeInline:
-					if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
-						rbacPolicy.Permissions = permissions
-					}
-				case agenticv1alpha1.AuthorizationRuleTypeCEL:
-					if rule.Authorization.CEL != nil {
-						ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
-						if err != nil {
-							klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
-							continue
-						}
-						rbacPolicy.Condition = ast.Expr()
-						rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
-					}
-				}
-			}
-
-			if len(rbacPolicy.GetPermissions()) == 0 {
-				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
-			}
-
+			policyName := fmt.Sprintf("%s/%s/%s", policy.Namespace, policy.Name, rule.Name)
 			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
 		}
 	}
 
 	return rbacConfig
+}
+
+// buildAllowRBACPolicyFromRule translates an AccessRule into an Envoy RBAC allow policy.
+// The second return value is false when the rule contributes no allow permissions (for example,
+// an explicit empty MCP methods allowlist) and should be omitted from the merged RBAC config.
+func (t *Translator) buildAllowRBACPolicyFromRule(policyNamespace string, rule agenticv1alpha1.AccessRule) (*rbacconfigv3.Policy, bool) {
+	source := t.ruleSourceToPrincipalName(policyNamespace, rule.Source)
+
+	var principalIDs []*rbacconfigv3.Principal
+	if source != "" {
+		principalIDs = append(principalIDs, &rbacconfigv3.Principal{
+			Identifier: &rbacconfigv3.Principal_Authenticated_{
+				Authenticated: &rbacconfigv3.Principal_Authenticated{
+					PrincipalName: &matcherv3.StringMatcher{
+						MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
+					},
+				},
+			},
+		})
+	}
+	if len(principalIDs) == 0 {
+		principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
+	}
+
+	rbacPolicy := &rbacconfigv3.Policy{
+		Principals: principalIDs,
+	}
+
+	if rule.Authorization == nil {
+		rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
+		return rbacPolicy, true
+	}
+
+	switch rule.Authorization.Type {
+	case agenticv1alpha1.AuthorizationRuleTypeInline:
+		permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP)
+		if permissions == nil {
+			return nil, false
+		}
+		rbacPolicy.Permissions = permissions
+	case agenticv1alpha1.AuthorizationRuleTypeCEL:
+		if rule.Authorization.CEL == nil {
+			return nil, false
+		}
+		ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
+		if err != nil {
+			klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
+			return nil, false
+		}
+		rbacPolicy.Condition = ast.Expr()
+		rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
+	default:
+		return nil, false
+	}
+
+	return rbacPolicy, true
 }
 
 // findAccessPoliciesForTarget finds all AccessPolicies that target the given resource.
@@ -314,51 +329,15 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	for _, rule := range accessPolicy.Spec.Rules {
 		policyName := rule.Name
 
-		source := t.ruleSourceToPrincipalName(accessPolicy.Namespace, rule.Source)
-
-		var principalIDs []*rbacconfigv3.Principal
-		if source != "" {
-			principalIDs = append(principalIDs, &rbacconfigv3.Principal{
-				Identifier: &rbacconfigv3.Principal_Authenticated_{
-					Authenticated: &rbacconfigv3.Principal_Authenticated{
-						PrincipalName: &matcherv3.StringMatcher{
-							MatchPattern: &matcherv3.StringMatcher_Exact{Exact: source},
-						},
-					},
-				},
-			})
-		}
-
-		if len(principalIDs) == 0 {
-			principalIDs = []*rbacconfigv3.Principal{buildAnyPrincipal()}
-		}
-
-		rbacPolicy := &rbacconfigv3.Policy{
-			Principals: principalIDs,
-		}
-
-		if rule.Authorization != nil {
-			switch rule.Authorization.Type {
-			case agenticv1alpha1.AuthorizationRuleTypeInline:
-				// TODO: Only MCP is currently supported. Add support for more generic inline auth in the future
-				if permissions := t.translateMCPToRBACPermissions(&rule.Authorization.MCP); len(permissions) > 0 {
-					rbacPolicy.Permissions = permissions
-				}
-			case agenticv1alpha1.AuthorizationRuleTypeCEL:
-				if rule.Authorization.CEL != nil {
-					ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
-					if err != nil {
-						klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
-						continue
-					}
-					rbacPolicy.Condition = ast.Expr()
-					rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildToolsCallMethodPermission()}
-				}
-			}
-		}
-
 		// Handle ExternalAuth at policy level
 		if accessPolicy.Spec.Action == agenticv1alpha1.ActionTypeExternalAuth && accessPolicy.Spec.ExternalAuth != nil {
+			rbacPolicy, ok := t.buildAllowRBACPolicyFromRule(accessPolicy.Namespace, rule)
+			if !ok {
+				rbacPolicy = &rbacconfigv3.Policy{
+					Principals:  []*rbacconfigv3.Principal{buildAnyPrincipal()},
+					Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
+				}
+			}
 			hash, err := externalAuthUniqueID(accessPolicy.Spec.ExternalAuth)
 			if err != nil {
 				klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
@@ -379,23 +358,32 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 				Permissions: []*rbacconfigv3.Permission{buildAnyPermission()},
 			}
 			addPolicyToRBACRules(rbacConfig, policyName, allowAllPolicy)
-		} else {
-			// Action is Allow
-			// Ensure permissions is never empty to satisfy Envoy's schema validation (min_items: 1).
-			// Spec guidance: If omitted, all access from the specified source is allowed.
-			if len(rbacPolicy.GetPermissions()) == 0 {
-				rbacPolicy.Permissions = []*rbacconfigv3.Permission{buildAnyPermission()}
-			}
-			addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
+			continue
 		}
+
+		// Action is Allow
+		rbacPolicy, ok := t.buildAllowRBACPolicyFromRule(accessPolicy.Namespace, rule)
+		if !ok {
+			continue
+		}
+		addPolicyToRBACRules(rbacConfig, policyName, rbacPolicy)
 	}
 
 	return rbacConfig
 }
 
+// translateMCPToRBACPermissions converts MCP attributes into RBAC permissions.
+// Returns nil when an explicit empty methods allowlist is configured (deny-by-default for tool calls).
+// Returns any-permission when methods are omitted, meaning no MCP-level restriction is applied.
 func (t *Translator) translateMCPToRBACPermissions(mcp *agenticv1alpha1.MCPAttributes) []*rbacconfigv3.Permission {
 	if mcp == nil {
 		return []*rbacconfigv3.Permission{buildAnyPermission()}
+	}
+
+	// An explicit empty methods list establishes deny-by-default for tool calls.
+	if mcp.Methods != nil && len(mcp.Methods) == 0 &&
+		mcp.MCPBaseProtocolMethodsOption != agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch {
+		return nil
 	}
 
 	var permissions []*rbacconfigv3.Permission
@@ -408,10 +396,10 @@ func (t *Translator) translateMCPToRBACPermissions(mcp *agenticv1alpha1.MCPAttri
 	}
 
 	if len(permissions) == 0 {
-		// If both methods and base protocol methods are empty/skipped, we fall back to allowing anything
-		// to maintain backward compatibility for policies that don't specify methods.
-		// TODO: Re-evaluate this default if strict explicit allow is required when `mcp` is present but empty.
-		return []*rbacconfigv3.Permission{buildAnyPermission()}
+		if mcp.Methods == nil {
+			return []*rbacconfigv3.Permission{buildAnyPermission()}
+		}
+		return nil
 	}
 
 	return permissions
