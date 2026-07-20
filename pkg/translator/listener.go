@@ -442,9 +442,9 @@ func buildUDPFilterChain(lis gatewayv1.Listener) (*listener.FilterChain, error) 
 // shadow RBAC metadata, caller identity, and derived security event attributes on gateway spans.
 func buildTracingConfig(sampleRate float64) *hcm.HttpConnectionManager_Tracing {
 	return &hcm.HttpConnectionManager_Tracing{
-		RandomSampling:  &typev3.Percent{Value: sampleRate},
-		ClientSampling:  &typev3.Percent{Value: 100.0}, // always honor incoming sampled traceparent to preserve agent-to-gateway trace linkage
-		OverallSampling: &typev3.Percent{Value: sampleRate},
+		RandomSampling:    &typev3.Percent{Value: sampleRate},
+		ClientSampling:    &typev3.Percent{Value: 100.0}, // always honor incoming sampled traceparent to preserve agent-to-gateway trace linkage
+		OverallSampling:   &typev3.Percent{Value: sampleRate},
 		SpawnUpstreamSpan: wrapperspb.Bool(true),
 		CustomTags: []*tracingv3.CustomTag{
 			buildMetadataTag("security_rule.name", "envoy.filters.http.rbac", "shadow_effective_policy_id"),
