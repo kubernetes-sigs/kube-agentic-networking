@@ -37,8 +37,7 @@ import (
 type routeBackend struct {
 	clusterName string
 	xbackend    *agenticv0alpha0.XBackend // nil if this is a direct Service ref
-	svcNS       string
-	svcName     string
+	svc         *corev1.Service           // set for direct Service refs
 	svcPort     int32
 }
 
@@ -132,8 +131,7 @@ func (t *Translator) fetchServiceBackend(routeNamespace string, backendRef gatew
 	port := resolveServicePort(svc, backendRef.Port)
 	return &routeBackend{
 		clusterName: fmt.Sprintf(constants.ClusterNameFormat, ns, string(backendRef.Name)),
-		svcNS:       ns,
-		svcName:     string(backendRef.Name),
+		svc:         svc,
 		svcPort:     port,
 	}, nil
 }
@@ -198,7 +196,7 @@ func convertBackendToCluster(backend *agenticv0alpha0.XBackend) (*clusterv3.Clus
 }
 
 // buildClustersFromRouteBackends builds Envoy clusters from a mix of XBackend and direct Service refs.
-func buildClustersFromRouteBackends(backends []*routeBackend) ([]*clusterv3.Cluster, error) {
+func (t *Translator) buildClustersFromRouteBackends(backends []*routeBackend) ([]*clusterv3.Cluster, error) {
 	var clusters []*clusterv3.Cluster
 	for _, rb := range backends {
 		var cluster *clusterv3.Cluster
@@ -206,7 +204,7 @@ func buildClustersFromRouteBackends(backends []*routeBackend) ([]*clusterv3.Clus
 		if rb.xbackend != nil {
 			cluster, err = convertBackendToCluster(rb.xbackend)
 		} else {
-			cluster = convertServiceRefToCluster(rb.svcNS, rb.svcName, rb.svcPort)
+			cluster = t.convertServiceRefToCluster(rb.svc, rb.svcPort)
 		}
 		if err != nil {
 			return nil, err

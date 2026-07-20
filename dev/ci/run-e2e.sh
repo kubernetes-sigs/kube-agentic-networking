@@ -32,6 +32,8 @@ main() {
 
   header "Running E2E tests"
   # Requirements: K8s v1.35+, PodCertificateRequest/ClusterTrustBundle enabled, and KAN Controller running with --enable-agentic-identity-signer=true.
+  # Remote quickstart MCP tests call mcp.deepwiki.com and are skipped in CI by default.
+  export SKIP_REMOTE_MCP="${SKIP_REMOTE_MCP:-true}"
   cd tests && go clean -testcache && go test -v ./e2e/...
 }
 

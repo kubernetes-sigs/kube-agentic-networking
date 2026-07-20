@@ -20,3 +20,6 @@ aliases:
   kan-docs-approvers:
     - haiyanmeng
     - evaline-ju
+
+  kan-conformance-reviewers:
+    - bexxmodd

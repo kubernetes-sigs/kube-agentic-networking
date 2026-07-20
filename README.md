@@ -40,7 +40,7 @@ See the [Development Guide](dev/dev-guide.md) for information on building and te
 
 ## Community, discussion, contribution, and support
 
-Our community meetings are held weekly on Thursday at 8:00 AM PT (Pacific Time) ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=08%3A00&tz=PT%20%28Pacific%20Time%29)).
+Our community meetings are held bi-weekly on Thursday at 8:00 AM PT (Pacific Time) ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=08%3A00&tz=PT%20%28Pacific%20Time%29)).
 - [Meeting Notes](https://docs.google.com/document/d/1EQET_VWe_IAINyQhVj-wduZg99gBaObpz9612eZ1iYg/edit?tab=t.0#heading=h.q1zi45aa3n69)
 - [Zoom (client) Meeting Link](https://zoom.us/j/92037420986)
 - [Zoom (web) Meeting Link](https://zoom.us/wc/join/92037420986)

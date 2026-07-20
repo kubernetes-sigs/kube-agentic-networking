@@ -19,3 +19,17 @@ spec:
       type: CEL
       cel:
         expression: "request.mcp.tool_name == 'get-sum'"
+  # Note: A second rule is added here to allow the base MCP protocol methods (such as "initializate",
+  # tools.list, etc). Using a separate inline rule is more convenient than
+  # trying to manually specify connection methods within CEL rules.
+  # TODO(https://github.com/kubernetes-sigs/kube-agentic-networking/issues/288): Explore allowing base protocol methods
+  # automatically or via CEL configuration to remove the need for this separate rule.
+  - name: allow-base-mcp
+    source:
+      type: ServiceAccount
+      serviceAccount:
+        name: e2e-tester-sa
+    authorization:
+      type: Inline
+      mcp:
+        mcpBaseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS

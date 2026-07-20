@@ -36,7 +36,7 @@ import (
 var XAccessPolicyAccepted = suite.ConformanceTest{
 	ShortName:   "XAccessPolicyAccepted",
 	Description: "Verifies that an XAccessPolicy targeting a Gateway is accepted by the controller.",
-	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway},
+	Features:    []features.FeatureName{localfeatures.SupportAccessPolicyGateway, features.SupportGateway},
 	Manifests:   []string{"tests/accesspolicy-accepted.yaml"},
 	Test: func(t *testing.T, suite *suite.ConformanceTestSuite) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -61,4 +61,8 @@ var XAccessPolicyAccepted = suite.ConformanceTest{
 		})
 		require.NoError(t, err, "timed out waiting for XAccessPolicy to be accepted")
 	},
+}
+
+func init() {
+	ConformanceTests = append(ConformanceTests, XAccessPolicyAccepted)
 }

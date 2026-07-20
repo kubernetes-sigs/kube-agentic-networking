@@ -192,8 +192,10 @@ Want to see policy changes in action? Let's flip the script for the `local-mcp-b
      namespace: quickstart-ns
    spec:
      targetRefs:
-       - kind: XBackend
+       - group: agentic.networking.x-k8s.io
+         kind: XBackend
          name: local-mcp-backend
+     action: Allow
      rules:
        - name: updated-rule
          source:

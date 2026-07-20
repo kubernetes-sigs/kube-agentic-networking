@@ -34,6 +34,11 @@ GATEWAY_API_VERSION="v1.5.0"
 AGENT_UI_PORT="8081"
 AGENT_UI_URL="http://localhost:${AGENT_UI_PORT}/dev-ui/?app=mcp_agent"
 
+# Controller image settings (matches dev/ci/lib.sh)
+CONTROLLER_REGISTRY="us-central1-docker.pkg.dev/k8s-staging-images/agentic-net"
+CONTROLLER_IMAGE_NAME="agentic-networking-controller"
+CONTROLLER_TAG="main"
+
 # Default to HuggingFace, can be overridden with --ollama or --gemini flags
 USE_OLLAMA=false
 OLLAMA_BASE_URL="http://host.docker.internal:11434"
@@ -187,6 +192,15 @@ install_metallb_step() {
 }
 
 
+# --- Step 1.6: Build and Load Controller Image ---
+
+build_and_load_controller_image_step() {
+  info "Step 1.6/9: Building controller image from source..."
+  # Subshell prevents lib.sh functions from overwriting this script's identically named functions.
+  (source dev/ci/lib.sh && build_and_load_controller_image \
+    "${CLUSTER_NAME}" "${CONTROLLER_REGISTRY}" "${CONTROLLER_IMAGE_NAME}" "${CONTROLLER_TAG}")
+}
+
 # --- Step 2: Install Gateway API CRDs ---
 
 install_gateway_api_crds() {
@@ -235,7 +249,10 @@ deploy_controller() {
       --name=agentic-identity-ca-pool)
   fi
 
-  kubectl apply -f "${SCRIPT_ROOT}/k8s/deploy/deployment.yaml"
+  # Use sed to ensure the deployment uses the locally-built image tag, matching
+  # the approach used by dev/ci/lib.sh deploy_controller().
+  sed "s|\(image: .*/agentic-networking-controller:\).*|\1${CONTROLLER_TAG}|" \
+    "${SCRIPT_ROOT}/k8s/deploy/deployment.yaml" | kubectl apply -f -
   wait_for_deployment "${CONTROLLER_NAMESPACE}" "agentic-net-controller"
 }
 
@@ -374,6 +391,7 @@ setup_port_forward() {
 
 create_kind_cluster
 install_metallb_step
+build_and_load_controller_image_step
 install_gateway_api_crds
 install_agentic_networking_crds
 create_namespaces

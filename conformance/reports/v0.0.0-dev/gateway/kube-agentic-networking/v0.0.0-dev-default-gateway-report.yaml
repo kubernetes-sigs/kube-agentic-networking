@@ -1,0 +1,32 @@
+GatewayLayerVersion: v0.0.0-dev
+apiVersion: gateway.networking.k8s.io/v1
+date: "2026-06-12T20:56:55Z"
+gatewayAPIChannel: standard
+gatewayAPIVersion: v1.5.1
+implementation:
+  contact:
+  - https://github.com/kubernetes-sigs/kube-agentic-networking/issues
+  organization: kubernetes-sigs
+  project: kube-agentic-networking
+  url: https://github.com/kubernetes-sigs/kube-agentic-networking
+  version: v0.0.0-dev
+kind: ConformanceReport
+mode: default
+profiles:
+- core:
+    result: success
+    statistics:
+      Failed: 0
+      Passed: 5
+      Skipped: 0
+  extended:
+    result: success
+    statistics:
+      Failed: 0
+      Passed: 4
+      Skipped: 0
+    supportedFeatures:
+    - SupportAccessPolicyExternalAuth
+    - SupportAccessPolicySPIFFESource
+  name: Gateway
+  summary: Core tests succeeded. Extended tests succeeded.
