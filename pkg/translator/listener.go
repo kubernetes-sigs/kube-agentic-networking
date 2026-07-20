@@ -449,7 +449,7 @@ func buildTracingConfig(sampleRate float64) *hcm.HttpConnectionManager_Tracing {
 		CustomTags: []*tracingv3.CustomTag{
 			buildMetadataTag("security_rule.name", "envoy.filters.http.rbac", "shadow_effective_policy_id"),
 			buildMetadataTag("peer.spiffe.id", "envoy.filters.http.rbac", "principal"),
-			buildMetadataTag("security_rule.match", constants.ObservabilityMetadataNamespace, "security_rule.match"),
+			buildMetadataTag("security_rule.implicit", constants.ObservabilityMetadataNamespace, "security_rule.implicit"),
 			buildMetadataTag("event.action", constants.ObservabilityMetadataNamespace, "event.action"),
 			buildMetadataTag("event.outcome", constants.ObservabilityMetadataNamespace, "event.outcome"),
 			buildMetadataTag("event.kind", constants.ObservabilityMetadataNamespace, "event.kind"),
@@ -477,13 +477,14 @@ function envoy_on_response(handle)
   end
 
   local match = (rule_name ~= "")
-  meta:set("agentic_obs", "security_rule.match", match)
   meta:set("agentic_obs", "component", "envoy.gateway")
 
   if match then
     meta:set("agentic_obs", "event.action", "allow")
   else
     meta:set("agentic_obs", "event.action", "deny")
+    -- Mark as implicit default-deny when no explicit rule matched
+    meta:set("agentic_obs", "security_rule.implicit", "true")
   end
   -- event.outcome=failure (e.g. extAuthz engine error) is not detectable here since
   -- the Lua response handler only sees metadata written during the request, not filter-level failures.
@@ -492,8 +493,6 @@ function envoy_on_response(handle)
   if mcp_method ~= "" then
     meta:set("agentic_obs", "event.kind", "event")
     meta:set("agentic_obs", "event.category", "authorization")
-  end
-  if mcp_method ~= "" then
     meta:set("agentic_obs", "mcp.method.name", mcp_method)
   end
 end
