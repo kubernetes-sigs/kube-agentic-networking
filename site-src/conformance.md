@@ -9,10 +9,29 @@ This process follows the same profile-and-report model as
 [Gateway API conformance](https://gateway-api.sigs.k8s.io/docs/concepts/conformance/),
 adapted for Kube Agentic Networking features.
 
-The current `Gateway` profile covers the core Gateway, HTTPRoute,
-ReferenceGrant, and AccessPolicy behavior. Implementations can also claim the
-extended SPIFFE source and external authorization features when they support
-them.
+## Conformance Profiles
+
+Conformance is defined through **profiles**, each covering a specific area of
+the specification. An implementation is considered conformant for a profile when
+it passes **all core tests** in that profile. Currently, the specification defines
+the `Gateway` profile, which covers core agentic networking behaviors including
+`AccessPolicy` enforcement and protocol matching.
+
+### Core vs Extended Features
+
+Within each profile, features are classified as:
+
+- **Core features** — Must pass for an implementation to claim conformance with
+  that profile.
+- **Extended features** — Optional capabilities. Implementations may choose to
+  support them and include the results in their report.
+
+Extended features in the `Gateway` profile currently include:
+
+| Feature | Description |
+|---------|-------------|
+| `SupportAccessPolicySPIFFESource` | SPIFFE-based identity matching in `AccessPolicy` |
+| `SupportAccessPolicyExternalAuth` | External authorization (ExtAuth) integration |
 
 ## Prepare an implementation
 
@@ -45,11 +64,15 @@ go test -v ./conformance -run TestConformance -args \
   --cleanup-base-resources=false
 ```
 
+### Selecting Features
+
 Core features are enabled by default. Add extended features only when the
 implementation supports them, for example:
 
 ```bash
---supported-features=SupportAccessPolicySPIFFESource,SupportAccessPolicyExternalAuth
+go test -v ./conformance -run TestConformance -args \
+  --gateway-class=my-gateway-class \
+  --supported-features=SupportAccessPolicySPIFFESource,SupportAccessPolicyExternalAuth
 ```
 
 ## Generate a report
@@ -74,16 +97,15 @@ edited before submission.
 
 ## Submit the result
 
-Successful reports are submitted by pull request under
-`conformance/reports/<extension-version>/<profile>/<implementation>/`. Each
-implementation folder also includes a README that links the reports and
-explains how to reproduce them.
+Once you have a passing report, refer to the
+[Conformance Reports README](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/conformance/reports/README.md#submission-process)
+for detailed rules on report content, folder structure, versioning, and how to submit your report via Pull Request.
 
-See the
-[conformance report guide](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/conformance/reports/README.md)
-for the required directory layout, metadata, naming rules, and submission
-checklist.
+## Further Reading
 
-The test implementation lives in [`conformance/`](https://github.com/kubernetes-sigs/kube-agentic-networking/tree/main/conformance),
-with individual test definitions under
-[`conformance/tests/`](https://github.com/kubernetes-sigs/kube-agentic-networking/tree/main/conformance/tests).
+- [Conformance Reports](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/conformance/reports/README.md) — Report format, rules, and submission process
+- [Gateway API Conformance](https://gateway-api.sigs.k8s.io/concepts/conformance/) — The upstream model this process is modeled after
+- The test implementation lives in [`conformance/`](https://github.com/kubernetes-sigs/kube-agentic-networking/tree/main/conformance),
+  with individual test definitions under
+  [`conformance/tests/`](https://github.com/kubernetes-sigs/kube-agentic-networking/tree/main/conformance/tests).
+
