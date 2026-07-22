@@ -6,7 +6,7 @@ developing support, then generate a report when every test for a claimed profile
 passes.
 
 This process follows the same profile-and-report model as
-[Gateway API conformance](https://gateway-api.sigs.k8s.io/concepts/conformance/),
+[Gateway API conformance](https://gateway-api.sigs.k8s.io/docs/concepts/conformance/),
 adapted for Kube Agentic Networking features.
 
 The current `Gateway` profile covers the core Gateway, HTTPRoute,
