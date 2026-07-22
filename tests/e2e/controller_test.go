@@ -809,6 +809,59 @@ func retry(attempts int, sleep time.Duration, f func() error) error {
 	return fmt.Errorf("after %d attempts, last error: %w", attempts, lastErr)
 }
 
+// waitForGatewayProgrammed blocks until the Gateway status reflects the latest spec generation
+// and the https-listener is programmed. TLS subtests must call this after patching Gateway TLS
+// so Envoy receives the updated client-validation configuration before MCP initialization.
+func waitForGatewayProgrammed(t *testing.T, namespace string) {
+	t.Helper()
+	err := retry(30, 2*time.Second, func() error {
+		genOut, err := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace, "-o", "jsonpath={.metadata.generation}")
+		if err != nil {
+			return err
+		}
+		generation := strings.TrimSpace(genOut)
+		if generation == "" {
+			return fmt.Errorf("gateway generation not found")
+		}
+
+		progOut, err := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace,
+			"-o", `jsonpath={.status.conditions[?(@.type=="Programmed")].status}{"\n"}{.status.conditions[?(@.type=="Programmed")].observedGeneration}`)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(strings.TrimSpace(progOut), "\n")
+		if len(lines) < 2 || lines[0] != "True" {
+			return fmt.Errorf("gateway Programmed status not True yet: %q", progOut)
+		}
+		if lines[1] != generation {
+			return fmt.Errorf("gateway observedGeneration=%q, want %q", lines[1], generation)
+		}
+
+		listenerProgOut, err := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace,
+			"-o", `jsonpath={.status.listeners[?(@.name=="https-listener")].conditions[?(@.type=="Programmed")].status}`)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(listenerProgOut) != "True" {
+			return fmt.Errorf("https-listener Programmed status not True yet: %q", listenerProgOut)
+		}
+
+		listenerResolvedOut, err := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace,
+			"-o", `jsonpath={.status.listeners[?(@.name=="https-listener")].conditions[?(@.type=="ResolvedRefs")].status}`)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(listenerResolvedOut) != "True" {
+			return fmt.Errorf("https-listener ResolvedRefs status not True yet: %q", listenerResolvedOut)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Gateway did not become programmed in namespace %s: %v", namespace, err)
+	}
+}
+
 type mcpTestSession struct {
 	t         *testing.T
 	gatewayIP string
@@ -836,7 +889,7 @@ func tryInitializeMCPWithCerts(t *testing.T, gatewayIP string, pod types.Namespa
 	t.Logf("Initialize MCP session for pod %s at %s", pod, mcpPath)
 
 	mcpSessionID := ""
-	err := retry(5, 10*time.Second, func() error {
+	err := retry(10, 5*time.Second, func() error {
 		out, err := execMCPCurl(t, gatewayIP, pod, mcpPath, certPath, keyPath, caPath)
 		if err != nil {
 			return err
@@ -1193,6 +1246,7 @@ func TestGatewayTLS(t *testing.T) {
 		// Test case 1: client cert signed by trusted CA without gateway CA configuration (should succeed)
 		applyToNamespace(t, "testdata/gateway-no-ca.yaml", namespace)
 		applyToNamespace(t, "testdata/gateway-policy.yaml", namespace)
+		waitForGatewayProgrammed(t, namespace)
 
 		// Write files to pod
 		writePodFile(t, namespace, podName, testClientCertPath, clientCertDefault)
@@ -1236,10 +1290,22 @@ func TestGatewayTLS(t *testing.T) {
 	t.Run("TrustedCA_WithGatewayCA", func(t *testing.T) {
 		// Test case 2: Client cert signed by trusted CA with gateway CA configuration (should succeed)
 		applyToNamespace(t, "testdata/gateway-tls.yaml", namespace)
+		applyToNamespace(t, "testdata/gateway-policy.yaml", namespace)
+		waitForGatewayProgrammed(t, namespace)
 
-		// Override certs in the pod
+		caRefOut, err := runKubectlOutput(t, "get", "gateway", "e2e-gateway", "-n", namespace,
+			"-o", "jsonpath={.spec.tls.frontend.default.validation.caCertificateRefs[0].name}")
+		if err != nil {
+			t.Fatalf("failed to read gateway CA reference: %v", err)
+		}
+		if strings.TrimSpace(caRefOut) != "gateway-client-ca" {
+			t.Fatalf("gateway frontend CA reference not applied (got %q, want gateway-client-ca)", caRefOut)
+		}
+
+		// Override certs in the pod to match the gateway-configured client CA.
 		writePodFile(t, namespace, podName, testClientCertPath, clientCert1)
 		writePodFile(t, namespace, podName, testClientKeyPath, clientKey1)
+		writePodFile(t, namespace, podName, testClientCAPath, caCertPEM1)
 
 		mcp := initializeMCPWithCerts(t, gatewayIP, types.NamespacedName{Namespace: namespace, Name: podName}, defaultMCPPath,
 			testClientCertPath, testClientKeyPath, testClientCAPath)
