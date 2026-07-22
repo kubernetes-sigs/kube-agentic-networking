@@ -81,7 +81,8 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 	tests := []struct {
 		name            string
 		policies        []runtime.Object
-		gatewaysToCheck map[string][]string // gateway name -> expected filter names in order
+		gatewaysToCheck map[string][]string                // gateway name -> expected filter names in order
+		expectedRules   map[string]map[string]expectedRule // gateway name -> rule name -> expectedRule
 	}{
 		{
 			name:     "no policies targeting gateway",
@@ -89,6 +90,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			gatewaysToCheck: map[string][]string{
 				gwName: {},
 			},
+			expectedRules: map[string]map[string]expectedRule{},
 		},
 		{
 			name: "single policy targeting gateway",
@@ -97,6 +99,14 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 			gatewaysToCheck: map[string][]string{
 				gwName: {constants.GatewayAllowRBACFilterName},
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				gwName: {
+					"gw-policy-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+				},
 			},
 		},
 		{
@@ -107,6 +117,18 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 			gatewaysToCheck: map[string][]string{
 				gwName: {constants.GatewayAllowRBACFilterName},
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				gwName: {
+					"gw-policy-1-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+					"gw-policy-2-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns2/sa/sa2",
+						expectAnyPermission: true,
+					},
+				},
 			},
 		},
 		{
@@ -141,6 +163,20 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 				gwName:     {constants.GatewayAllowRBACFilterName},
 				"other-gw": {constants.GatewayAllowRBACFilterName},
 			},
+			expectedRules: map[string]map[string]expectedRule{
+				gwName: {
+					"multi-gw-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+				"other-gw": {
+					"multi-gw-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+			},
 		},
 	}
 
@@ -170,6 +206,14 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 				for i, f := range filters {
 					if f.GetName() != expectedNames[i] {
 						t.Errorf("Gateway %s, Filter %d: expected name %s, got %s", gwn, i, expectedNames[i], f.GetName())
+					}
+
+					if f.GetName() == constants.GatewayAllowRBACFilterName {
+						rbacProto := &rbacv3.RBAC{}
+						if err := f.GetTypedConfig().UnmarshalTo(rbacProto); err != nil {
+							t.Fatalf("Gateway %s: failed to unmarshal RBAC: %v", gwn, err)
+						}
+						verifyRBAC(t, rbacProto.GetRules(), tt.expectedRules[gwn])
 					}
 				}
 			}
@@ -209,7 +253,8 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 	tests := []struct {
 		name            string
 		policies        []runtime.Object
-		backendsToCheck map[string][]string // backend name -> expected filter names in order
+		backendsToCheck map[string][]string                // backend name -> expected filter names in order
+		expectedRules   map[string]map[string]expectedRule // backend name -> rule name -> expectedRule
 	}{
 		{
 			name:     "no policies targeting backend",
@@ -217,6 +262,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			backendsToCheck: map[string][]string{
 				beName: {},
 			},
+			expectedRules: map[string]map[string]expectedRule{},
 		},
 		{
 			name: "single policy targeting backend",
@@ -225,6 +271,14 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			},
 			backendsToCheck: map[string][]string{
 				beName: {constants.BackendAllowRBACFilterName},
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				beName: {
+					"be-policy-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+				},
 			},
 		},
 		{
@@ -235,6 +289,18 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			},
 			backendsToCheck: map[string][]string{
 				beName: {constants.BackendAllowRBACFilterName},
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				beName: {
+					"be-policy-1-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+					"be-policy-2-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns2/sa/sa2",
+						expectAnyPermission: true,
+					},
+				},
 			},
 		},
 		{
@@ -269,6 +335,20 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 				beName:          {constants.BackendAllowRBACFilterName},
 				"other-backend": {constants.BackendAllowRBACFilterName},
 			},
+			expectedRules: map[string]map[string]expectedRule{
+				beName: {
+					"multi-be-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+				"other-backend": {
+					"multi-be-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+			},
 		},
 	}
 
@@ -297,8 +377,18 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 				}
 
 				for _, expectedName := range expectedFilterNames {
-					if _, ok := configs[expectedName]; !ok {
+					config, ok := configs[expectedName]
+					if !ok {
 						t.Errorf("Backend %s: Expected config for filter %s not found", ben, expectedName)
+						continue
+					}
+
+					if expectedName == constants.BackendAllowRBACFilterName {
+						rbacPerRoute := &rbacv3.RBACPerRoute{}
+						if err := config.UnmarshalTo(rbacPerRoute); err != nil {
+							t.Fatalf("Backend %s: failed to unmarshal RBACPerRoute: %v", ben, err)
+						}
+						verifyRBAC(t, rbacPerRoute.GetRbac().GetRules(), tt.expectedRules[ben])
 					}
 				}
 			}

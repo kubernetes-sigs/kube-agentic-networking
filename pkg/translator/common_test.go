@@ -17,6 +17,8 @@ limitations under the License.
 package translator
 
 import (
+	"sort"
+
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -168,4 +170,42 @@ func hasPrincipal(rbac *rbacv3.RBAC, expectedPrincipal string) bool {
 		}
 	}
 	return false
+}
+
+// getPrincipals extracts all exact match SPIFFE IDs from the RBAC config, sorted.
+func getPrincipals(rbac *rbacv3.RBAC) []string {
+	var principals []string
+	if rbac == nil || rbac.GetRules() == nil {
+		return principals
+	}
+	for _, policy := range rbac.GetRules().GetPolicies() {
+		for _, princ := range policy.GetPrincipals() {
+			if auth := princ.GetAuthenticated(); auth != nil {
+				if name := auth.GetPrincipalName().GetExact(); name != "" {
+					principals = append(principals, name)
+				}
+			}
+		}
+	}
+	sort.Strings(principals)
+	return principals
+}
+
+func sortedCopy(s []string) []string {
+	c := make([]string, len(s))
+	copy(c, s)
+	sort.Strings(c)
+	return c
+}
+
+func compareSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

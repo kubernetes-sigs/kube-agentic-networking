@@ -180,7 +180,7 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 
 	for _, policy := range policies {
 		for _, rule := range policy.Spec.Rules {
-			policyName := rule.Name
+			policyName := fmt.Sprintf("%s-%s", policy.Name, rule.Name)
 			rbacPolicy := t.translateAccessRuleToRBACPolicy(policy.Namespace, rule)
 			if rbacPolicy == nil {
 				continue
