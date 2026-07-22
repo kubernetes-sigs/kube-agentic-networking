@@ -23,7 +23,6 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -101,62 +100,46 @@ func (r *ResourceManager) NodeID() string {
 	return r.nodeID
 }
 
-// ensureSA applies the ServiceAccount for the Envoy proxy (server-side apply).
+// ensureSA applies the Envoy proxy ServiceAccount (server-side apply).
 //
-// When the object already exists, we compare desired vs live and skip Apply if there is no drift
-// on the fields listed under serviceAccountDesiredMatchesExisting (see that function's doc for
-// managed vs unmanaged fields and review tradeoffs).
+// The proxy ServiceAccount is controller-owned infrastructure (hashed name, Gateway ownerRef,
+// used only by the proxy Deployment). The only supported customization is Gateway
+// spec.infrastructure labels/annotations. We always Apply so desired metadata converges without
+// a separate drift comparison; serviceAccountApply only sets labels, annotations, and
+// ownerReferences so apiserver-populated fields (e.g. secrets) are left unchanged.
 func (r *ResourceManager) ensureSA(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 	want := r.renderServiceAccount()
 
-	got, err := r.client.CoreV1().ServiceAccounts(want.Namespace).Get(ctx, want.Name, metav1.GetOptions{})
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to get envoy serviceaccount: %w", err)
-		}
-	} else if serviceAccountDesiredMatchesExisting(want, got) {
-		logger.V(4).Info("Envoy proxy serviceaccount unchanged, skipping apply", "name", want.Name, "namespace", want.Namespace)
-		return nil
-	}
-
 	if _, err := r.client.CoreV1().ServiceAccounts(want.Namespace).Apply(ctx, serviceAccountApply(want), envoyInfraApplyOptions()); err != nil {
 		return fmt.Errorf("failed to apply envoy serviceaccount: %w", err)
 	}
-	logger.Info("Envoy proxy serviceaccount applied", "name", want.Name, "namespace", want.Namespace)
+	logger.V(4).Info("Envoy proxy serviceaccount applied", "name", want.Name, "namespace", want.Namespace)
 	return nil
 }
 
-// serviceAccountDesiredMatchesExisting reports whether the live ServiceAccount already matches
-// what we would send on server-side apply (serviceAccountApply), so we can skip a redundant Apply.
-//
-// Managed fields (must match want for this function to return true):
-//   - metadata.labels: from getLabels (Gateway name label plus Gateway infrastructure labels).
-//   - metadata.annotations: from getAnnotations (Gateway infrastructure annotations only).
-//   - metadata.ownerReferences: controller ref to the owning Gateway.
-//
-// Unmanaged / intentionally ignored (not compared; live values may differ without triggering Apply):
-//   - metadata.name, metadata.namespace: fixed by the request path; not semantic drift.
-//   - metadata.uid, resourceVersion, creationTimestamp, managedFields, etc.: apiserver-owned.
-//   - secrets, imagePullSecrets, automountServiceAccountToken: not set by serviceAccountApply;
-//     secrets in particular are filled by controllers after creation.
-//   - Any extra labels or annotations added by admission, defaults, or other actors: if present
-//     on the live object but absent from want, we treat that as drift and re-Apply (may fight
-//     mutating webhooks that always inject metadata; narrow the comparison if that becomes an issue).
-func serviceAccountDesiredMatchesExisting(want, got *corev1.ServiceAccount) bool {
-	return apiequality.Semantic.DeepEqual(want.Labels, got.Labels) &&
-		apiequality.Semantic.DeepEqual(want.Annotations, got.Annotations) &&
-		apiequality.Semantic.DeepEqual(want.OwnerReferences, got.OwnerReferences)
-}
-
 // ensureConfigMap applies the ConfigMap for the Envoy proxy (server-side apply).
+//
+// When the object already exists, we compare desired vs live and skip Apply if there is no drift
+// on the fields listed under configMapDesiredMatchesExisting (see that function's doc).
 func (r *ResourceManager) ensureConfigMap(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 	want, err := r.renderConfigMap()
 	if err != nil {
 		return err
 	}
-	if _, err = r.client.CoreV1().ConfigMaps(want.Namespace).Apply(ctx, configMapApply(want), envoyInfraApplyOptions()); err != nil {
+
+	got, err := r.client.CoreV1().ConfigMaps(want.Namespace).Get(ctx, want.Name, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get envoy configmap: %w", err)
+		}
+	} else if configMapDesiredMatchesExisting(want, got) {
+		logger.V(4).Info("Envoy proxy configmap unchanged, skipping apply", "name", want.Name, "namespace", want.Namespace)
+		return nil
+	}
+
+	if _, err := r.client.CoreV1().ConfigMaps(want.Namespace).Apply(ctx, configMapApply(want), envoyInfraApplyOptions()); err != nil {
 		return fmt.Errorf("failed to apply envoy configmap: %w", err)
 	}
 	logger.Info("Envoy bootstrap configmap applied", "name", want.Name, "namespace", want.Namespace)
@@ -166,6 +149,10 @@ func (r *ResourceManager) ensureConfigMap(ctx context.Context) error {
 // ensureDeployment applies the Envoy Deployment (server-side apply). It does not wait for the
 // Deployment Available condition so the controller is not blocked from reconciling other Gateways
 // while a rollout is in progress.
+//
+// When the object already exists, we compare desired vs live and skip Apply if there is no drift
+// on the fields listed under deploymentDesiredMatchesExisting (see that function's doc), including
+// the pod-template checksum derived from the rendered ConfigMap.
 func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 	cm, err := r.renderConfigMap()
@@ -178,7 +165,17 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 	}
 	want.Spec.Template.Annotations[constants.EnvoyInfraConfigChecksumAnnotation] = configMapDataChecksum(cm)
 
-	if _, err = r.client.AppsV1().Deployments(want.Namespace).Apply(ctx, deploymentApply(want), envoyInfraApplyOptions()); err != nil {
+	got, err := r.client.AppsV1().Deployments(want.Namespace).Get(ctx, want.Name, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get envoy deployment: %w", err)
+		}
+	} else if deploymentDesiredMatchesExisting(want, got) {
+		logger.V(4).Info("Envoy proxy deployment unchanged, skipping apply", "name", want.Name, "namespace", want.Namespace)
+		return nil
+	}
+
+	if _, err := r.client.AppsV1().Deployments(want.Namespace).Apply(ctx, deploymentApply(want), envoyInfraApplyOptions()); err != nil {
 		return fmt.Errorf("failed to apply envoy deployment: %w", err)
 	}
 	logger.Info("Envoy proxy deployment applied (rollout may still be in progress)", "name", want.Name, "namespace", want.Namespace)
@@ -186,11 +183,22 @@ func (r *ResourceManager) ensureDeployment(ctx context.Context) error {
 }
 
 // ensureServiceExists applies the Service for the Envoy proxy (server-side apply) so LoadBalancer
-// provisioning can start before the Deployment is ready. Callers should use ensureService to wait
-// until an address is assigned.
+// provisioning can start before the Deployment is ready. When the live Service already matches the
+// desired object (see serviceDesiredMatchesExisting), Apply is skipped.
 func (r *ResourceManager) ensureServiceExists(ctx context.Context) (*corev1.Service, error) {
 	logger := klog.FromContext(ctx)
 	want := r.renderService()
+
+	got, err := r.client.CoreV1().Services(want.Namespace).Get(ctx, want.Name, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get envoy service: %w", err)
+		}
+	} else if serviceDesiredMatchesExisting(want, got) {
+		logger.V(4).Info("Envoy proxy service unchanged, skipping apply", "name", want.Name, "namespace", want.Namespace)
+		return got, nil
+	}
+
 	if _, err := r.client.CoreV1().Services(want.Namespace).Apply(ctx, serviceApply(want), envoyInfraApplyOptions()); err != nil {
 		return nil, fmt.Errorf("failed to apply envoy service: %w", err)
 	}
