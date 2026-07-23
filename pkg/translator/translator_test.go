@@ -1005,14 +1005,13 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 			if routeAction := r.GetRoute(); routeAction != nil {
 				if weightedClusters := routeAction.GetWeightedClusters(); weightedClusters != nil {
 					for _, wc := range weightedClusters.GetClusters() {
-						if len(expectedPrincipals) == 0 {
-							continue
-						}
-						// We expect all specified principals to be in the BackendAllow filter
 						filterName := constants.BackendAllowRBACFilterName
 						rbacTypedConfig, ok := wc.GetTypedPerFilterConfig()[filterName]
+						if ok != (len(expectedPrincipals) > 0) {
+							t.Errorf("Backend Allow RBAC filter %s presence mismatch: expected to have policies=%v, found filter=%v", filterName, len(expectedPrincipals) > 0, ok)
+							continue
+						}
 						if !ok {
-							t.Errorf("Backend Allow RBAC filter %s not found in cluster %s", filterName, wc.GetName())
 							continue
 						}
 
@@ -1021,10 +1020,11 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 							t.Fatalf("failed to unmarshal RBACPerRoute: %v", err)
 						}
 
-						for _, expectedPrincipal := range expectedPrincipals {
-							if !hasPrincipal(rbacPerRoute.GetRbac(), expectedPrincipal) {
-								t.Errorf("RBAC policy for cluster %s filter %s missing expected principal: %s", wc.GetName(), filterName, expectedPrincipal)
-							}
+						actualPrincipals := getPrincipals(rbacPerRoute.GetRbac())
+						expPrincipals := sortedCopy(expectedPrincipals)
+
+						if !compareSlices(actualPrincipals, expPrincipals) {
+							t.Errorf("RBAC policy for cluster %s filter %s: expected principals %v, got %v", wc.GetName(), filterName, expPrincipals, actualPrincipals)
 						}
 					}
 				}
@@ -1054,16 +1054,15 @@ func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincip
 					switch httpFilter.GetName() {
 					case constants.GatewayAllowRBACFilterName:
 						foundGatewayAllow = true
-						// Verify principal if it's within the expected list
-						if len(expectedGWPrincipals) > 0 {
-							rbacConfig := &rbacv3.RBAC{}
-							if err := httpFilter.GetTypedConfig().UnmarshalTo(rbacConfig); err != nil {
-								t.Fatalf("failed to unmarshal RBAC config from listener: %v", err)
-							}
-							// For simplicity, check if the first expected principal is present
-							if !hasPrincipal(rbacConfig, expectedGWPrincipals[0]) {
-								t.Errorf("Gateway Allow filter missing expected principal: %s", expectedGWPrincipals[0])
-							}
+						rbacConfig := &rbacv3.RBAC{}
+						if err := httpFilter.GetTypedConfig().UnmarshalTo(rbacConfig); err != nil {
+							t.Fatalf("failed to unmarshal RBAC config from listener: %v", err)
+						}
+						actualPrincipals := getPrincipals(rbacConfig)
+						expPrincipals := sortedCopy(expectedGWPrincipals)
+
+						if !compareSlices(actualPrincipals, expPrincipals) {
+							t.Errorf("Listener %s Gateway Allow filter: expected principals %v, got %v", lis.GetName(), expPrincipals, actualPrincipals)
 						}
 					case constants.BackendExtAuthRBACFilterName:
 						foundBackendExtAuth = true
@@ -1072,8 +1071,8 @@ func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincip
 					}
 				}
 
-				if len(expectedGWPrincipals) > 0 && !foundGatewayAllow {
-					t.Errorf("expected Gateway Allow filter %s not found", constants.GatewayAllowRBACFilterName)
+				if (len(expectedGWPrincipals) > 0) != foundGatewayAllow {
+					t.Errorf("Gateway Allow filter presence mismatch: expected to have policies=%v, found filter=%v", len(expectedGWPrincipals) > 0, foundGatewayAllow)
 				}
 
 				if expectedBackendFilters > 0 {

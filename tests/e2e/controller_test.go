@@ -461,7 +461,7 @@ func TestExternalAuthE2E(t *testing.T) {
 
 	// Deploy External Auth service
 	t.Log("Deploying External Auth service...")
-	runKubectl(t, "apply", "--server-side", "-f", "https://raw.githubusercontent.com/Kuadrant/authorino/refs/tags/v0.24.0/install/manifests.yaml")
+	runKubectl(t, "apply", "--server-side", "-f", "testdata/authorino-manifests.yaml")
 	runKubectl(t, "wait", "--for=condition=established", "crd/authconfigs.authorino.kuadrant.io", "--timeout=1m")
 	applyToNamespace(t, "testdata/ext-authz-service.yaml", namespace)
 	runKubectl(t, "wait", "--for=condition=available", "deployment/authorino", "-n", namespace, "--timeout=2m")
