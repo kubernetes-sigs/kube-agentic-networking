@@ -155,23 +155,6 @@ func newTestService(name, ns string, port int32) *corev1.Service {
 	}
 }
 
-// hasPrincipal is a helper to check if an RBAC config contains a specific SPIFFE ID principal.
-func hasPrincipal(rbac *rbacv3.RBAC, expectedPrincipal string) bool {
-	if rbac == nil || rbac.GetRules() == nil {
-		return false
-	}
-	for _, policy := range rbac.GetRules().GetPolicies() {
-		for _, princ := range policy.GetPrincipals() {
-			if auth := princ.GetAuthenticated(); auth != nil {
-				if auth.GetPrincipalName().GetExact() == expectedPrincipal {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // getPrincipals extracts all exact match SPIFFE IDs from the RBAC config, sorted.
 func getPrincipals(rbac *rbacv3.RBAC) []string {
 	var principals []string
