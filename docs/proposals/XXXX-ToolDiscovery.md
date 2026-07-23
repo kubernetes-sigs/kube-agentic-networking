@@ -12,6 +12,7 @@ Status: Provisional<br/>
 
 | Date | Change |
 |------|--------|
+| 2026-07-23 | Collapsed phasing so discovery, drift detection, and XAccessPolicy cross-referencing land together in Phase 1 (external backends become Phase 2). Added "Known Limitation: dynamic and per-caller tools" and "Relationship to MCP Server Cards (SEP-2127)" sections. Addresses review feedback from @david-martin. |
 | 2026-07-02 | Added support for the MCP `ttlMs` freshness hint (SEP #2549) as the primary refetch bound, clamped by `spec.maxPollInterval`, with `tools/list_changed` as immediate invalidation. Scoped policy validation to `Inline` rules. Addresses review feedback from @david-martin and @shachartal. |
 | 2026-05-25 | Major revision: replaced `XBackend.status.discoveredTools` with a dedicated `XToolInventory` CRD (1:1 with XBackend via `backendRef`). Updated all examples to `agentic.networking.x-k8s.io/v1alpha1` with method-based matching (`mcp.methods[].params[]`). Changed default poll interval from 30s to 5m. Added hybrid creation model (explicit + annotation-triggered). Motivated by community feedback from @keithmattix and @david-martin. |
 | 2026-04-06 | Added A2A scoping non-goal. |
@@ -434,9 +435,13 @@ For Inline rules, the reconciler:
 
 ### Phasing
 
-**Phase 1: In-cluster discovery (plain HTTP).** XToolInventory CRD, discovery
-controller, schema validation, `list_changed` support, drift detection. The
-controller connects to backends using the service name and port from
+**Phase 1: In-cluster discovery and policy cross-referencing (plain HTTP).**
+XToolInventory CRD, discovery controller, schema validation, `list_changed`
+support, drift detection, and XAccessPolicy cross-referencing. Visibility,
+drift detection, and policy cross-referencing land together in this phase so
+the community can evaluate the full advisory workflow at once.
+
+The controller connects to backends using the service name and port from
 `XBackend.spec.mcp` over plain HTTP. This is sufficient for in-cluster backends
 where trust is assumed. In mesh environments (e.g., Istio sidecar on the
 controller pod), mTLS is handled transparently at the infrastructure layer, so
@@ -449,19 +454,20 @@ is advisory — it does not gate the data plane. The operator sees an early
 signal that the backend is unreachable to the control plane, but runtime tool
 calls proceed normally as long as the agent's own credentials are valid.
 
+Policy cross-referencing is likewise advisory. When an XToolInventory has
+`Ready: False` (discovery failed or not yet attempted), any XAccessPolicy
+targeting the corresponding backend includes a note in the `Accepted` condition
+message indicating which target backends had no discovery data available (e.g.,
+"tools not verified against XBackend 'weather-service': discovery unavailable").
+This ensures operators have visibility without blocking policy acceptance. The
+controller never rejects a policy or cleans up rules based on discovery data
+(see [Known Limitation: dynamic and per-caller tools](#known-limitation-dynamic-and-per-caller-tools)).
+
 **Phase 2: External backends (TLS and authentication).** Extends the discovery
 controller to connect to backends outside the cluster, requiring TLS and
 potentially a credential reference for `tools/list` calls. The exact mechanism
 (e.g., a `credentialRef` on XToolInventory) is deferred pending stabilization
 of the Backend spec between KAN and the AI Gateway WG.
-
-**Phase 3: Policy validation.** XAccessPolicy cross-referencing against
-discovered tools. When an XToolInventory has `Ready: False` (discovery failed
-or not yet attempted), any XAccessPolicy targeting the corresponding backend
-includes a note in the `Accepted` condition message indicating which target
-backends had no discovery data available (e.g., "tools not verified against
-XBackend 'weather-service': discovery unavailable"). This ensures operators
-have visibility without blocking policy acceptance.
 
 ### Alternative: Separate Discovery Controller Binary
 
@@ -475,6 +481,54 @@ to `AgentCard.status`. The benefit is fault isolation: a bug or crash in the
 discovery loop doesn't affect the main proxy management controller. The
 embedded approach is recommended to start because it avoids an additional
 deployment and simplifies RBAC.
+
+## Known Limitation: dynamic and per-caller tools
+
+The tool set an MCP server exposes can be dynamic. It may vary by authenticated
+user, session, configuration, feature flags, or deployment state. The MCP
+community has grappled with this directly: MCP Server Cards ([SEP-2127](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2127))
+deliberately exclude primitives (tools, resources, prompts) from the static
+card, stating that "clients cannot trust a static manifest for access-control
+or safety decisions; primitives are always validated at runtime via standard
+list operations." The tension around pre-connection primitive visibility is
+discussed further in [modelcontextprotocol issue #540](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/540).
+
+This proposal respects that constraint. The discovery controller connects and
+calls `tools/list` at runtime using a single control-plane identity, so
+XToolInventory captures one "control-plane variant" of the tool set, not the
+per-caller view a specific agent would see. As a result:
+
+- Tools gated on the caller's identity or session may not match what the
+  controller observes, so the drift signal can produce false positives.
+- This is precisely why discovery is advisory and validation is Warning-only
+  (never rejection), and why the controller never automates cleanup or removal
+  of XAccessPolicy rules. The operator's intent is not knowable from discovery
+  data alone; a rule may be intentionally present ahead of a tool being
+  (re)exposed.
+
+XToolInventory is not a substitute for runtime listing with the caller's
+identity, and it is not an access-control source of truth. It is a
+control-plane aid for visibility and policy authoring.
+
+## Relationship to MCP Server Cards (SEP-2127)
+
+XToolInventory and MCP Server Cards are complementary and non-overlapping:
+
+- **MCP Server Cards** are static documents served *without* a connection,
+  answering "where and how do I connect" (transports, protocol versions). They
+  deliberately exclude primitives.
+- **XToolInventory** is a cache of a live `tools/list` result obtained *with* a
+  connection, by the controller's control-plane identity, to support policy
+  authoring and operator visibility.
+
+The two sit on the same side of the line SEP-2127 draws: primitives are
+validated at runtime via standard list operations, never trusted from a static
+manifest. XToolInventory does not attempt to make primitives safely
+advertisable in a static, pre-connection document; that remains an open problem
+the SEP explicitly defers. If anything, SEP-2127 corroborates this proposal's
+design constraint, arriving independently at the same conclusion that motivates
+our advisory-only posture: a manifest of primitives is not a safe basis for
+access-control decisions.
 
 ## Prior Art
 
@@ -540,8 +594,6 @@ lifecycle.
 
 ## Community Consensus Points
 
-### Phase 1
-
 1. **Is XToolInventory with 1:1 backendRef the right granularity?** One
    XToolInventory per XBackend is expected to scale well for typical
    deployments (tens to low hundreds of MCP backends), analogous to
@@ -560,13 +612,10 @@ lifecycle.
    immediate invalidation signal. Is the community comfortable with using
    `ttlMs` as a refetch bound (rather than the on-access freshness hint the MCP
    spec describes) for a control-plane inventory?
-
-### Phase 3
-
-5. **Warning vs. rejection.** Should an XAccessPolicy referencing a
+6. **Warning vs. rejection.** Should an XAccessPolicy referencing a
    non-existent tool be admitted with a Warning, or rejected? We recommend
    Warning — the backend may be temporarily unreachable.
-6. **Bi-directional validation.** Should validation trigger on both
+7. **Bi-directional validation.** Should validation trigger on both
    XAccessPolicy changes and XToolInventory status changes? We recommend both.
 
 ## Contributors
