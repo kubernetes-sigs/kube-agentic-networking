@@ -12,6 +12,7 @@ Status: Provisional<br/>
 
 | Date | Change |
 |------|--------|
+| 2026-07-23 | Clarified CUJ 2 to attribute policy authoring to a policy author distinct from (though optionally the same as) the platform engineer managing XToolInventory, and noted the policy author need not deploy or reconcile a discovery resource. Addresses review feedback from @LiorLieberman. |
 | 2026-07-23 | Collapsed phasing so discovery, drift detection, and XAccessPolicy cross-referencing land together in Phase 1 (external backends become Phase 2). Added "Known Limitation: dynamic and per-caller tools" and "Relationship to MCP Server Cards (SEP-2127)" sections. Addresses review feedback from @david-martin. |
 | 2026-07-02 | Added support for the MCP `ttlMs` freshness hint (SEP #2549) as the primary refetch bound, clamped by `spec.maxPollInterval`, with `tools/list_changed` as immediate invalidation. Scoped policy validation to `Inline` rules. Addresses review feedback from @david-martin and @shachartal. |
 | 2026-05-25 | Major revision: replaced `XBackend.status.discoveredTools` with a dedicated `XToolInventory` CRD (1:1 with XBackend via `backendRef`). Updated all examples to `agentic.networking.x-k8s.io/v1alpha1` with method-based matching (`mcp.methods[].params[]`). Changed default poll interval from 30s to 5m. Added hybrid creation model (explicit + annotation-triggered). Motivated by community feedback from @keithmattix and @david-martin. |
@@ -104,11 +105,14 @@ XBackend to trigger auto-creation. Within the poll interval,
 `status.discoveredTools` populated with the backend's tools. No manual
 enumeration required.
 
-**CUJ 2: Operator writes a valid access policy.**
-The platform engineer writes an `XAccessPolicy` referencing tool names in
-`mcp.methods[].params[]`. The controller validates the tool names against
-the corresponding `XToolInventory.status.discoveredTools` and sets a Warning
-in the policy's `Accepted` condition message if any tool name doesn't match.
+**CUJ 2: Policy author writes a valid access policy.**
+A policy author writes an `XAccessPolicy` referencing tool names in
+`mcp.methods[].params[]`. This may or may not be the same person who manages
+the XToolInventory; either way, the policy author does not need to create or
+reconcile any discovery resource themselves. They consume the
+already-populated `XToolInventory.status.discoveredTools`. The controller
+validates the tool names against it and sets a Warning in the policy's
+`Accepted` condition message if any tool name doesn't match.
 
 **CUJ 3: Backend adds a new tool.**
 A tool developer deploys a new version of their MCP server with an additional
