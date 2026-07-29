@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -255,5 +256,58 @@ func TestIsPolicyUnderTargetLimit(t *testing.T) {
 				t.Errorf("Expected %d status updates, got %d", expectedUpdates, updateCount)
 			}
 		})
+	}
+}
+
+func TestUpdateAccessPolicyStatus_ProgrammedCondition(t *testing.T) {
+	ns := "test-ns"
+	policy := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-policy", Namespace: ns},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+					Group: gwapiv1.Group(agenticv0alpha0.GroupName),
+					Kind:  "XBackend",
+					Name:  "target-1",
+				},
+			}},
+		},
+	}
+
+	fakeClient := agenticclient.NewSimpleClientset(policy)
+	informerFactory := agenticinformers.NewSharedInformerFactory(fakeClient, 0)
+	lister := informerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
+	_ = informerFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Add(policy)
+
+	c := &Controller{
+		agentic: agenticNetResources{
+			client:             fakeClient,
+			accessPolicyLister: lister,
+		},
+	}
+
+	err := c.updateAccessPolicyStatus(context.Background(), policy, policy.Spec.TargetRefs[0], true, agenticv1alpha1.PolicyReasonAccepted, "Policy accepted")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updated, err := fakeClient.AgenticV1alpha1().XAccessPolicies(ns).Get(context.Background(), "test-policy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to fetch updated policy: %v", err)
+	}
+
+	if len(updated.Status.Ancestors) == 0 {
+		t.Fatalf("expected ancestors status, got empty")
+	}
+
+	ancestor := updated.Status.Ancestors[0]
+	acceptedCond := meta.FindStatusCondition(ancestor.Conditions, string(agenticv1alpha1.PolicyConditionAccepted))
+	if acceptedCond == nil || acceptedCond.Status != metav1.ConditionTrue || acceptedCond.Reason != string(agenticv1alpha1.PolicyReasonAccepted) {
+		t.Errorf("unexpected Accepted condition: %+v", acceptedCond)
+	}
+
+	programmedCond := meta.FindStatusCondition(ancestor.Conditions, string(agenticv1alpha1.PolicyConditionProgrammed))
+	if programmedCond == nil || programmedCond.Status != metav1.ConditionTrue || programmedCond.Reason != string(agenticv1alpha1.PolicyReasonProgrammed) {
+		t.Errorf("unexpected Programmed condition: %+v", programmedCond)
 	}
 }

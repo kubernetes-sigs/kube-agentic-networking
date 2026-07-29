@@ -321,11 +321,28 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 			status = metav1.ConditionFalse
 		}
 
-		newCondition := metav1.Condition{
+		acceptedCondition := metav1.Condition{
 			Type:               string(agenticv1alpha1.PolicyConditionAccepted),
 			Status:             status,
 			Reason:             string(reason),
 			Message:            message,
+			ObservedGeneration: fresh.Generation,
+		}
+
+		programmedStatus := metav1.ConditionTrue
+		programmedReason := string(agenticv1alpha1.PolicyReasonProgrammed)
+		programmedMessage := "Policy has been programmed"
+		if !accepted {
+			programmedStatus = metav1.ConditionFalse
+			programmedReason = string(reason)
+			programmedMessage = message
+		}
+
+		programmedCondition := metav1.Condition{
+			Type:               string(agenticv1alpha1.PolicyConditionProgrammed),
+			Status:             programmedStatus,
+			Reason:             programmedReason,
+			Message:            programmedMessage,
 			ObservedGeneration: fresh.Generation,
 		}
 
@@ -352,7 +369,8 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 			ancestorStatus = &policyCopy.Status.Ancestors[len(policyCopy.Status.Ancestors)-1]
 		}
 
-		meta.SetStatusCondition(&ancestorStatus.Conditions, newCondition)
+		meta.SetStatusCondition(&ancestorStatus.Conditions, acceptedCondition)
+		meta.SetStatusCondition(&ancestorStatus.Conditions, programmedCondition)
 
 		if reflect.DeepEqual(fresh.Status, policyCopy.Status) {
 			return nil
