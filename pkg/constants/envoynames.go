@@ -49,4 +49,9 @@ const (
 	GatewayAllowRBACFilterName = "envoy.filters.http.rbac.gateway_allow"
 	// BackendAllowRBACFilterName is the name for Envoy RBAC filter for Backend Allow policies.
 	BackendAllowRBACFilterName = "envoy.filters.http.rbac.backend_allow"
+
+	// ObservabilityLuaFilterName is the Lua filter that derives security event attributes from RBAC/MCP metadata.
+	ObservabilityLuaFilterName = "envoy.filters.http.lua.observability"
+	// ObservabilityMetadataNamespace is the dynamic metadata namespace written by the observability Lua filter.
+	ObservabilityMetadataNamespace = "agentic_obs"
 )

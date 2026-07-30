@@ -1,0 +1,6 @@
+apiVersion: v2
+name: observability-example
+description: Example observability stack for kube-agentic-networking (OTel Collector, Tempo, Grafana)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

@@ -125,6 +125,7 @@ spec:
             - --sharding-pod-name=$(POD_NAME)
             - --sharding-pod-uid=$(POD_UID)
             - --sharding-application-name=agentic-net-controller
+            - --tracing-sampling-rate=100.0
             - --enable-agentic-identity-signer=true
             - --agentic-identity-trust-domain=cluster.local
             - --agentic-identity-ca-pool=/run/agentic-identity-ca-state/ca-pool.json

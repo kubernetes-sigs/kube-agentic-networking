@@ -1,0 +1,22 @@
+{{- if .Values.collector.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  labels:
+    app: otel-collector
+    {{- include "observability-example.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+  - port: 4317
+    targetPort: 4317
+    protocol: TCP
+    name: otlp-grpc
+  - port: 4318
+    targetPort: 4318
+    protocol: TCP
+    name: otlp-http
+  selector:
+    app: otel-collector
+{{- end }}
