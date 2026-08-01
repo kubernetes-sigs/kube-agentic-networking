@@ -55,11 +55,12 @@ var XAccessPolicyExtAuthAccepted = suite.ConformanceTest{
 			}
 
 			accepted := helpers.IsXAccessPolicyAccepted(policy)
-			t.Logf("XAccessPolicy %s Accepted condition: %v", policyName.Name, accepted)
+			programmed := helpers.IsXAccessPolicyProgrammed(policy)
+			t.Logf("XAccessPolicy %s Accepted: %v, Programmed: %v", policyName.Name, accepted, programmed)
 
-			return accepted, nil
+			return accepted && programmed, nil
 		})
-		require.NoError(t, err, "timed out waiting for XAccessPolicy to be accepted")
+		require.NoError(t, err, "timed out waiting for XAccessPolicy to be accepted and programmed")
 	},
 }
 

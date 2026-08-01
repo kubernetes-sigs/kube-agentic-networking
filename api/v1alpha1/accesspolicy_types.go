@@ -366,6 +366,10 @@ const (
 	// has been programmed by the controller into the data plane.
 	PolicyReasonProgrammed gwapiv1.PolicyConditionReason = "Programmed"
 
+	// This reason is used with the "Programmed" condition when the policy
+	// is pending programming by the controller into the data plane.
+	PolicyReasonPending gwapiv1.PolicyConditionReason = "Pending"
+
 	// This reason is used with the "Accepted" condition when the policy
 	// was rejected because the maximum number of policies per target was exceeded.
 	PolicyLimitPerTargetExceeded gwapiv1.PolicyConditionReason = "LimitPerTargetExceeded"

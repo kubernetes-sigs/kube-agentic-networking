@@ -138,8 +138,9 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 // When an AccessPolicy targets a Gateway, that Gateway is enqueued so its finalizer can be re-evaluated on AccessPolicy delete (avoids deadlock).
 func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv1alpha1.XAccessPolicy) {
 	isAccepted := helpersv1alpha1.IsXAccessPolicyAccepted(policy)
+	isProgrammed := helpersv1alpha1.IsXAccessPolicyProgrammed(policy)
 	isDeleting := policy.DeletionTimestamp != nil
-	shouldEnqueueGW := isAccepted || isDeleting
+	shouldEnqueueGW := (isAccepted && isProgrammed) || isDeleting
 
 	for _, targetRef := range policy.Spec.TargetRefs {
 		if isGatewayTargetRef(targetRef) {
@@ -194,8 +195,9 @@ func hasAccessPolicyChanged(oldPolicy, newPolicy *agenticv1alpha1.XAccessPolicy)
 	specChanged := newPolicy.Generation != oldPolicy.Generation || !reflect.DeepEqual(newPolicy.Annotations, oldPolicy.Annotations)
 	deletionTimestampChanged := newPolicy.DeletionTimestamp != oldPolicy.DeletionTimestamp
 	acceptanceChanged := helpersv1alpha1.IsXAccessPolicyAccepted(newPolicy) != helpersv1alpha1.IsXAccessPolicyAccepted(oldPolicy)
+	programmedChanged := helpersv1alpha1.IsXAccessPolicyProgrammed(newPolicy) != helpersv1alpha1.IsXAccessPolicyProgrammed(oldPolicy)
 
-	return specChanged || deletionTimestampChanged || acceptanceChanged
+	return specChanged || deletionTimestampChanged || acceptanceChanged || programmedChanged
 }
 
 // isMoreSenior returns true if p1 is "more senior" (established earlier) than p2.
