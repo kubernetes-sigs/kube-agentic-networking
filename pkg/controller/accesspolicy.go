@@ -138,9 +138,8 @@ func (c *Controller) onAccessPolicyDelete(obj interface{}) {
 // When an AccessPolicy targets a Gateway, that Gateway is enqueued so its finalizer can be re-evaluated on AccessPolicy delete (avoids deadlock).
 func (c *Controller) enqueueGatewaysForAccessPolicy(policy *agenticv1alpha1.XAccessPolicy) {
 	isAccepted := helpersv1alpha1.IsXAccessPolicyAccepted(policy)
-	isProgrammed := helpersv1alpha1.IsXAccessPolicyProgrammed(policy)
 	isDeleting := policy.DeletionTimestamp != nil
-	shouldEnqueueGW := (isAccepted && isProgrammed) || isDeleting
+	shouldEnqueueGW := isAccepted || isDeleting
 
 	for _, targetRef := range policy.Spec.TargetRefs {
 		if isGatewayTargetRef(targetRef) {
@@ -331,9 +330,9 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 			ObservedGeneration: fresh.Generation,
 		}
 
-		programmedStatus := metav1.ConditionTrue
-		programmedReason := string(agenticv1alpha1.PolicyReasonProgrammed)
-		programmedMessage := "Policy has been programmed"
+		programmedStatus := metav1.ConditionFalse
+		programmedReason := string(agenticv1alpha1.PolicyReasonPending)
+		programmedMessage := "Policy programming is pending"
 		if !accepted {
 			programmedStatus = metav1.ConditionFalse
 			programmedReason = string(reason)

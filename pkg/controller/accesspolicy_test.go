@@ -307,7 +307,7 @@ func TestUpdateAccessPolicyStatus_ProgrammedCondition(t *testing.T) {
 	}
 
 	programmedCond := meta.FindStatusCondition(ancestor.Conditions, string(agenticv1alpha1.PolicyConditionProgrammed))
-	if programmedCond == nil || programmedCond.Status != metav1.ConditionTrue || programmedCond.Reason != string(agenticv1alpha1.PolicyReasonProgrammed) {
+	if programmedCond == nil || programmedCond.Status != metav1.ConditionFalse || programmedCond.Reason != string(agenticv1alpha1.PolicyReasonPending) {
 		t.Errorf("unexpected Programmed condition: %+v", programmedCond)
 	}
 }
