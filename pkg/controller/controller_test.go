@@ -25,6 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	discoverylisters "k8s.io/client-go/listers/discovery/v1"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -32,11 +34,14 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayfake "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
 	gatewaylisters "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
+	gatewaylistersv1beta1 "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1beta1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
+	agenticlisters "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v0alpha0"
 	agenticlistersv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/listers/api/v1alpha1"
 	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
+	"sigs.k8s.io/kube-agentic-networking/pkg/translator"
 )
 
 func TestHasHTTPRoutesReferencingGateway(t *testing.T) {
@@ -438,5 +443,122 @@ func TestSyncGateway_EnsureProxyExistError(t *testing.T) {
 	}
 	if !foundUpdateStatus {
 		t.Error("foundUpdateStatus = false, want true")
+	}
+}
+
+func TestSyncGateway_EnsureProxyExistError_HTTPRouteStatusUpdated(t *testing.T) {
+	gwNamespace := "default"
+	gwName := "my-gateway"
+	gwcName := "my-class"
+
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: gwName, Finalizers: []string{constants.GatewayFinalizer}},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gwcName),
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Port:     8080,
+					Protocol: gatewayv1.HTTPProtocolType,
+				},
+			},
+		},
+	}
+
+	gwc := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: gwcName},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: constants.ControllerName,
+		},
+	}
+
+	httpRoute := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Namespace: gwNamespace, Name: "my-route"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: gatewayv1.ObjectName(gwName)},
+				},
+			},
+		},
+	}
+
+	gwIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	if err := gwIndexer.Add(gw); err != nil {
+		t.Fatalf("gwIndexer.Add() = %v, want nil", err)
+	}
+
+	gwcIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	if err := gwcIndexer.Add(gwc); err != nil {
+		t.Fatalf("gwcIndexer.Add() = %v, want nil", err)
+	}
+
+	httpRouteIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	if err := httpRouteIndexer.Add(httpRoute); err != nil {
+		t.Fatalf("httpRouteIndexer.Add() = %v, want nil", err)
+	}
+
+	emptyIndexer := func() cache.Indexer {
+		return cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	}
+
+	fakeK8sClient := fake.NewClientset()
+	fakeK8sClient.PrependReactor("create", "serviceaccounts", func(_ k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, nil, fmt.Errorf("forced error")
+	})
+
+	fakeGwClient := gatewayfake.NewClientset(gw, httpRoute)
+
+	gatewayLister := gatewaylisters.NewGatewayLister(gwIndexer)
+	httpRouteLister := gatewaylisters.NewHTTPRouteLister(httpRouteIndexer)
+
+	trans := translator.New(
+		"test-trust-domain",
+		fakeK8sClient,
+		fakeGwClient,
+		corev1listers.NewNamespaceLister(emptyIndexer()),
+		corev1listers.NewServiceLister(emptyIndexer()),
+		discoverylisters.NewEndpointSliceLister(emptyIndexer()),
+		corev1listers.NewSecretLister(emptyIndexer()),
+		corev1listers.NewConfigMapLister(emptyIndexer()),
+		gatewayLister,
+		httpRouteLister,
+		gatewaylistersv1beta1.NewReferenceGrantLister(emptyIndexer()),
+		agenticlistersv1alpha1.NewXAccessPolicyLister(emptyIndexer()),
+		agenticlisters.NewXBackendLister(emptyIndexer()),
+		0.0,
+	)
+
+	queue := &fakeQueue{}
+
+	c := &Controller{
+		gateway: gatewayResources{
+			gatewayLister:      gatewayLister,
+			gatewayClassLister: gatewaylisters.NewGatewayClassLister(gwcIndexer),
+			httprouteLister:    httpRouteLister,
+			client:             fakeGwClient,
+		},
+		core: coreResources{
+			client: fakeK8sClient,
+		},
+		gatewayqueue: queue,
+		translator:   trans,
+	}
+
+	err := c.syncGateway(context.Background(), gwNamespace+"/"+gwName)
+	if err == nil {
+		t.Fatal("syncGateway() = nil, want error")
+	}
+
+	actions := fakeGwClient.Actions()
+	foundHTTPRouteStatusUpdate := false
+	for _, action := range actions {
+		if action.GetVerb() == "update" && action.GetResource().Resource == "httproutes" && action.GetSubresource() == "status" {
+			foundHTTPRouteStatusUpdate = true
+			break
+		}
+	}
+	if !foundHTTPRouteStatusUpdate {
+		t.Error("expected HTTPRoute status update when EnsureProxyExist fails, but none found")
 	}
 }

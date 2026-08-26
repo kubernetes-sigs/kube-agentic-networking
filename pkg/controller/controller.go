@@ -438,10 +438,15 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 
 	// Ensure Envoy proxy deployment and service exist.
 	rm := envoy.NewResourceManager(c.core.client, gateway, c.envoyImage, c.agenticIdentityTrustDomain)
-	proxyAddress, err := rm.EnsureProxyExist(ctx)
-	if err != nil {
-		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, err)
-		return errors.Join(err, updateErr)
+	proxyAddress, ensureProxyErr := rm.EnsureProxyExist(ctx)
+	if ensureProxyErr != nil {
+		if c.translator != nil {
+			if _, _, httpRouteStatuses, _, translateErr := c.translator.TranslateGatewayToXDS(ctx, gateway); translateErr == nil {
+				_ = c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
+			}
+		}
+		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, ensureProxyErr)
+		return errors.Join(ensureProxyErr, updateErr)
 	}
 
 	// TODO: Add support for IPv6?
