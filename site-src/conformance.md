@@ -101,6 +101,9 @@ Once you have a passing report, refer to the
 [Conformance Reports README](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/conformance/reports/README.md#submission-process)
 for detailed rules on report content, folder structure, versioning, and how to submit your report via Pull Request.
 
+Implementations with an accepted report are listed on the
+[Implementations](implementations.md) page.
+
 ## Further Reading
 
 - [Conformance Reports](https://github.com/kubernetes-sigs/kube-agentic-networking/blob/main/conformance/reports/README.md) — Report format, rules, and submission process
