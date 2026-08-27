@@ -4,7 +4,7 @@ The [Agentic Networking Quickstart](quickstart/README.md) demonstrates the power
 
 ## ADK Agent
 
-The **ADK Agent** is a custom-built, lightweight agent demonstrating a direct integration with the Multi-Server MCP Client. It does not rely on any third-party agent framework, instead implementing its own core logic to interact with language models and execute tools exposed by various MCP servers.
+The **ADK Agent** is a lightweight agent built with Google's [Agent Development Kit (ADK)](https://google.github.io/adk-docs/). It uses ADK's `McpToolset` to connect to multiple MCP servers and LiteLLM to interact with a variety of language models, executing tools exposed by the connected MCP servers.
 
 - [View ADK Agent Directory](https://github.com/kubernetes-sigs/kube-agentic-networking/tree/main/site-src/guides/quickstart/adk-agent/)
 

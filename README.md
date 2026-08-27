@@ -30,6 +30,10 @@ This subproject aims to deliver the following:
 
 ![Architecture Diagram](./docs/diagram.svg)
 
+The project includes a working Envoy-based reference implementation supporting MCP tool-level authorization, CEL-based rules, SPIFFE-based agent identity, external authorization, and authorization tracing, along with a [conformance suite](https://kube-agentic-networking.sigs.k8s.io/conformance/) for other implementations. The latest release is [v0.1.0](https://github.com/kubernetes-sigs/kube-agentic-networking/releases/tag/v0.1.0).
+
+Full documentation is available at [kube-agentic-networking.sigs.k8s.io](https://kube-agentic-networking.sigs.k8s.io/).
+
 ## Quick Start
 
 You can find a quick start guide [here](https://kube-agentic-networking.sigs.k8s.io/guides/quickstart/).

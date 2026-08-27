@@ -1,8 +1,10 @@
 nav:
   - Home: index.md
   - Introduction: introduction.md
+  - Use Cases: use-cases.md
   - Guides: guides
   - Conformance: conformance.md
+  - Implementations: implementations.md
   - Enhancements: proposals
   - Reference: reference
   - Contributing: contributing
