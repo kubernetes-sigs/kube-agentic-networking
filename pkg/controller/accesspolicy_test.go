@@ -18,18 +18,22 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
 	agenticclient "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/fake"
 	agenticinformers "sigs.k8s.io/kube-agentic-networking/k8s/client/informers/externalversions"
+	"sigs.k8s.io/kube-agentic-networking/pkg/constants"
 )
 
 func TestIsPolicyUnderTargetLimit(t *testing.T) {
@@ -309,5 +313,116 @@ func TestUpdateAccessPolicyStatus_ProgrammedCondition(t *testing.T) {
 	programmedCond := meta.FindStatusCondition(ancestor.Conditions, string(agenticv1alpha1.PolicyConditionProgrammed))
 	if programmedCond == nil || programmedCond.Status != metav1.ConditionFalse || programmedCond.Reason != string(agenticv1alpha1.PolicyReasonPending) {
 		t.Errorf("unexpected Programmed condition: %+v", programmedCond)
+	}
+}
+
+func TestUpdateAccessPolicyProgrammedStatus(t *testing.T) {
+	tests := []struct {
+		name              string
+		programmingErr    error
+		wantStatus        metav1.ConditionStatus
+		wantReason        string
+		wantMessagePrefix string
+	}{
+		{
+			name:              "xDS update succeeded",
+			wantStatus:        metav1.ConditionTrue,
+			wantReason:        string(agenticv1alpha1.PolicyReasonProgrammed),
+			wantMessagePrefix: "Policy has been programmed",
+		},
+		{
+			name:              "xDS update failed",
+			programmingErr:    errors.New("xDS update failed"),
+			wantStatus:        metav1.ConditionFalse,
+			wantReason:        string(agenticv1alpha1.PolicyReasonPending),
+			wantMessagePrefix: "Failed to program policy",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const (
+				ns          = "test-ns"
+				policyName  = "test-policy"
+				gatewayName = "test-gateway"
+			)
+			gatewayRef := gwapiv1.ParentReference{
+				Group:     ptr.To(gwapiv1.Group(gwapiv1.GroupName)),
+				Kind:      ptr.To(gwapiv1.Kind("Gateway")),
+				Namespace: ptr.To(gwapiv1.Namespace(ns)),
+				Name:      gwapiv1.ObjectName(gatewayName),
+			}
+			policy := &agenticv1alpha1.XAccessPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: policyName, Namespace: ns, Generation: 2},
+				Status: agenticv1alpha1.AccessPolicyStatus{Ancestors: []gwapiv1.PolicyAncestorStatus{{
+					AncestorRef:    gatewayRef,
+					ControllerName: gwapiv1.GatewayController(constants.ControllerName),
+					Conditions: []metav1.Condition{
+						{
+							Type:               string(agenticv1alpha1.PolicyConditionAccepted),
+							Status:             metav1.ConditionTrue,
+							Reason:             string(agenticv1alpha1.PolicyReasonAccepted),
+							ObservedGeneration: 2,
+						},
+						{
+							Type:               string(agenticv1alpha1.PolicyConditionProgrammed),
+							Status:             metav1.ConditionFalse,
+							Reason:             string(agenticv1alpha1.PolicyReasonPending),
+							ObservedGeneration: 2,
+						},
+					},
+				}}},
+			}
+			gateway := &gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gatewayName, Namespace: ns}}
+
+			fakeClient := agenticclient.NewSimpleClientset(policy)
+			informerFactory := agenticinformers.NewSharedInformerFactory(fakeClient, 0)
+			lister := informerFactory.Agentic().V1alpha1().XAccessPolicies().Lister()
+			if err := informerFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Add(policy); err != nil {
+				t.Fatalf("failed to add policy to indexer: %v", err)
+			}
+
+			c := &Controller{agentic: agenticNetResources{client: fakeClient, accessPolicyLister: lister}}
+			if err := c.updateAccessPolicyProgrammedStatus(context.Background(), policy, gateway, tt.programmingErr); err != nil {
+				t.Fatalf("updateAccessPolicyProgrammedStatus() error = %v", err)
+			}
+
+			updated, err := fakeClient.AgenticV1alpha1().XAccessPolicies(ns).Get(context.Background(), policyName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("failed to get updated policy: %v", err)
+			}
+			condition := meta.FindStatusCondition(updated.Status.Ancestors[0].Conditions, string(agenticv1alpha1.PolicyConditionProgrammed))
+			if condition == nil {
+				t.Fatal("Programmed condition not found")
+			}
+			if condition.Status != tt.wantStatus || condition.Reason != tt.wantReason || !strings.HasPrefix(condition.Message, tt.wantMessagePrefix) {
+				t.Errorf("Programmed condition = %+v, want status=%s reason=%s message prefix=%q", condition, tt.wantStatus, tt.wantReason, tt.wantMessagePrefix)
+			}
+			if condition.ObservedGeneration != policy.Generation {
+				t.Errorf("ObservedGeneration = %d, want %d", condition.ObservedGeneration, policy.Generation)
+			}
+		})
+	}
+}
+
+func TestHasAccessPolicyChangedIgnoresProgrammedStatus(t *testing.T) {
+	oldPolicy := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-policy", Namespace: "test-ns", Generation: 1},
+		Status: agenticv1alpha1.AccessPolicyStatus{Ancestors: []gwapiv1.PolicyAncestorStatus{{
+			Conditions: []metav1.Condition{
+				{Type: string(agenticv1alpha1.PolicyConditionAccepted), Status: metav1.ConditionTrue},
+				{Type: string(agenticv1alpha1.PolicyConditionProgrammed), Status: metav1.ConditionFalse},
+			},
+		}}},
+	}
+	newPolicy := oldPolicy.DeepCopy()
+	meta.SetStatusCondition(&newPolicy.Status.Ancestors[0].Conditions, metav1.Condition{
+		Type:   string(agenticv1alpha1.PolicyConditionProgrammed),
+		Status: metav1.ConditionTrue,
+		Reason: string(agenticv1alpha1.PolicyReasonProgrammed),
+	})
+
+	if hasAccessPolicyChanged(oldPolicy, newPolicy) {
+		t.Error("hasAccessPolicyChanged() = true for Programmed-only status update, want false")
 	}
 }
