@@ -771,6 +771,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 				nil, // referenceGrantLister
 				agenticInformerFactory.Agentic().V1alpha1().XAccessPolicies().Lister(),
 				agenticInformerFactory.Agentic().V0alpha0().XBackends().Lister(),
+				100.0,
 			)
 
 			// Populate Informer caches
@@ -1005,6 +1006,7 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 			if routeAction := r.GetRoute(); routeAction != nil {
 				if weightedClusters := routeAction.GetWeightedClusters(); weightedClusters != nil {
 					for _, wc := range weightedClusters.GetClusters() {
+<<<<<<< HEAD
 						if len(expectedPrincipals) == 0 {
 							continue
 						}
@@ -1013,6 +1015,15 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 						rbacTypedConfig, ok := wc.GetTypedPerFilterConfig()[filterName]
 						if !ok {
 							t.Errorf("Backend Allow RBAC filter %s not found in cluster %s", filterName, wc.GetName())
+=======
+						filterName := constants.BackendAllowRBACFilterName
+						rbacTypedConfig, ok := wc.GetTypedPerFilterConfig()[filterName]
+						if ok != (len(expectedPrincipals) > 0) {
+							t.Errorf("Backend Allow RBAC filter %s presence mismatch: expected to have policies=%v, found filter=%v", filterName, len(expectedPrincipals) > 0, ok)
+							continue
+						}
+						if !ok {
+>>>>>>> upstream/main
 							continue
 						}
 
@@ -1020,11 +1031,20 @@ func checkRouteRBAC(t *testing.T, rc *routev3.RouteConfiguration, expectedPrinci
 						if err := rbacTypedConfig.UnmarshalTo(rbacPerRoute); err != nil {
 							t.Fatalf("failed to unmarshal RBACPerRoute: %v", err)
 						}
+<<<<<<< HEAD
 
 						for _, expectedPrincipal := range expectedPrincipals {
 							if !hasPrincipal(rbacPerRoute.GetRbac(), expectedPrincipal) {
 								t.Errorf("RBAC policy for cluster %s filter %s missing expected principal: %s", wc.GetName(), filterName, expectedPrincipal)
 							}
+=======
+
+						actualPrincipals := getPrincipals(rbacPerRoute.GetRbac())
+						expPrincipals := sortedCopy(expectedPrincipals)
+
+						if !compareSlices(actualPrincipals, expPrincipals) {
+							t.Errorf("RBAC policy for cluster %s filter %s: expected principals %v, got %v", wc.GetName(), filterName, expPrincipals, actualPrincipals)
+>>>>>>> upstream/main
 						}
 					}
 				}
@@ -1054,6 +1074,7 @@ func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincip
 					switch httpFilter.GetName() {
 					case constants.GatewayAllowRBACFilterName:
 						foundGatewayAllow = true
+<<<<<<< HEAD
 						// Verify principal if it's within the expected list
 						if len(expectedGWPrincipals) > 0 {
 							rbacConfig := &rbacv3.RBAC{}
@@ -1065,6 +1086,18 @@ func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincip
 								t.Errorf("Gateway Allow filter missing expected principal: %s", expectedGWPrincipals[0])
 							}
 						}
+=======
+						rbacConfig := &rbacv3.RBAC{}
+						if err := httpFilter.GetTypedConfig().UnmarshalTo(rbacConfig); err != nil {
+							t.Fatalf("failed to unmarshal RBAC config from listener: %v", err)
+						}
+						actualPrincipals := getPrincipals(rbacConfig)
+						expPrincipals := sortedCopy(expectedGWPrincipals)
+
+						if !compareSlices(actualPrincipals, expPrincipals) {
+							t.Errorf("Listener %s Gateway Allow filter: expected principals %v, got %v", lis.GetName(), expPrincipals, actualPrincipals)
+						}
+>>>>>>> upstream/main
 					case constants.BackendExtAuthRBACFilterName:
 						foundBackendExtAuth = true
 					case constants.BackendAllowRBACFilterName:
@@ -1072,8 +1105,13 @@ func checkListenerRBAC(t *testing.T, lis *listenerv3.Listener, expectedGWPrincip
 					}
 				}
 
+<<<<<<< HEAD
 				if len(expectedGWPrincipals) > 0 && !foundGatewayAllow {
 					t.Errorf("expected Gateway Allow filter %s not found", constants.GatewayAllowRBACFilterName)
+=======
+				if (len(expectedGWPrincipals) > 0) != foundGatewayAllow {
+					t.Errorf("Gateway Allow filter presence mismatch: expected to have policies=%v, found filter=%v", len(expectedGWPrincipals) > 0, foundGatewayAllow)
+>>>>>>> upstream/main
 				}
 
 				if expectedBackendFilters > 0 {

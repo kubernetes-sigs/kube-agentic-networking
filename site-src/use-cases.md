@@ -1,4 +1,11 @@
-# Personas
+# Use Cases
+
+This page describes who Kube Agentic Networking is for and the user journeys
+that drive the project's API design. If one of these journeys matches a problem
+you have, the [Quickstart](guides/quickstart/README.md) is a good place to see
+the current APIs in action.
+
+## Personas
 
 **AI Engineer**: A hands-on builder focused on the end-to-end development, deployment, and optimization of AI agents. They are distinct from ML Researchers and ML Engineers; AI Engineers are product-first, operating on the other side of the LLM Inference Serving API, and are not responsible for training, tuning, or deploying the models themselves.
 
@@ -12,13 +19,13 @@
 
 **Tool Developer**: A builder focused on developing MCP tools that can be leveraged by agents.
 
-# CUJs
+## Critical User Journeys
 
-## Agent Identity 
+### Agent Identity
 
 As an AI Engineer, I want to assign a unique, verifiable identity to my agent running in Kubernetes, so that gateways or external systems can securely authenticate it and make authorization decisions.
 
-## Protocol-Aware Authorization
+### Protocol-Aware Authorization
 
 As an AI Platform Engineer, I want to:
 
@@ -32,7 +39,7 @@ As an AI Platform Engineer, I want to:
 
 * Control whether access to tools is read, write or both
 
-## Observability
+### Observability
 
 As an AI Engineer I want to:
 
@@ -44,7 +51,7 @@ As an AI Platform Engineer I want to:
 
 * Have an aggregated way of seeing failures/denials across the platform
 
-## Security
+### Security
 
 As an AI Security Engineer I want to:
 

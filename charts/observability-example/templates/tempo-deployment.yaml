@@ -1,0 +1,59 @@
+{{- if .Values.tempo.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  labels:
+    app: tempo
+    {{- include "observability-example.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+      - name: tempo
+        image: {{ .Values.tempo.image.repository }}:{{ .Values.tempo.image.tag }}
+        args:
+          - "-config.file=/etc/tempo/tempo.yaml"
+        ports:
+          - containerPort: 3200
+            name: tempo-http
+            protocol: TCP
+          - containerPort: 4317
+            name: otlp-grpc
+            protocol: TCP
+          - containerPort: 4318
+            name: otlp-http
+            protocol: TCP
+        volumeMounts:
+          - name: tempo-config
+            mountPath: /etc/tempo
+          - name: tempo-storage
+            mountPath: /tmp/tempo
+        resources:
+          {{- toYaml .Values.tempo.resources | nindent 10 }}
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3200
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 3200
+          initialDelaySeconds: 30
+          periodSeconds: 20
+      volumes:
+        - name: tempo-config
+          configMap:
+            name: tempo-config
+        - name: tempo-storage
+          emptyDir: {}
+{{- end }}

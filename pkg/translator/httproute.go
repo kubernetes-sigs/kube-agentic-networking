@@ -89,6 +89,9 @@ func (t *Translator) translateHTTPRouteToEnvoyRoutes(
 				Match:                  routeMatch,
 				RequestHeadersToAdd:    headersToAdd,
 				RequestHeadersToRemove: headersToRemove,
+				Decorator: &routev3.Decorator{
+					Operation: "mcp.gateway.request",
+				},
 			}
 
 			if redirectAction != nil {

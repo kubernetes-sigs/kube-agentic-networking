@@ -30,6 +30,10 @@ This subproject aims to deliver the following:
 
 ![Architecture Diagram](./docs/diagram.svg)
 
+The project includes a working Envoy-based reference implementation supporting MCP tool-level authorization, CEL-based rules, SPIFFE-based agent identity, external authorization, and authorization tracing, along with a [conformance suite](https://kube-agentic-networking.sigs.k8s.io/conformance/) for other implementations. The latest release is [v0.1.0](https://github.com/kubernetes-sigs/kube-agentic-networking/releases/tag/v0.1.0).
+
+Full documentation is available at [kube-agentic-networking.sigs.k8s.io](https://kube-agentic-networking.sigs.k8s.io/).
+
 ## Quick Start
 
 You can find a quick start guide [here](https://kube-agentic-networking.sigs.k8s.io/guides/quickstart/).
@@ -40,7 +44,7 @@ See the [Development Guide](dev/dev-guide.md) for information on building and te
 
 ## Community, discussion, contribution, and support
 
-Our community meetings are held weekly on Thursday at 8:00 AM PT (Pacific Time) ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=08%3A00&tz=PT%20%28Pacific%20Time%29)).
+Our community meetings are held bi-weekly on Thursday at 8:00 AM PT (Pacific Time) ([Convert to your timezone](http://www.thetimezoneconverter.com/?t=08%3A00&tz=PT%20%28Pacific%20Time%29)).
 - [Meeting Notes](https://docs.google.com/document/d/1EQET_VWe_IAINyQhVj-wduZg99gBaObpz9612eZ1iYg/edit?tab=t.0#heading=h.q1zi45aa3n69)
 - [Zoom (client) Meeting Link](https://zoom.us/j/92037420986)
 - [Zoom (web) Meeting Link](https://zoom.us/wc/join/92037420986)

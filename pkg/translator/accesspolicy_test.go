@@ -81,7 +81,8 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 	tests := []struct {
 		name            string
 		policies        []runtime.Object
-		gatewaysToCheck map[string][]string // gateway name -> expected filter names in order
+		gatewaysToCheck map[string][]string                // gateway name -> expected filter names in order
+		expectedRules   map[string]map[string]expectedRule // gateway name -> rule name -> expectedRule
 	}{
 		{
 			name:     "no policies targeting gateway",
@@ -89,6 +90,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			gatewaysToCheck: map[string][]string{
 				gwName: {},
 			},
+			expectedRules: map[string]map[string]expectedRule{},
 		},
 		{
 			name: "single policy targeting gateway",
@@ -97,6 +99,17 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 			gatewaysToCheck: map[string][]string{
 				gwName: {constants.GatewayAllowRBACFilterName},
+<<<<<<< HEAD
+=======
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				gwName: {
+					"gw-policy-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+				},
+>>>>>>> upstream/main
 			},
 		},
 		{
@@ -107,6 +120,21 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 			gatewaysToCheck: map[string][]string{
 				gwName: {constants.GatewayAllowRBACFilterName},
+<<<<<<< HEAD
+=======
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				gwName: {
+					"gw-policy-1-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+					"gw-policy-2-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns2/sa/sa2",
+						expectAnyPermission: true,
+					},
+				},
+>>>>>>> upstream/main
 			},
 		},
 		{
@@ -140,6 +168,23 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			gatewaysToCheck: map[string][]string{
 				gwName:     {constants.GatewayAllowRBACFilterName},
 				"other-gw": {constants.GatewayAllowRBACFilterName},
+<<<<<<< HEAD
+=======
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				gwName: {
+					"multi-gw-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+				"other-gw": {
+					"multi-gw-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+>>>>>>> upstream/main
 			},
 		},
 	}
@@ -170,6 +215,14 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 				for i, f := range filters {
 					if f.GetName() != expectedNames[i] {
 						t.Errorf("Gateway %s, Filter %d: expected name %s, got %s", gwn, i, expectedNames[i], f.GetName())
+					}
+
+					if f.GetName() == constants.GatewayAllowRBACFilterName {
+						rbacProto := &rbacv3.RBAC{}
+						if err := f.GetTypedConfig().UnmarshalTo(rbacProto); err != nil {
+							t.Fatalf("Gateway %s: failed to unmarshal RBAC: %v", gwn, err)
+						}
+						verifyRBAC(t, rbacProto.GetRules(), tt.expectedRules[gwn])
 					}
 				}
 			}
@@ -209,7 +262,8 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 	tests := []struct {
 		name            string
 		policies        []runtime.Object
-		backendsToCheck map[string][]string // backend name -> expected filter names in order
+		backendsToCheck map[string][]string                // backend name -> expected filter names in order
+		expectedRules   map[string]map[string]expectedRule // backend name -> rule name -> expectedRule
 	}{
 		{
 			name:     "no policies targeting backend",
@@ -217,6 +271,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			backendsToCheck: map[string][]string{
 				beName: {},
 			},
+			expectedRules: map[string]map[string]expectedRule{},
 		},
 		{
 			name: "single policy targeting backend",
@@ -225,6 +280,17 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			},
 			backendsToCheck: map[string][]string{
 				beName: {constants.BackendAllowRBACFilterName},
+<<<<<<< HEAD
+=======
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				beName: {
+					"be-policy-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+				},
+>>>>>>> upstream/main
 			},
 		},
 		{
@@ -235,6 +301,21 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			},
 			backendsToCheck: map[string][]string{
 				beName: {constants.BackendAllowRBACFilterName},
+<<<<<<< HEAD
+=======
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				beName: {
+					"be-policy-1-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
+						expectAnyPermission: true,
+					},
+					"be-policy-2-rule-1": {
+						principal:           "spiffe://cluster.local/ns/ns2/sa/sa2",
+						expectAnyPermission: true,
+					},
+				},
+>>>>>>> upstream/main
 			},
 		},
 		{
@@ -268,6 +349,23 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			backendsToCheck: map[string][]string{
 				beName:          {constants.BackendAllowRBACFilterName},
 				"other-backend": {constants.BackendAllowRBACFilterName},
+<<<<<<< HEAD
+=======
+			},
+			expectedRules: map[string]map[string]expectedRule{
+				beName: {
+					"multi-be-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+				"other-backend": {
+					"multi-be-policy-rule-name": {
+						principal:           "",
+						expectAnyPermission: true,
+					},
+				},
+>>>>>>> upstream/main
 			},
 		},
 	}
@@ -297,8 +395,18 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 				}
 
 				for _, expectedName := range expectedFilterNames {
-					if _, ok := configs[expectedName]; !ok {
+					config, ok := configs[expectedName]
+					if !ok {
 						t.Errorf("Backend %s: Expected config for filter %s not found", ben, expectedName)
+						continue
+					}
+
+					if expectedName == constants.BackendAllowRBACFilterName {
+						rbacPerRoute := &rbacv3.RBACPerRoute{}
+						if err := config.UnmarshalTo(rbacPerRoute); err != nil {
+							t.Fatalf("Backend %s: failed to unmarshal RBACPerRoute: %v", ben, err)
+						}
+						verifyRBAC(t, rbacPerRoute.GetRbac().GetRules(), tt.expectedRules[ben])
 					}
 				}
 			}
@@ -659,6 +767,12 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					permissions: []string{"tool-1"},
 				},
 			},
+			expectedShadowRules: map[string]expectedRule{
+				"rule-1": {
+					principal:   "spiffe://example.com/ns/default/sa/caller",
+					permissions: []string{"tool-1"},
+				},
+			},
 		},
 		{
 			name: "one rule with empty tools",
@@ -677,6 +791,16 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					principal:           "spiffe://example.com/ns/default/sa/caller",
 					permissions:         []string{},
 					expectAnyPermission: true,
+<<<<<<< HEAD
+=======
+				},
+			},
+			expectedShadowRules: map[string]expectedRule{
+				"rule-1": {
+					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
+>>>>>>> upstream/main
 				},
 			},
 		},
@@ -688,6 +812,16 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					principal:           "spiffe://example.com/ns/default/sa/caller",
 					permissions:         []string{},
 					expectAnyPermission: true,
+<<<<<<< HEAD
+=======
+				},
+			},
+			expectedShadowRules: map[string]expectedRule{
+				"rule-1": {
+					principal:           "spiffe://example.com/ns/default/sa/caller",
+					permissions:         []string{},
+					expectAnyPermission: true,
+>>>>>>> upstream/main
 				},
 			},
 		},
@@ -752,6 +886,16 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 					permissions: []string{"tool-b", "tool-c"},
 				},
 			},
+			expectedShadowRules: map[string]expectedRule{
+				"rule-1": {
+					principal:   "spiffe://" + testTrustDomain + "/ns/my-ns/sa/my-sa",
+					permissions: []string{"tool-a"},
+				},
+				"rule-2": {
+					principal:   "spiffe://example.com/ns/default/sa/caller",
+					permissions: []string{"tool-b", "tool-c"},
+				},
+			},
 		},
 		{
 			name: "one rule with service account in same namespace (empty ns in source)",
@@ -784,6 +928,12 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				},
 			},
 			expectedRules: map[string]expectedRule{
+				"rule-1": {
+					principal:   "spiffe://" + testTrustDomain + "/ns/my-ns/sa/my-sa",
+					permissions: []string{"tool-1"},
+				},
+			},
+			expectedShadowRules: map[string]expectedRule{
 				"rule-1": {
 					principal:   "spiffe://" + testTrustDomain + "/ns/my-ns/sa/my-sa",
 					permissions: []string{"tool-1"},
@@ -1069,5 +1219,89 @@ func verifyPolicy(t *testing.T, rbacPolicy *rbacconfigv3.Policy, expected expect
 				t.Errorf("expected tool %q not found in OrMatch", expectedTool)
 			}
 		}
+	}
+}
+
+func TestTranslateInlineAttributesToRBACPermission(t *testing.T) {
+	tests := []struct {
+		name  string
+		auth  *agenticv1alpha1.AuthorizationRule
+		check func(*testing.T, *rbacconfigv3.Permission)
+	}{
+		{
+			name: "nil auth",
+			auth: nil,
+			check: func(t *testing.T, p *rbacconfigv3.Permission) {
+				if p != nil {
+					t.Errorf("expected nil permission for nil auth")
+				}
+			},
+		},
+		{
+			name: "methods and paths",
+			auth: &agenticv1alpha1.AuthorizationRule{
+				Methods: []agenticv1alpha1.HTTPMethod{"GET", "POST"},
+				Paths: []agenticv1alpha1.HTTPPathMatch{
+					{Value: func(s string) *string { return &s }("/health")},
+				},
+			},
+			check: func(t *testing.T, p *rbacconfigv3.Permission) {
+				andRules := p.GetAndRules()
+				if andRules == nil || len(andRules.GetRules()) != 2 {
+					t.Fatalf("expected AndRules with 2 rules")
+				}
+			},
+		},
+		{
+			name: "headers, hosts, and ports",
+			auth: &agenticv1alpha1.AuthorizationRule{
+				Headers: []agenticv1alpha1.HTTPHeaderMatch{
+					{Name: "x-role", Value: "admin"},
+				},
+				Hosts: []agenticv1alpha1.Hostname{".example.com"},
+				Ports: []agenticv1alpha1.PortNumber{8080},
+			},
+			check: func(t *testing.T, p *rbacconfigv3.Permission) {
+				andRules := p.GetAndRules()
+				if andRules == nil || len(andRules.GetRules()) != 3 {
+					t.Fatalf("expected AndRules with 3 rules, got %v", p)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := translateInlineAttributesToRBACPermission(tt.auth)
+			tt.check(t, got)
+		})
+	}
+}
+
+func TestTranslateAccessRuleToRBACPolicy(t *testing.T) {
+	tr := &Translator{}
+	rule := agenticv1alpha1.AccessRule{
+		Name: "test-rule",
+		Authorization: &agenticv1alpha1.AuthorizationRule{
+			Type:    agenticv1alpha1.AuthorizationRuleTypeInline,
+			Methods: []agenticv1alpha1.HTTPMethod{"GET"},
+			MCP: agenticv1alpha1.MCPAttributes{
+				Methods: []agenticv1alpha1.MCPMethod{
+					{Name: "tools/call"},
+				},
+			},
+		},
+	}
+	policy := tr.translateAccessRuleToRBACPolicy("default", rule)
+	if policy == nil {
+		t.Fatalf("expected policy, got nil")
+	}
+	perms := policy.GetPermissions()
+	if len(perms) != 1 {
+		t.Fatalf("expected 1 combined permission, got %d", len(perms))
+	}
+	andRules := perms[0].GetAndRules()
+	if andRules == nil || len(andRules.GetRules()) != 2 {
+		t.Fatalf("expected combined AndRules with 2 rules")
 	}
 }
