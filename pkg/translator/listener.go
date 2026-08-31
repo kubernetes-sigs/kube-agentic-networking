@@ -44,7 +44,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
-
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
