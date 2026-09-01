@@ -50,3 +50,5 @@ site-src/reference/spec.md
 
 # Agentic instructions
 .agents/
+# Generated release manifests
+release/
