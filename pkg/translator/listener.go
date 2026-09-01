@@ -778,10 +778,10 @@ func buildExtAuthzFilterForRBACFilter(extAuthz *gatewayv1.HTTPExternalAuthFilter
 			// We don't support AllowedResponseHeaders yet
 		}
 	}
-	if forwardRequestBody := extAuthz.ForwardBody; forwardRequestBody != nil {
+	if forwardRequestBody := extAuthz.ForwardBody; forwardRequestBody != nil && forwardRequestBody.MaxSize > 0 {
 		extAuthzProto.WithRequestBody = &ext_authzv3.BufferSettings{
 			MaxRequestBytes:     uint32(forwardRequestBody.MaxSize),
-			AllowPartialMessage: true,
+			AllowPartialMessage: false,
 		}
 	}
 	extAuthzAny, err := anypb.New(extAuthzProto)
