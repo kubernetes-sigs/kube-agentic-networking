@@ -56,9 +56,9 @@ var XAccessPolicyExtAuthLimit = suite.ConformanceTest{
 				t.Logf("Error getting XAccessPolicy 1: %v", getErr)
 				return false, client.IgnoreNotFound(getErr)
 			}
-			return helpers.IsXAccessPolicyAccepted(policy1), nil
+			return helpers.IsXAccessPolicyAccepted(policy1) && helpers.IsXAccessPolicyProgrammed(policy1), nil
 		})
-		require.NoError(t, err, "timed out waiting for senior XAccessPolicy to be accepted")
+		require.NoError(t, err, "timed out waiting for senior XAccessPolicy to be accepted and programmed")
 
 		// 2. Verify policy 2 (junior) is rejected with LimitPerTargetExceeded
 		t.Logf("Waiting for junior XAccessPolicy %s to be rejected with LimitPerTargetExceeded", policy2Name)
