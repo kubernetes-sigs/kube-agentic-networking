@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # Dependencies listed in go.mod
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      non-k8s:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      k8s.io: # Group k8s.io golang dependencies updates
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+    labels:
+      - "go"
+      - "dependencies"
+      - "ok-to-test"
+      - "release-note-none"
+
+  # GitHub Actions updates
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ok-to-test"
+      - "release-note-none"
