@@ -192,7 +192,7 @@ build_and_load_controller_image() {
 # Function to build and load the MCP everything image used by E2E tests.
 # The image name is fixed in site-src/guides/quickstart/mcpserver/Makefile, so
 # only the registry and tag are parameterized here.
-build_and_load_mcp_image() {
+build_and_load_mcp_everything_image() {
   local cluster_name=$1
   local registry=$2
   local tag=$3
@@ -245,7 +245,7 @@ setup_cluster_with_controller() {
 
   setup_kind_cluster "${cluster_name}"
   build_and_load_controller_image "${cluster_name}" "${REGISTRY}" "${IMAGE_NAME}" "${TAG}"
-  build_and_load_mcp_image "${cluster_name}" "${REGISTRY}" "${TAG}"
+  build_and_load_mcp_everything_image "${cluster_name}" "${REGISTRY}" "${TAG}"
 
   install_crds
   setup_agentic_identity "${SYSTEM_NAMESPACE}"

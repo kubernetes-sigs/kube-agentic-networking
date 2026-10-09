@@ -17,7 +17,7 @@ spec:
         - name: mcp-everything
           image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-everything-mcp:main
           # Image is built and loaded into the kind cluster by the E2E setup
-          # (build_and_load_mcp_image in dev/ci/lib.sh), so prefer the local
+          # (build_and_load_mcp_everything_image in dev/ci/lib.sh), so prefer the local
           # copy rather than pulling from the staging registry.
           imagePullPolicy: IfNotPresent
           ports:
