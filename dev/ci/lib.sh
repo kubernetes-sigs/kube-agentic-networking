@@ -189,6 +189,21 @@ build_and_load_controller_image() {
   kind load docker-image "${registry}/${image_name}:${tag}" --name "${cluster_name}"
 }
 
+# Function to build and load the MCP everything image used by E2E tests.
+# The image name is fixed in site-src/guides/quickstart/mcpserver/Makefile, so
+# only the registry and tag are parameterized here.
+build_and_load_mcp_everything_image() {
+  local cluster_name=$1
+  local registry=$2
+  local tag=$3
+
+  header "Building MCP everything image"
+  make -C site-src/guides/quickstart/mcpserver build REGISTRY="${registry}" TAG="${tag}" EXTRA_BUILD_OPT="--label runnumber=${BUILD_ID:-0}"
+
+  header "Loading MCP everything image into cluster"
+  kind load docker-image "${registry}/quickstart-everything-mcp:${tag}" --name "${cluster_name}"
+}
+
 # Function to install CRDs
 install_crds() {
   header "Installing Gateway API CRDs"
@@ -230,7 +245,8 @@ setup_cluster_with_controller() {
 
   setup_kind_cluster "${cluster_name}"
   build_and_load_controller_image "${cluster_name}" "${REGISTRY}" "${IMAGE_NAME}" "${TAG}"
-  
+  build_and_load_mcp_everything_image "${cluster_name}" "${REGISTRY}" "${TAG}"
+
   install_crds
   setup_agentic_identity "${SYSTEM_NAMESPACE}"
   deploy_controller "${TAG}" "${SYSTEM_NAMESPACE}"
