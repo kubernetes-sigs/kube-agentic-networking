@@ -477,7 +477,7 @@ func TestTranslateGatewayToXDS_Full(t *testing.T) {
 			},
 		},
 		{
-			name: "Listener programed with both cert Ref and CA Ref",
+			name: "Listener programmed with both cert Ref and CA Ref",
 			gw: newTestGateway("cert-ca-gw", ns, []gatewayv1.SecretObjectReference{{Name: "my-cert"}}, &gatewayv1.FrontendTLSConfig{
 				Default: gatewayv1.TLSConfig{
 					Validation: &gatewayv1.FrontendTLSValidation{

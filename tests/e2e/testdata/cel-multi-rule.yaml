@@ -28,7 +28,7 @@ spec:
       type: CEL
       cel:
         expression: "request.mcp.tool_name == 'non-existent'"
-  # Note: A second rule is added here to allow the base MCP protocol methods (such as "initializate",
+  # Note: A second rule is added here to allow the base MCP protocol methods (such as "initialize",
   # tools.list, etc). Using a separate inline rule is more convenient than
   # trying to manually specify connection methods within CEL rules.
   # TODO(https://github.com/kubernetes-sigs/kube-agentic-networking/issues/288): Explore allowing base protocol methods
