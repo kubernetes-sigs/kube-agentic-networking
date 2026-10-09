@@ -66,7 +66,7 @@ test: test-unit test-cel test-crd ## Run all tests.
 .PHONY: test-unit
 test-unit: ## Run unit tests.
 	$(info ...Running unit tests.)
-	go test -race ./api/... ./pkg/...
+	go test -race ./api/... ./pkg/... ./cmd/...
 
 .PHONY: test-cel
 test-cel: ## Run CEL tests.
