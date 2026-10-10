@@ -55,9 +55,9 @@ var XAccessPolicyBaseProtocolMatch = suite.ConformanceTest{
 				t.Logf("Error getting XAccessPolicy: %v", err)
 				return false, client.IgnoreNotFound(err)
 			}
-			return helpers.IsXAccessPolicyAccepted(policy), nil
+			return helpers.IsXAccessPolicyAccepted(policy) && helpers.IsXAccessPolicyProgrammed(policy), nil
 		})
-		require.NoError(t, err, "timed out waiting for XAccessPolicy to be accepted")
+		require.NoError(t, err, "timed out waiting for XAccessPolicy to be accepted and programmed")
 
 		// 2. Get Gateway IP
 		gatewayName := types.NamespacedName{Name: "conformance-primary", Namespace: namespace}
