@@ -190,6 +190,30 @@ func isGatewayTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionN
 	return targetRef.Group == gwapiv1.GroupName && targetRef.Kind == "Gateway"
 }
 
+// accessPoliciesForGateway returns the accepted policies included in the
+// Gateway-level xDS translation.
+func (c *Controller) accessPoliciesForGateway(gateway *gwapiv1.Gateway) ([]*agenticv1alpha1.XAccessPolicy, error) {
+	policies, err := c.agentic.accessPolicyLister.XAccessPolicies(gateway.Namespace).List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list AccessPolicies for Gateway %s/%s: %w", gateway.Namespace, gateway.Name, err)
+	}
+
+	var matchingPolicies []*agenticv1alpha1.XAccessPolicy
+	for _, policy := range policies {
+		if !helpersv1alpha1.IsXAccessPolicyAccepted(policy) {
+			continue
+		}
+		for _, targetRef := range policy.Spec.TargetRefs {
+			if isGatewayTargetRef(targetRef) && string(targetRef.Name) == gateway.Name {
+				matchingPolicies = append(matchingPolicies, policy)
+				break
+			}
+		}
+	}
+
+	return matchingPolicies, nil
+}
+
 func hasAccessPolicyChanged(oldPolicy, newPolicy *agenticv1alpha1.XAccessPolicy) bool {
 	specChanged := newPolicy.Generation != oldPolicy.Generation || !reflect.DeepEqual(newPolicy.Annotations, oldPolicy.Annotations)
 	deletionTimestampChanged := newPolicy.DeletionTimestamp != oldPolicy.DeletionTimestamp
@@ -321,11 +345,28 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 			status = metav1.ConditionFalse
 		}
 
-		newCondition := metav1.Condition{
+		acceptedCondition := metav1.Condition{
 			Type:               string(agenticv1alpha1.PolicyConditionAccepted),
 			Status:             status,
 			Reason:             string(reason),
 			Message:            message,
+			ObservedGeneration: fresh.Generation,
+		}
+
+		programmedStatus := metav1.ConditionFalse
+		programmedReason := string(agenticv1alpha1.PolicyReasonPending)
+		programmedMessage := "Policy programming is pending"
+		if !accepted {
+			programmedStatus = metav1.ConditionFalse
+			programmedReason = string(reason)
+			programmedMessage = message
+		}
+
+		programmedCondition := metav1.Condition{
+			Type:               string(agenticv1alpha1.PolicyConditionProgrammed),
+			Status:             programmedStatus,
+			Reason:             programmedReason,
+			Message:            programmedMessage,
 			ObservedGeneration: fresh.Generation,
 		}
 
@@ -352,8 +393,58 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 			ancestorStatus = &policyCopy.Status.Ancestors[len(policyCopy.Status.Ancestors)-1]
 		}
 
-		meta.SetStatusCondition(&ancestorStatus.Conditions, newCondition)
+		meta.SetStatusCondition(&ancestorStatus.Conditions, acceptedCondition)
+		meta.SetStatusCondition(&ancestorStatus.Conditions, programmedCondition)
 
+		if reflect.DeepEqual(fresh.Status, policyCopy.Status) {
+			return nil
+		}
+
+		_, err = c.agentic.client.AgenticV1alpha1().XAccessPolicies(policy.Namespace).UpdateStatus(ctx, policyCopy, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func (c *Controller) updateAccessPolicyProgrammedStatus(ctx context.Context, policy *agenticv1alpha1.XAccessPolicy, gateway *gwapiv1.Gateway, programmingErr error) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh, err := c.agentic.accessPolicyLister.XAccessPolicies(policy.Namespace).Get(policy.Name)
+		if err != nil {
+			return err
+		}
+		policyCopy := fresh.DeepCopy()
+
+		gatewayRef := gwapiv1.ParentReference{
+			Group:     ptr.To(gwapiv1.Group(gwapiv1.GroupName)),
+			Kind:      ptr.To(gwapiv1.Kind("Gateway")),
+			Namespace: ptr.To(gwapiv1.Namespace(gateway.Namespace)),
+			Name:      gwapiv1.ObjectName(gateway.Name),
+		}
+
+		var ancestorStatus *gwapiv1.PolicyAncestorStatus
+		for i := range policyCopy.Status.Ancestors {
+			if reflect.DeepEqual(policyCopy.Status.Ancestors[i].AncestorRef, gatewayRef) {
+				ancestorStatus = &policyCopy.Status.Ancestors[i]
+				break
+			}
+		}
+		if ancestorStatus == nil {
+			return fmt.Errorf("gateway ancestor status %s/%s not found for AccessPolicy %s/%s", gateway.Namespace, gateway.Name, policy.Namespace, policy.Name)
+		}
+
+		programmedCondition := metav1.Condition{
+			Type:               string(agenticv1alpha1.PolicyConditionProgrammed),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(agenticv1alpha1.PolicyReasonProgrammed),
+			Message:            "Policy has been programmed into the data plane",
+			ObservedGeneration: fresh.Generation,
+		}
+		if programmingErr != nil {
+			programmedCondition.Status = metav1.ConditionFalse
+			programmedCondition.Reason = string(agenticv1alpha1.PolicyReasonPending)
+			programmedCondition.Message = fmt.Sprintf("Failed to program policy into the data plane: %v", programmingErr)
+		}
+
+		meta.SetStatusCondition(&ancestorStatus.Conditions, programmedCondition)
 		if reflect.DeepEqual(fresh.Status, policyCopy.Status) {
 			return nil
 		}
