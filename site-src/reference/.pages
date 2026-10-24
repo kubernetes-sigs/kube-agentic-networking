@@ -2,3 +2,4 @@ title: Reference
 nav:
   - API Specification: spec.md
   - API Design: api-design.md
+  - CEL Vocabulary: cel.md
