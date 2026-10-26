@@ -22,7 +22,7 @@ spec:
           request.path.startsWith('/mc') &&
           request.headers['mcp-protocol-version'].contains('2025') &&
           request.mcp.tool_name.matches('^get-[a-z]+$')
-  # Note: A second rule is added here to allow the base MCP protocol methods (such as "initializate",
+  # Note: A second rule is added here to allow the base MCP protocol methods (such as "initialize",
   # tools.list, etc). Using a separate inline rule is more convenient than
   # trying to manually specify connection methods within CEL rules.
   # TODO(https://github.com/kubernetes-sigs/kube-agentic-networking/issues/288): Explore allowing base protocol methods
