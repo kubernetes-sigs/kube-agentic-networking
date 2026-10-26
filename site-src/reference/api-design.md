@@ -11,7 +11,7 @@ An **XBackend** represents a backend that agents or tools call into—for exampl
 
 ## XAccessPolicy
 
-An **XAccessPolicy** is an authorization policy: it defines *who* can access *what* for the backends it targets. It targets Gateways or XBackends via `targetRefs` and contains rules that describe allowed (or denied) sources and optional authorization (e.g. which tools or methods).
+An **XAccessPolicy** is an authorization policy: it defines *who* can access *what* for the backends it targets. It targets Gateways or XBackends via `targetRefs` and contains rules that describe allowed (or denied) sources and optional authorization (e.g. which tools or methods). For rules with `authorization.type: CEL`, see the [CEL vocabulary](cel.md) supported by the reference implementation.
 
 ## Relationship to Gateway API
 
