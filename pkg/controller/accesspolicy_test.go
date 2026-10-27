@@ -325,11 +325,11 @@ func TestUpdateAccessPolicyStatus_ProgrammedCondition(t *testing.T) {
 		Message:            "Policy has been programmed into the data plane",
 		ObservedGeneration: updated.Generation,
 	})
-	if _, err := fakeClient.AgenticV1alpha1().XAccessPolicies(ns).UpdateStatus(context.Background(), updated, metav1.UpdateOptions{}); err != nil {
-		t.Fatalf("failed to update policy status with Programmed=True: %v", err)
+	if _, updateErr := fakeClient.AgenticV1alpha1().XAccessPolicies(ns).UpdateStatus(context.Background(), updated, metav1.UpdateOptions{}); updateErr != nil {
+		t.Fatalf("failed to update policy status with Programmed=True: %v", updateErr)
 	}
-	if err := informerFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Update(updated); err != nil {
-		t.Fatalf("failed to update indexer: %v", err)
+	if indexerErr := informerFactory.Agentic().V1alpha1().XAccessPolicies().Informer().GetIndexer().Update(updated); indexerErr != nil {
+		t.Fatalf("failed to update indexer: %v", indexerErr)
 	}
 
 	err = c.updateAccessPolicyStatus(context.Background(), policy, policy.Spec.TargetRefs[0], true, agenticv1alpha1.PolicyReasonAccepted, "Policy accepted")
@@ -337,9 +337,9 @@ func TestUpdateAccessPolicyStatus_ProgrammedCondition(t *testing.T) {
 		t.Fatalf("unexpected error on resync: %v", err)
 	}
 
-	resynced, err := fakeClient.AgenticV1alpha1().XAccessPolicies(ns).Get(context.Background(), "test-policy", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("failed to fetch resynced policy: %v", err)
+	resynced, getErr := fakeClient.AgenticV1alpha1().XAccessPolicies(ns).Get(context.Background(), "test-policy", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("failed to fetch resynced policy: %v", getErr)
 	}
 	resyncedProgrammed := meta.FindStatusCondition(resynced.Status.Ancestors[0].Conditions, string(agenticv1alpha1.PolicyConditionProgrammed))
 	if resyncedProgrammed == nil || resyncedProgrammed.Status != metav1.ConditionTrue || resyncedProgrammed.Reason != string(agenticv1alpha1.PolicyReasonProgrammed) {
