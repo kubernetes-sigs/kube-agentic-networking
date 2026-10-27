@@ -60,12 +60,24 @@ var XAccessPolicyProgrammed = suite.ConformanceTest{
 					continue
 				}
 
+				acceptedCond := meta.FindStatusCondition(ancestor.Conditions, string(v1alpha1.PolicyConditionAccepted))
+				if acceptedCond == nil || acceptedCond.Status != metav1.ConditionTrue {
+					t.Log("Waiting for Accepted condition to be True")
+					return false, nil
+				}
+
 				condition := meta.FindStatusCondition(ancestor.Conditions, string(v1alpha1.PolicyConditionProgrammed))
 				if condition == nil {
 					t.Log("Waiting for Programmed condition")
 					return false, nil
 				}
 				t.Logf("XAccessPolicy %s Programmed condition: status=%s reason=%s", policyName.Name, condition.Status, condition.Reason)
+
+				if condition.Status == metav1.ConditionFalse {
+					require.Equal(t, string(v1alpha1.PolicyReasonPending), condition.Reason, "expected Programmed reason to be Pending while status is False")
+					return false, nil
+				}
+
 				return condition.Status == metav1.ConditionTrue &&
 					condition.Reason == string(v1alpha1.PolicyReasonProgrammed) &&
 					condition.ObservedGeneration == policy.Generation, nil

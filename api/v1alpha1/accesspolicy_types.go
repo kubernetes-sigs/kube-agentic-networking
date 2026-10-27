@@ -353,6 +353,8 @@ const (
 	//
 	// Possible reasons for this condition to be False are:
 	//
+	// * "Pending"
+	// * "Failed"
 	// * "LimitPerTargetExceeded"
 	// * "InvalidCEL"
 	//
@@ -369,6 +371,10 @@ const (
 	// This reason is used with the "Programmed" condition when the policy
 	// is pending programming by the controller into the data plane.
 	PolicyReasonPending gwapiv1.PolicyConditionReason = "Pending"
+
+	// This reason is used with the "Programmed" condition when the policy
+	// failed to be programmed by the controller into the data plane.
+	PolicyReasonFailed gwapiv1.PolicyConditionReason = "Failed"
 
 	// This reason is used with the "Accepted" condition when the policy
 	// was rejected because the maximum number of policies per target was exceeded.

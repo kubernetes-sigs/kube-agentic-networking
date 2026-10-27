@@ -190,28 +190,117 @@ func isGatewayTargetRef(targetRef gwapiv1.LocalPolicyTargetReferenceWithSectionN
 	return targetRef.Group == gwapiv1.GroupName && targetRef.Kind == "Gateway"
 }
 
-// accessPoliciesForGateway returns the accepted policies included in the
-// Gateway-level xDS translation.
-func (c *Controller) accessPoliciesForGateway(gateway *gwapiv1.Gateway) ([]*agenticv1alpha1.XAccessPolicy, error) {
+type policyTargetAncestor struct {
+	policy      *agenticv1alpha1.XAccessPolicy
+	ancestorRef gwapiv1.ParentReference
+}
+
+// accessPoliciesForGateway returns the accepted policies and their ancestorRefs included in
+// the xDS translation for the Gateway (both Gateway-targeted and routed XBackend-targeted policies).
+func (c *Controller) accessPoliciesForGateway(gateway *gwapiv1.Gateway) ([]policyTargetAncestor, error) {
+	var results []policyTargetAncestor
+	seen := make(map[string]struct{})
+
+	// 1. Collect accepted policies targeting the Gateway directly.
 	policies, err := c.agentic.accessPolicyLister.XAccessPolicies(gateway.Namespace).List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AccessPolicies for Gateway %s/%s: %w", gateway.Namespace, gateway.Name, err)
 	}
 
-	var matchingPolicies []*agenticv1alpha1.XAccessPolicy
 	for _, policy := range policies {
 		if !helpersv1alpha1.IsXAccessPolicyAccepted(policy) {
 			continue
 		}
 		for _, targetRef := range policy.Spec.TargetRefs {
 			if isGatewayTargetRef(targetRef) && string(targetRef.Name) == gateway.Name {
-				matchingPolicies = append(matchingPolicies, policy)
-				break
+				ancestorRef := gwapiv1.ParentReference{
+					Group:     ptr.To(gwapiv1.Group(gwapiv1.GroupName)),
+					Kind:      ptr.To(gwapiv1.Kind("Gateway")),
+					Namespace: ptr.To(gwapiv1.Namespace(policy.Namespace)),
+					Name:      targetRef.Name,
+				}
+				key := fmt.Sprintf("%s/%s/%s/%s/%s", policy.Namespace, policy.Name, ptr.Deref(ancestorRef.Group, ""), ptr.Deref(ancestorRef.Kind, ""), ancestorRef.Name)
+				if _, ok := seen[key]; !ok {
+					seen[key] = struct{}{}
+					results = append(results, policyTargetAncestor{policy: policy, ancestorRef: ancestorRef})
+				}
 			}
 		}
 	}
 
-	return matchingPolicies, nil
+	// 2. Collect accepted policies targeting XBackend resources attached to HTTPRoutes on this Gateway.
+	if c.gateway.httprouteLister != nil {
+		routes, err := c.gateway.httprouteLister.List(labels.Everything())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list HTTPRoutes for Gateway %s/%s: %w", gateway.Namespace, gateway.Name, err)
+		}
+
+		backendSeen := make(map[types.NamespacedName]struct{})
+		for _, route := range routes {
+			matchesGateway := false
+			for _, parentRef := range route.Spec.ParentRefs {
+				if !isGatewayParentRef(parentRef) {
+					continue
+				}
+				refNamespace := route.Namespace
+				if parentRef.Namespace != nil {
+					refNamespace = string(*parentRef.Namespace)
+				}
+				if string(parentRef.Name) == gateway.Name && refNamespace == gateway.Namespace {
+					matchesGateway = true
+					break
+				}
+			}
+			if !matchesGateway {
+				continue
+			}
+
+			for _, rule := range route.Spec.Rules {
+				for _, ref := range rule.BackendRefs {
+					if !isXBackendRef(ref.BackendRef) {
+						continue
+					}
+					refNamespace := route.Namespace
+					if ref.Namespace != nil {
+						refNamespace = string(*ref.Namespace)
+					}
+					backendNN := types.NamespacedName{Namespace: refNamespace, Name: string(ref.Name)}
+					if _, ok := backendSeen[backendNN]; ok {
+						continue
+					}
+					backendSeen[backendNN] = struct{}{}
+
+					backendPolicies, err := c.agentic.accessPolicyLister.XAccessPolicies(backendNN.Namespace).List(labels.Everything())
+					if err != nil {
+						return nil, fmt.Errorf("failed to list AccessPolicies for XBackend %s: %w", backendNN, err)
+					}
+
+					for _, policy := range backendPolicies {
+						if !helpersv1alpha1.IsXAccessPolicyAccepted(policy) {
+							continue
+						}
+						for _, targetRef := range policy.Spec.TargetRefs {
+							if isXBackendTargetRef(targetRef) && string(targetRef.Name) == backendNN.Name {
+								ancestorRef := gwapiv1.ParentReference{
+									Group:     ptr.To(gwapiv1.Group(agenticv0alpha0.GroupName)),
+									Kind:      ptr.To(gwapiv1.Kind("XBackend")),
+									Namespace: ptr.To(gwapiv1.Namespace(policy.Namespace)),
+									Name:      targetRef.Name,
+								}
+								key := fmt.Sprintf("%s/%s/%s/%s/%s", policy.Namespace, policy.Name, ptr.Deref(ancestorRef.Group, ""), ptr.Deref(ancestorRef.Kind, ""), ancestorRef.Name)
+								if _, ok := seen[key]; !ok {
+									seen[key] = struct{}{}
+									results = append(results, policyTargetAncestor{policy: policy, ancestorRef: ancestorRef})
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return results, nil
 }
 
 func hasAccessPolicyChanged(oldPolicy, newPolicy *agenticv1alpha1.XAccessPolicy) bool {
@@ -353,23 +442,6 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 			ObservedGeneration: fresh.Generation,
 		}
 
-		programmedStatus := metav1.ConditionFalse
-		programmedReason := string(agenticv1alpha1.PolicyReasonPending)
-		programmedMessage := "Policy programming is pending"
-		if !accepted {
-			programmedStatus = metav1.ConditionFalse
-			programmedReason = string(reason)
-			programmedMessage = message
-		}
-
-		programmedCondition := metav1.Condition{
-			Type:               string(agenticv1alpha1.PolicyConditionProgrammed),
-			Status:             programmedStatus,
-			Reason:             programmedReason,
-			Message:            programmedMessage,
-			ObservedGeneration: fresh.Generation,
-		}
-
 		parentRef := gwapiv1.ParentReference{
 			Group:     ptr.To(targetRef.Group),
 			Kind:      ptr.To(targetRef.Kind),
@@ -394,7 +466,24 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 		}
 
 		meta.SetStatusCondition(&ancestorStatus.Conditions, acceptedCondition)
-		meta.SetStatusCondition(&ancestorStatus.Conditions, programmedCondition)
+
+		if !accepted {
+			meta.SetStatusCondition(&ancestorStatus.Conditions, metav1.Condition{
+				Type:               string(agenticv1alpha1.PolicyConditionProgrammed),
+				Status:             metav1.ConditionFalse,
+				Reason:             string(reason),
+				Message:            message,
+				ObservedGeneration: fresh.Generation,
+			})
+		} else if meta.FindStatusCondition(ancestorStatus.Conditions, string(agenticv1alpha1.PolicyConditionProgrammed)) == nil {
+			meta.SetStatusCondition(&ancestorStatus.Conditions, metav1.Condition{
+				Type:               string(agenticv1alpha1.PolicyConditionProgrammed),
+				Status:             metav1.ConditionFalse,
+				Reason:             string(agenticv1alpha1.PolicyReasonPending),
+				Message:            "Policy programming is pending",
+				ObservedGeneration: fresh.Generation,
+			})
+		}
 
 		if reflect.DeepEqual(fresh.Status, policyCopy.Status) {
 			return nil
@@ -405,7 +494,7 @@ func (c *Controller) updateAccessPolicyStatus(ctx context.Context, policy *agent
 	})
 }
 
-func (c *Controller) updateAccessPolicyProgrammedStatus(ctx context.Context, policy *agenticv1alpha1.XAccessPolicy, gateway *gwapiv1.Gateway, programmingErr error) error {
+func (c *Controller) updateAccessPolicyProgrammedStatus(ctx context.Context, policy *agenticv1alpha1.XAccessPolicy, ancestorRef gwapiv1.ParentReference, programmingErr error) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		fresh, err := c.agentic.accessPolicyLister.XAccessPolicies(policy.Namespace).Get(policy.Name)
 		if err != nil {
@@ -413,22 +502,15 @@ func (c *Controller) updateAccessPolicyProgrammedStatus(ctx context.Context, pol
 		}
 		policyCopy := fresh.DeepCopy()
 
-		gatewayRef := gwapiv1.ParentReference{
-			Group:     ptr.To(gwapiv1.Group(gwapiv1.GroupName)),
-			Kind:      ptr.To(gwapiv1.Kind("Gateway")),
-			Namespace: ptr.To(gwapiv1.Namespace(gateway.Namespace)),
-			Name:      gwapiv1.ObjectName(gateway.Name),
-		}
-
 		var ancestorStatus *gwapiv1.PolicyAncestorStatus
 		for i := range policyCopy.Status.Ancestors {
-			if reflect.DeepEqual(policyCopy.Status.Ancestors[i].AncestorRef, gatewayRef) {
+			if reflect.DeepEqual(policyCopy.Status.Ancestors[i].AncestorRef, ancestorRef) {
 				ancestorStatus = &policyCopy.Status.Ancestors[i]
 				break
 			}
 		}
 		if ancestorStatus == nil {
-			return fmt.Errorf("gateway ancestor status %s/%s not found for AccessPolicy %s/%s", gateway.Namespace, gateway.Name, policy.Namespace, policy.Name)
+			return fmt.Errorf("ancestor status %s/%s not found for AccessPolicy %s/%s", ptr.Deref(ancestorRef.Kind, ""), ancestorRef.Name, policy.Namespace, policy.Name)
 		}
 
 		programmedCondition := metav1.Condition{
@@ -440,7 +522,7 @@ func (c *Controller) updateAccessPolicyProgrammedStatus(ctx context.Context, pol
 		}
 		if programmingErr != nil {
 			programmedCondition.Status = metav1.ConditionFalse
-			programmedCondition.Reason = string(agenticv1alpha1.PolicyReasonPending)
+			programmedCondition.Reason = string(agenticv1alpha1.PolicyReasonFailed)
 			programmedCondition.Message = fmt.Sprintf("Failed to program policy into the data plane: %v", programmingErr)
 		}
 
