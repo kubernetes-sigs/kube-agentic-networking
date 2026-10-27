@@ -479,11 +479,20 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	logger.Info("Translated gateway to xDS resources")
 
 	newGW.Status.Listeners = listenerStatuses
+	policyAncestors, accessPoliciesErr := c.accessPoliciesForGateway(gateway)
 	// Update the xDS server with the new resources.
 	xdsErr := c.xdsServer.UpdateXDSServer(ctx, rm.NodeID(), resources)
+	var accessPolicyStatusErrs []error
+	if accessPoliciesErr == nil {
+		for _, pa := range policyAncestors {
+			if err := c.updateAccessPolicyProgrammedStatus(ctx, pa.policy, pa.ancestorRef, xdsErr); err != nil {
+				accessPolicyStatusErrs = append(accessPolicyStatusErrs, fmt.Errorf("failed to update Programmed status for AccessPolicy %s/%s ancestor %s: %w", pa.policy.Namespace, pa.policy.Name, pa.ancestorRef.Name, err))
+			}
+		}
+	}
 	updateGatewayStatusErr := updateGatewayStatus(ctx, c, gateway, newGW, listenerStatuses, xdsErr)
 	updateHTTPRouteStatusErr := c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
-	return errors.Join(xdsErr, updateGatewayStatusErr, updateHTTPRouteStatusErr)
+	return errors.Join(xdsErr, accessPoliciesErr, errors.Join(accessPolicyStatusErrs...), updateGatewayStatusErr, updateHTTPRouteStatusErr)
 }
 
 func (c *Controller) updateGatewayRemoveFinalizer(ctx context.Context, namespace, name string) error {

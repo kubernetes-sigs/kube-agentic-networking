@@ -105,3 +105,68 @@ func TestIsXAccessPolicyAccepted(t *testing.T) {
 		})
 	}
 }
+
+func TestIsXAccessPolicyProgrammed(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   v0alpha0.AccessPolicyStatus
+		expected bool
+	}{
+		{
+			name:     "no ancestors (empty status)",
+			status:   v0alpha0.AccessPolicyStatus{},
+			expected: false,
+		},
+		{
+			name: "all ancestors programmed",
+			status: v0alpha0.AccessPolicyStatus{
+				Ancestors: []gwapiv1.PolicyAncestorStatus{
+					{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(v0alpha0.PolicyConditionProgrammed),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "one ancestor not programmed",
+			status: v0alpha0.AccessPolicyStatus{
+				Ancestors: []gwapiv1.PolicyAncestorStatus{
+					{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(v0alpha0.PolicyConditionProgrammed),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+					{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(v0alpha0.PolicyConditionProgrammed),
+								Status: metav1.ConditionFalse,
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &v0alpha0.XAccessPolicy{
+				Status: tt.status,
+			}
+			if got := IsXAccessPolicyProgrammed(p); got != tt.expected {
+				t.Errorf("IsXAccessPolicyProgrammed() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
