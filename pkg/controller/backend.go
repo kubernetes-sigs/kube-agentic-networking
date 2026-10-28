@@ -184,9 +184,9 @@ func (c *Controller) syncBackendFinalizer(ctx context.Context, key string) error
 func hasAccessPoliciesTargetingBackend(c *Controller, backend *agenticv0alpha0.XBackend) bool {
 	if c.agentic.accessPolicyIndexer != nil {
 		key := backend.Namespace + "/" + backend.Name
-		objs, err := c.agentic.accessPolicyIndexer.ByIndex(AccessPolicyTargetRefIndex, key)
+		objs, err := c.agentic.accessPolicyIndexer.ByIndex(AccessPolicyBackendTargetIndex, key)
 		if err != nil {
-			klog.V(4).ErrorS(err, "failed to list XAccessPolicies by targetRef index for XBackend finalizer")
+			klog.V(4).ErrorS(err, "failed to list XAccessPolicies by backendTarget index for XBackend finalizer")
 			return true
 		}
 		return len(objs) > 0
