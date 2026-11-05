@@ -18,7 +18,7 @@
 # Enable Go modules.
 export GO111MODULE=on
 # Warn if undefined variables are referenced.
-MAKEFLAGS += --warn-undefined-variablesm
+MAKEFLAGS += --warn-undefined-variables
 
 # First target in the Makefile is a default target when run with no
 # arguments.
@@ -84,7 +84,7 @@ test-e2e: ## Run full E2E tests including cluster setup and controller deploymen
 	./dev/ci/run-e2e.sh
 
 ## The below role tests against an existing kubernetes cluster, (using current context). 
-## The expectation is that you have the an agentic-netwokring gateway implementation installed. 
+## The expectation is that you have an agentic-networking gateway implementation installed. 
 .PHONY: conformance
 conformance: ## Run agentic-networking conformance tests.
 	$(info ...Running agentic-networking conformance tests.)
