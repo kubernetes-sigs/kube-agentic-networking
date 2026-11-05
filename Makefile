@@ -162,7 +162,7 @@ clientsets: ## Generate clientsets, listers, and informers.
 		    ./'
 
 .PHONY: register
-register: ## Generate register code for CRDs under ./api/v0alpha0 and ./api/v1alpha1
+register: ## Generate register code for CRDs under ./api/v0alpha0, ./api/v1alpha1 and ./api/v1alpha2
 	@echo "--- Ensuring code-generator is in module cache..."
 	@go mod download k8s.io/code-generator
 	@echo "+++ Generating register code for api/v0alpha0..."
@@ -175,6 +175,11 @@ register: ## Generate register code for CRDs under ./api/v0alpha0 and ./api/v1al
 		kube::codegen::gen_register \
 		    --boilerplate $(BOILERPLATE_FILE) \
 		    ./api/v1alpha1'
+	@echo "+++ Generating register code for api/v1alpha2..."
+	@bash -c 'source $(CODEGEN_SCRIPT); \
+                kube::codegen::gen_register \
+                    --boilerplate $(BOILERPLATE_FILE) \
+                    ./api/v1alpha2'
 
 
 ## @ Dependencies

@@ -25,6 +25,7 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 	v0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	v1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
+	v1alpha2 "sigs.k8s.io/kube-agentic-networking/api/v1alpha2"
 )
 
 // GenericInformer is type of SharedIndexInformer which will locate and delegate to other
@@ -62,6 +63,10 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		// Group=agentic.networking.x-k8s.io, Version=v1alpha1
 	case v1alpha1.SchemeGroupVersion.WithResource("xaccesspolicies"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Agentic().V1alpha1().XAccessPolicies().Informer()}, nil
+
+		// Group=agentic.networking.x-k8s.io, Version=v1alpha2
+	case v1alpha2.SchemeGroupVersion.WithResource("xaccesspolicies"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Agentic().V1alpha2().XAccessPolicies().Informer()}, nil
 
 	}
 
