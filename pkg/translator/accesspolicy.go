@@ -180,7 +180,8 @@ func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAcces
 
 	for _, policy := range policies {
 		for _, rule := range policy.Spec.Rules {
-			policyName := fmt.Sprintf("%s-%s", policy.Name, rule.Name)
+			// Include namespace so rules from different policies do not overwrite each other.
+			policyName := fmt.Sprintf("%s/%s/%s", policy.Namespace, policy.Name, rule.Name)
 			rbacPolicy := t.translateAccessRuleToRBACPolicy(policy.Namespace, rule)
 			if rbacPolicy == nil {
 				continue
@@ -350,14 +351,24 @@ func (t *Translator) translateAccessRuleToRBACPolicy(policyNamespace string, rul
 			httpPerm := translateInlineAttributesToRBACPermission(rule.Authorization)
 			hasHTTP := httpPerm != nil
 			hasMCP := len(rule.Authorization.MCP.Methods) > 0 || rule.Authorization.MCP.MCPBaseProtocolMethodsOption == agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch
+			// Explicit empty methods allowlist (methods: []) with no base-protocol match is deny-by-default.
+			explicitEmptyMCP := rule.Authorization.MCP.Methods != nil && len(rule.Authorization.MCP.Methods) == 0 &&
+				rule.Authorization.MCP.MCPBaseProtocolMethodsOption != agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch
 
 			switch {
 			case hasHTTP && !hasMCP:
+				// HTTP-only attributes apply. An explicit empty MCP methods list does not add MCP allows.
 				authPerms = []*rbacconfigv3.Permission{httpPerm}
 			case !hasHTTP && hasMCP:
 				authPerms = t.translateMCPToRBACPermissions(&rule.Authorization.MCP)
+				if authPerms == nil {
+					return nil
+				}
 			case hasHTTP && hasMCP:
 				mcpPerms := t.translateMCPToRBACPermissions(&rule.Authorization.MCP)
+				if mcpPerms == nil {
+					return nil
+				}
 				for _, mp := range mcpPerms {
 					authPerms = append(authPerms, &rbacconfigv3.Permission{
 						Rule: &rbacconfigv3.Permission_AndRules{
@@ -368,6 +379,10 @@ func (t *Translator) translateAccessRuleToRBACPolicy(policyNamespace string, rul
 					})
 				}
 			default:
+				if explicitEmptyMCP {
+					// Zero-length MCP allowlist: contribute no allow permissions for this rule.
+					return nil
+				}
 				authPerms = []*rbacconfigv3.Permission{buildAnyPermission()}
 			}
 		case agenticv1alpha1.AuthorizationRuleTypeCEL:
@@ -579,9 +594,18 @@ func translateHTTPHeaderMatch(header agenticv1alpha1.HTTPHeaderMatch) *routev3.H
 	}
 }
 
+// translateMCPToRBACPermissions converts MCP attributes into RBAC permissions.
+// Returns nil when an explicit empty methods allowlist is configured (deny-by-default for tool calls).
+// Returns any-permission when methods are omitted, meaning no MCP-level restriction is applied.
 func (t *Translator) translateMCPToRBACPermissions(mcp *agenticv1alpha1.MCPAttributes) []*rbacconfigv3.Permission {
 	if mcp == nil {
 		return []*rbacconfigv3.Permission{buildAnyPermission()}
+	}
+
+	// An explicit empty methods list establishes deny-by-default for tool calls.
+	if mcp.Methods != nil && len(mcp.Methods) == 0 &&
+		mcp.MCPBaseProtocolMethodsOption != agenticv1alpha1.MCPBaseProtocolMethodsOptionMatch {
+		return nil
 	}
 
 	var permissions []*rbacconfigv3.Permission
@@ -594,10 +618,10 @@ func (t *Translator) translateMCPToRBACPermissions(mcp *agenticv1alpha1.MCPAttri
 	}
 
 	if len(permissions) == 0 {
-		// If both methods and base protocol methods are empty/skipped, we fall back to allowing anything
-		// to maintain backward compatibility for policies that don't specify methods.
-		// TODO: Re-evaluate this default if strict explicit allow is required when `mcp` is present but empty.
-		return []*rbacconfigv3.Permission{buildAnyPermission()}
+		if mcp.Methods == nil {
+			return []*rbacconfigv3.Permission{buildAnyPermission()}
+		}
+		return nil
 	}
 
 	return permissions

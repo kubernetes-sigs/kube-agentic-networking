@@ -102,7 +102,7 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 			expectedRules: map[string]map[string]expectedRule{
 				gwName: {
-					"gw-policy-rule-1": {
+					"test-ns/gw-policy/rule-1": {
 						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
 						expectAnyPermission: true,
 					},
@@ -120,11 +120,11 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 			expectedRules: map[string]map[string]expectedRule{
 				gwName: {
-					"gw-policy-1-rule-1": {
+					"test-ns/gw-policy-1/rule-1": {
 						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
 						expectAnyPermission: true,
 					},
-					"gw-policy-2-rule-1": {
+					"test-ns/gw-policy-2/rule-1": {
 						principal:           "spiffe://cluster.local/ns/ns2/sa/sa2",
 						expectAnyPermission: true,
 					},
@@ -165,13 +165,13 @@ func TestBuildGatewayLevelRBACFilters(t *testing.T) {
 			},
 			expectedRules: map[string]map[string]expectedRule{
 				gwName: {
-					"multi-gw-policy-rule-name": {
+					"test-ns/multi-gw-policy/rule-name": {
 						principal:           "",
 						expectAnyPermission: true,
 					},
 				},
 				"other-gw": {
-					"multi-gw-policy-rule-name": {
+					"test-ns/multi-gw-policy/rule-name": {
 						principal:           "",
 						expectAnyPermission: true,
 					},
@@ -274,7 +274,7 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			},
 			expectedRules: map[string]map[string]expectedRule{
 				beName: {
-					"be-policy-rule-1": {
+					"test-ns/be-policy/rule-1": {
 						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
 						expectAnyPermission: true,
 					},
@@ -292,11 +292,11 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			},
 			expectedRules: map[string]map[string]expectedRule{
 				beName: {
-					"be-policy-1-rule-1": {
+					"test-ns/be-policy-1/rule-1": {
 						principal:           "spiffe://cluster.local/ns/ns1/sa/sa1",
 						expectAnyPermission: true,
 					},
-					"be-policy-2-rule-1": {
+					"test-ns/be-policy-2/rule-1": {
 						principal:           "spiffe://cluster.local/ns/ns2/sa/sa2",
 						expectAnyPermission: true,
 					},
@@ -337,13 +337,13 @@ func TestBuildBackendLevelRBACOverrides(t *testing.T) {
 			},
 			expectedRules: map[string]map[string]expectedRule{
 				beName: {
-					"multi-be-policy-rule-name": {
+					"test-ns/multi-be-policy/rule-name": {
 						principal:           "",
 						expectAnyPermission: true,
 					},
 				},
 				"other-backend": {
-					"multi-be-policy-rule-name": {
+					"test-ns/multi-be-policy/rule-name": {
 						principal:           "",
 						expectAnyPermission: true,
 					},
@@ -768,20 +768,9 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 				}
 				return p
 			}(),
-			expectedRules: map[string]expectedRule{
-				"rule-1": {
-					principal:           "spiffe://example.com/ns/default/sa/caller",
-					permissions:         []string{},
-					expectAnyPermission: true,
-				},
-			},
-			expectedShadowRules: map[string]expectedRule{
-				"rule-1": {
-					principal:           "spiffe://example.com/ns/default/sa/caller",
-					permissions:         []string{},
-					expectAnyPermission: true,
-				},
-			},
+			// Explicit empty methods allowlist contributes no allow permissions (deny-by-default).
+			expectedRules:       map[string]expectedRule{},
+			expectedShadowRules: map[string]expectedRule{},
 		},
 		{
 			name:         "one rule with nil authorization",
@@ -1000,6 +989,74 @@ func TestTranslateAccessPolicyToRBAC(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergeAllowPoliciesToRBAC(t *testing.T) {
+	denyByDefault := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "deny-by-default"},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "deny-all-tools",
+					Source: agenticv1alpha1.AccessRuleSource{
+						Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE,
+						SPIFFE: func() *agenticv1alpha1.AuthorizationSourceSPIFFE {
+							s := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://example.com/ns/default/sa/caller")
+							return &s
+						}(),
+					},
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP: agenticv1alpha1.MCPAttributes{
+							Methods: []agenticv1alpha1.MCPMethod{},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	allowOneTool := &agenticv1alpha1.XAccessPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "allow-one-tool"},
+		Spec: agenticv1alpha1.AccessPolicySpec{
+			Action: agenticv1alpha1.ActionTypeAllow,
+			Rules: []agenticv1alpha1.AccessRule{
+				{
+					Name: "allow-tool-a",
+					Source: agenticv1alpha1.AccessRuleSource{
+						Type: agenticv1alpha1.AuthorizationSourceTypeSPIFFE,
+						SPIFFE: func() *agenticv1alpha1.AuthorizationSourceSPIFFE {
+							s := agenticv1alpha1.AuthorizationSourceSPIFFE("spiffe://example.com/ns/default/sa/caller")
+							return &s
+						}(),
+					},
+					Authorization: &agenticv1alpha1.AuthorizationRule{
+						Type: agenticv1alpha1.AuthorizationRuleTypeInline,
+						MCP: agenticv1alpha1.MCPAttributes{
+							Methods: []agenticv1alpha1.MCPMethod{
+								{
+									Name:   "tools/call",
+									Params: []agenticv1alpha1.MCPMethodParam{"tool-a"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tr := &Translator{agenticIdentityTrustDomain: testTrustDomain}
+	rbac := tr.mergeAllowPoliciesToRBAC([]*agenticv1alpha1.XAccessPolicy{denyByDefault, allowOneTool})
+
+	expectedRules := map[string]expectedRule{
+		"default/allow-one-tool/allow-tool-a": {
+			principal:   "spiffe://example.com/ns/default/sa/caller",
+			permissions: []string{"tool-a"},
+		},
+	}
+	verifyRBAC(t, rbac.GetRules(), expectedRules)
 }
 
 func TestBuildAllowMCPSessionClosePolicy(t *testing.T) {

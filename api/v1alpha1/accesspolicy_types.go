@@ -50,7 +50,7 @@ type AccessPolicySpec struct {
 	// 1. ExternalAuth runs before all other Allow policies.
 	// 2. If an ExternalAuth server denies the request, the request is denied.
 	// 3. If it allows the request, processing continues for all other allow policies for that target.
-	// 4. The request is allowed only if all allow policies allow it.
+	// 4. The request is allowed if any allow policy allows it.
 	// +required
 	Action AccessPolicyActionType `json:"action"`
 
@@ -250,7 +250,8 @@ type MCPAttributes struct {
 	// Methods is a list of specific MCP functional methods to match.
 	// If specified, only MCP requests with a method
 	// that matches one of these items will be authorized.
-	// If empty or omitted, no method-level allowlisting is applied, meaning all
+	// If set to an empty list, no MCP methods are permitted (deny-by-default).
+	// If omitted, no method-level allowlisting is applied, meaning all
 	// MCP methods (e.g., all tools, prompts, and resources) are permitted.
 	// +kubebuilder:validation:MaxItems=10
 	// +optional
