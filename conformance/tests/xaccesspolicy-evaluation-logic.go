@@ -69,11 +69,11 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 				t.Logf("Error getting ExternalAuth policy: %v", getErr)
 				return false, client.IgnoreNotFound(getErr)
 			}
-			return helpers.IsXAccessPolicyAccepted(extAuthPolicy), nil
+			return helpers.IsXAccessPolicyAccepted(extAuthPolicy) && helpers.IsXAccessPolicyProgrammed(extAuthPolicy), nil
 		})
-		require.NoError(t, err, "timed out waiting for ExternalAuth XAccessPolicy to be accepted")
+		require.NoError(t, err, "timed out waiting for ExternalAuth XAccessPolicy to be accepted and programmed")
 
-		t.Logf("Waiting for XAccessPolicy %s to be accepted", allowPolicyName)
+		t.Logf("Waiting for XAccessPolicy %s to be accepted and programmed", allowPolicyName)
 		allowPolicy := &v1alpha1.XAccessPolicy{}
 		err = wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
 			getErr := s.Client.Get(ctx, allowPolicyName, allowPolicy)
@@ -81,9 +81,9 @@ var XAccessPolicyEvaluationLogic = suite.ConformanceTest{
 				t.Logf("Error getting Allow policy: %v", getErr)
 				return false, client.IgnoreNotFound(getErr)
 			}
-			return helpers.IsXAccessPolicyAccepted(allowPolicy), nil
+			return helpers.IsXAccessPolicyAccepted(allowPolicy) && helpers.IsXAccessPolicyProgrammed(allowPolicy), nil
 		})
-		require.NoError(t, err, "timed out waiting for Allow XAccessPolicy to be accepted")
+		require.NoError(t, err, "timed out waiting for Allow XAccessPolicy to be accepted and programmed")
 
 		// 3. Get Gateway IP
 		gatewayName := types.NamespacedName{Name: "conformance-primary", Namespace: namespace}

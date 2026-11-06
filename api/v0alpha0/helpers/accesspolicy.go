@@ -36,3 +36,18 @@ func IsXAccessPolicyAccepted(p *v0alpha0.XAccessPolicy) bool {
 	}
 	return true
 }
+
+// IsXAccessPolicyProgrammed returns true if the policy has been programmed for all its targets.
+// A policy is considered programmed only if it has at least one ancestor status populated
+// and ALL ancestors have the 'Programmed' condition set to 'True'.
+func IsXAccessPolicyProgrammed(p *v0alpha0.XAccessPolicy) bool {
+	if len(p.Status.Ancestors) == 0 {
+		return false
+	}
+	for _, ancestor := range p.Status.Ancestors {
+		if !meta.IsStatusConditionTrue(ancestor.Conditions, string(v0alpha0.PolicyConditionProgrammed)) {
+			return false
+		}
+	}
+	return true
+}
