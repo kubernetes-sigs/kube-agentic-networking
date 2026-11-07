@@ -41,6 +41,10 @@ const (
 	// This label was formally introduced in https://gateway-api.sigs.k8s.io/geps/gep-1762/#automated-deployments.
 	GatewayNameLabel = "gateway.networking.k8s.io/gateway-name"
 
+	// EnvoyInfraConfigChecksumAnnotation is applied to the Envoy Deployment pod template so updates to
+	// rendered bootstrap/SDS ConfigMap data roll pods (ConfigMap volume updates alone do not restart containers).
+	EnvoyInfraConfigChecksumAnnotation = ProjectName + "/envoy-infra-config-checksum"
+
 	// GatewayExtAuthRBACFilterName is the name for Envoy RBAC filter for Gateway ExternalAuth shadowRules.
 	GatewayExtAuthRBACFilterName = "envoy.filters.http.rbac.gateway_extauth"
 	// BackendExtAuthRBACFilterName is the name for Envoy RBAC filter for Backend ExternalAuth shadowRules.

@@ -36,23 +36,22 @@ func TestEnsureDeployment(t *testing.T) {
 	}
 	nodeID := proxyName(gw.Namespace, gw.Name)
 
-	t.Run("deployment not found, creates and returns error (not ready)", func(t *testing.T) {
+	t.Run("deployment not found, creates without waiting for Available", func(t *testing.T) {
 		client := fake.NewClientset()
 		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
 
 		err := rm.ensureDeployment(context.Background())
-		if err == nil {
-			t.Fatal("expected error as deployment is not available yet")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// Verify deployment was created
 		_, err = client.AppsV1().Deployments("test-ns").Get(context.Background(), nodeID, metav1.GetOptions{})
 		if err != nil {
 			t.Errorf("failed to get created deployment: %v", err)
 		}
 	})
 
-	t.Run("deployment exists but not available, returns error", func(t *testing.T) {
+	t.Run("deployment exists but not Available, still succeeds without blocking", func(t *testing.T) {
 		dep := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      nodeID,
@@ -71,8 +70,8 @@ func TestEnsureDeployment(t *testing.T) {
 		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
 
 		err := rm.ensureDeployment(context.Background())
-		if err == nil {
-			t.Fatal("expected error as deployment is not available")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
@@ -110,19 +109,13 @@ func TestEnsureService(t *testing.T) {
 	}
 	nodeID := proxyName(gw.Namespace, gw.Name)
 
-	t.Run("service not found, creates and returns error (no LoadBalancer address)", func(t *testing.T) {
+	t.Run("service not found, returns error (call ensureServiceExists first)", func(t *testing.T) {
 		client := fake.NewClientset()
 		rm := NewResourceManager(client, gw, "envoy-image", "cluster.local")
 
 		_, err := rm.ensureService(context.Background())
 		if err == nil {
-			t.Fatal("expected error as service has no LoadBalancer address")
-		}
-
-		// Verify service was created
-		_, err = client.CoreV1().Services("test-ns").Get(context.Background(), nodeID, metav1.GetOptions{})
-		if err != nil {
-			t.Errorf("failed to get created service: %v", err)
+			t.Fatal("expected error when service is missing")
 		}
 	})
 
