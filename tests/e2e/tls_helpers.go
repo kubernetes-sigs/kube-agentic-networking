@@ -18,10 +18,8 @@ package e2e
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -37,14 +35,53 @@ import (
 	"sigs.k8s.io/kube-agentic-networking/pkg/infra/agentidentity/localca"
 )
 
-// generateCA creates a new CA for testing.
+// generateCA creates a new RSA CA for testing. RSA is used instead of Ed25519 so the custom
+// gateway CA validation path exercised by TestGatewayTLS is compatible with Envoy and curl.
 func generateCA(caID string) (*localca.CA, error) {
-	return localca.GenerateED25519CA(caID)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate CA key: %w", err)
+	}
+
+	notBefore := time.Now()
+	notAfter := notBefore.Add(365 * 24 * time.Hour)
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	rootTemplate := &x509.Certificate{
+		SerialNumber:          serialNumber,
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		Subject:               pkix.Name{CommonName: caID},
+	}
+
+	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, &key.PublicKey, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CA certificate: %w", err)
+	}
+
+	rootCert, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CA certificate: %w", err)
+	}
+
+	return &localca.CA{
+		ID:              caID,
+		SigningKey:      key,
+		RootCertificate: rootCert,
+	}, nil
 }
 
 // generateServerCert generates a server leaf certificate signed by the provided CA.
 func generateServerCert(ca *localca.CA, dnsNames []string) (certPEM, keyPEM []byte, err error) {
-	serverPubKey, serverPrivKey, err := ed25519.GenerateKey(rand.Reader)
+	serverPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate server key: %w", err)
 	}
@@ -70,7 +107,7 @@ func generateServerCert(ca *localca.CA, dnsNames []string) (certPEM, keyPEM []by
 		DNSNames:              dnsNames,
 	}
 
-	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, ca.RootCertificate, serverPubKey, ca.SigningKey)
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, ca.RootCertificate, &serverPrivKey.PublicKey, ca.SigningKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create server certificate: %w", err)
 	}
@@ -87,12 +124,13 @@ func generateServerCert(ca *localca.CA, dnsNames []string) (certPEM, keyPEM []by
 }
 
 // generateClientCert generates a client certificate signed by the provided CA.
+// RSA keys are used so custom gateway CA validation (ADS trust context) matches
+// server/CA PKI and works reliably with Envoy and curl in e2e.
 func generateClientCert(ca *localca.CA, spiffeID string) (certPEM, keyPEM []byte, err error) {
-	clientPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	clientPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate client key: %w", err)
 	}
-	clientPubKey := &clientPrivKey.PublicKey
 
 	notBefore := time.Now()
 	notAfter := notBefore.Add(365 * 24 * time.Hour)
@@ -120,15 +158,12 @@ func generateClientCert(ca *localca.CA, spiffeID string) (certPEM, keyPEM []byte
 		URIs:                  []*url.URL{uri},
 	}
 
-	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, ca.RootCertificate, clientPubKey, ca.SigningKey)
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, ca.RootCertificate, &clientPrivKey.PublicKey, ca.SigningKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create client certificate: %w", err)
 	}
 
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER})
-	// Append CA cert to client cert chain
-	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.RootCertificate.Raw})
-	certPEM = append(certPEM, caCertPEM...)
 
 	privKeyBytes, err := x509.MarshalPKCS8PrivateKey(clientPrivKey)
 	if err != nil {

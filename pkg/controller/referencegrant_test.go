@@ -252,6 +252,16 @@ func TestDeduplicateStrings(t *testing.T) {
 			input:    []string{"a", "a", "a"},
 			expected: []string{"a"},
 		},
+		{
+			name:     "preserves empty string",
+			input:    []string{"a", "", "b"},
+			expected: []string{"a", "", "b"},
+		},
+		{
+			name:     "dedupes including empty",
+			input:    []string{"", "", "x"},
+			expected: []string{"", "x"},
+		},
 	}
 
 	for _, tt := range tests {

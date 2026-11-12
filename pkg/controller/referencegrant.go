@@ -206,6 +206,8 @@ func HTTPRouteBackendRefNamespaceIndexFunc(obj interface{}) ([]string, error) {
 	return keys, nil
 }
 
+// deduplicateStrings returns input with duplicate strings removed, preserving the
+// order of first occurrences. The empty string is kept like any other value.
 func deduplicateStrings(input []string) []string {
 	keys := make(map[string]bool)
 	list := []string{}

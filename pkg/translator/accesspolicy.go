@@ -27,6 +27,7 @@ import (
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -37,7 +38,7 @@ import (
 )
 
 // buildGatewayLevelRBACFilters finds all AccessPolicies targeting the Gateway and translates them into HTTP filters.
-func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([]*hcm.HttpFilter, error) {
+func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway, te *translationErrors) ([]*hcm.HttpFilter, error) {
 	gwPolicies, err := t.findAccessPoliciesForTarget(gatewayv1.GroupName, "Gateway", gateway.Namespace, gateway.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find Gateway access policies: %w", err)
@@ -59,7 +60,7 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 
 	// 1. Handle ExternalAuth policy (at most one)
 	if extAuthPolicy != nil {
-		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy)
+		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy, te)
 		rbacTypedConfig, err := anypb.New(rbacProto)
 		if err != nil {
 			return nil, err
@@ -74,7 +75,7 @@ func (t *Translator) buildGatewayLevelRBACFilters(gateway *gatewayv1.Gateway) ([
 
 	// 2. Handle all Allow policies (merged into one filter)
 	if len(allowPolicies) > 0 {
-		rbacProto := t.mergeAllowPoliciesToRBAC(allowPolicies)
+		rbacProto := t.mergeAllowPoliciesToRBAC(allowPolicies, te)
 		rbacTypedConfig, err := anypb.New(rbacProto)
 		if err != nil {
 			return nil, err
@@ -118,7 +119,7 @@ func (t *Translator) buildBackendLevelRBACFilters() ([]*hcm.HttpFilter, error) {
 }
 
 // buildBackendLevelRBACOverrides creates the TypedPerFilterConfig for a cluster, specifically for the RBAC filter overrides.
-func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBackend) (map[string]*anypb.Any, error) {
+func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBackend, te *translationErrors) (map[string]*anypb.Any, error) {
 	perFilterConfig := make(map[string]*anypb.Any)
 
 	// 1. Find and sort AccessPolicies targeting the Backend.
@@ -142,7 +143,7 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 
 	// 1. Handle ExternalAuth policy (at most one)
 	if extAuthPolicy != nil {
-		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy)
+		rbacProto := t.buildRBACConfigWithCommonPolicies(extAuthPolicy, te)
 		rbacPerRouteProto := &rbacv3.RBACPerRoute{
 			Rbac: rbacProto,
 		}
@@ -155,7 +156,7 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 
 	// 2. Handle all Allow policies (merged into one filter)
 	if len(allowPolicies) > 0 {
-		rbacProto := t.mergeAllowPoliciesToRBAC(allowPolicies)
+		rbacProto := t.mergeAllowPoliciesToRBAC(allowPolicies, te)
 		rbacPerRouteProto := &rbacv3.RBACPerRoute{
 			Rbac: rbacProto,
 		}
@@ -171,17 +172,25 @@ func (t *Translator) buildBackendLevelRBACOverrides(backend *agenticv0alpha0.XBa
 
 // buildRBACConfigWithCommonPolicies generates an RBAC config for an AccessPolicy.
 // It includes the common policies needed for MCP session management to avoid blocking basic operations.
-func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
-	return t.translateAccessPolicyToRBAC(accessPolicy)
+func (t *Translator) buildRBACConfigWithCommonPolicies(accessPolicy *agenticv1alpha1.XAccessPolicy, te *translationErrors) *rbacv3.RBAC {
+	rbacConfig := t.translateAccessPolicyToRBAC(accessPolicy, te)
+
+	// Add common policies to avoid blocking basic MCP operations.
+	// These are added to the 'Rules' section which is where allowed traffic is defined.
+	addPolicyToRBACRules(rbacConfig, constants.AllowMCPSessionClosePolicyName, buildAllowMCPSessionClosePolicy())
+	addPolicyToRBACRules(rbacConfig, constants.AllowAnyoneToInitializeAndListToolsPolicyName, buildAllowAnyoneToInitializeAndListToolsPolicy())
+	addPolicyToRBACRules(rbacConfig, constants.AllowHTTPGetPolicyName, buildAllowHTTPGetPolicy())
+
+	return rbacConfig
 }
 
-func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
+func (t *Translator) mergeAllowPoliciesToRBAC(policies []*agenticv1alpha1.XAccessPolicy, te *translationErrors) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
 
 	for _, policy := range policies {
 		for _, rule := range policy.Spec.Rules {
 			policyName := fmt.Sprintf("%s-%s", policy.Name, rule.Name)
-			rbacPolicy := t.translateAccessRuleToRBACPolicy(policy.Namespace, rule)
+			rbacPolicy := t.translateAccessRuleToRBACPolicy(policy.Namespace, policy.Name, rule, te)
 			if rbacPolicy == nil {
 				continue
 			}
@@ -240,7 +249,7 @@ func convertSAtoSPIFFEID(trustDomain, namespace, saName string) string {
 	return fmt.Sprintf(constants.SpiffeIDFormat, trustDomain, namespace, saName)
 }
 
-func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.XAccessPolicy) *rbacv3.RBAC {
+func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.XAccessPolicy, te *translationErrors) *rbacv3.RBAC {
 	rbacConfig := &rbacv3.RBAC{}
 
 	if len(accessPolicy.Spec.Rules) == 0 {
@@ -275,7 +284,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	for _, rule := range accessPolicy.Spec.Rules {
 		policyName := rule.Name
 
-		rbacPolicy := t.translateAccessRuleToRBACPolicy(accessPolicy.Namespace, rule)
+		rbacPolicy := t.translateAccessRuleToRBACPolicy(accessPolicy.Namespace, accessPolicy.Name, rule, te)
 		if rbacPolicy == nil {
 			continue
 		}
@@ -288,6 +297,9 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 			hash, err := externalAuthUniqueID(accessPolicy.Spec.ExternalAuth)
 			if err != nil {
 				klog.Errorf("Failed to generate unique ID for externalAuth config in AccessPolicy %s/%s: %v", accessPolicy.Namespace, accessPolicy.Name, err)
+				if te != nil {
+					te.accessPolicyError(types.NamespacedName{Namespace: accessPolicy.Namespace, Name: accessPolicy.Name}, "", "cannot fingerprint external authorization config", err)
+				}
 				continue
 			}
 			rbacConfig.ShadowRulesStatPrefix = fmt.Sprintf("%s_%s_", constants.ExternalAuthzShadowRulePrefix, hash)
@@ -320,7 +332,7 @@ func (t *Translator) translateAccessPolicyToRBAC(accessPolicy *agenticv1alpha1.X
 	return rbacConfig
 }
 
-func (t *Translator) translateAccessRuleToRBACPolicy(policyNamespace string, rule agenticv1alpha1.AccessRule) *rbacconfigv3.Policy {
+func (t *Translator) translateAccessRuleToRBACPolicy(policyNamespace, policyName string, rule agenticv1alpha1.AccessRule, te *translationErrors) *rbacconfigv3.Policy {
 	source := t.ruleSourceToPrincipalName(policyNamespace, rule.Source)
 
 	var principalIDs []*rbacconfigv3.Principal
@@ -375,6 +387,9 @@ func (t *Translator) translateAccessRuleToRBACPolicy(policyNamespace string, rul
 				ast, err := CompileCelExpression(rule.Authorization.CEL.Expression)
 				if err != nil {
 					klog.Errorf("Failed to compile CEL expression %q: %v", rule.Authorization.CEL.Expression, err)
+					if te != nil {
+						te.accessPolicyError(types.NamespacedName{Namespace: policyNamespace, Name: policyName}, rule.Name, "compile CEL expression", err)
+					}
 					return nil
 				}
 				rbacPolicy.Condition = ast.Expr()

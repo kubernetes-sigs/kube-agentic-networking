@@ -69,6 +69,9 @@ const maxGatewaySyncRetries = 30
 // maxBackendFinalizerRetries is the same cap for the XBackend finalizer queue.
 const maxBackendFinalizerRetries = 15
 
+// AccessPolicyBackendTargetIndex is re-exported for tests and helpers that look up policies by XBackend target key.
+const AccessPolicyBackendTargetIndex = translator.AccessPolicyBackendTargetIndex
+
 type coreResources struct {
 	client kubernetes.Interface
 
@@ -153,8 +156,8 @@ func New(
 	accessPolicyInformer agenticinformersv1alpha1.XAccessPolicyInformer,
 ) (*Controller, error) {
 	apInformer := accessPolicyInformer.Informer()
-	if err := apInformer.AddIndexers(cache.Indexers{AccessPolicyTargetRefIndex: accessPolicyTargetRefIndexFunc}); err != nil {
-		return nil, fmt.Errorf("add AccessPolicy targetRef index: %w", err)
+	if err := apInformer.AddIndexers(translator.NewAccessPolicyIndexers()); err != nil {
+		return nil, fmt.Errorf("add AccessPolicy indexers: %w", err)
 	}
 
 	if err := httprouteInformer.Informer().AddIndexers(cache.Indexers{HTTPRouteBackendRefNamespaceIndex: HTTPRouteBackendRefNamespaceIndexFunc}); err != nil {
@@ -226,6 +229,7 @@ func New(
 		httprouteInformer.Lister(),
 		referenceGrantInformer.Lister(),
 		accessPolicyInformer.Lister(),
+		apInformer.GetIndexer(),
 		backendInformer.Lister(),
 		tracingSampleRate,
 	)
@@ -441,7 +445,7 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	proxyAddress, ensureProxyErr := rm.EnsureProxyExist(ctx)
 	if ensureProxyErr != nil {
 		if c.translator != nil {
-			if _, _, httpRouteStatuses, _, translateErr := c.translator.TranslateGatewayToXDS(ctx, gateway); translateErr == nil {
+			if _, _, httpRouteStatuses, _, _, translateErr := c.translator.TranslateGatewayToXDS(ctx, gateway); translateErr == nil {
 				_ = c.updateHTTPRouteStatuses(ctx, httpRouteStatuses)
 			}
 		}
@@ -470,13 +474,15 @@ func (c *Controller) syncGateway(ctx context.Context, key string) error {
 	logger.Info("Ensured Envoy proxy for gateway exists", "nodeID", rm.NodeID(), "proxyAddress", proxyAddress)
 
 	// Translate Gateway to xDS resources (includes only current HTTPRoutes/XAccessPolicies; stale rules are omitted).
-	resources, listenerStatuses, httpRouteStatuses, _, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
+	resources, listenerStatuses, httpRouteStatuses, _, policyIssues, err := c.translator.TranslateGatewayToXDS(ctx, gateway)
 	if err != nil {
 		updateErr := updateGatewayStatus(ctx, c, gateway, newGW, nil, fmt.Errorf("failed to translate gateway to xDS resources: %w", err))
 		return errors.Join(err, updateErr)
 	}
 
 	logger.Info("Translated gateway to xDS resources")
+
+	c.reconcileAccessPolicyTranslationStatus(ctx, gateway, policyIssues)
 
 	newGW.Status.Listeners = listenerStatuses
 	// Update the xDS server with the new resources.
