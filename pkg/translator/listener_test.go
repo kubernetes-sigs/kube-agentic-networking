@@ -615,6 +615,67 @@ func TestBuildExtAuthzFiltersOldestFirst(t *testing.T) {
 	}
 }
 
+func TestBuildExtAuthzFilterForwardBodyFailsClosed(t *testing.T) {
+	tests := []struct {
+		name             string
+		maxSize          uint16
+		wantBodySettings bool
+	}{
+		{
+			name:             "bounded body rejects oversized requests",
+			maxSize:          4096,
+			wantBodySettings: true,
+		},
+		{
+			name:             "zero disables body forwarding",
+			maxSize:          0,
+			wantBodySettings: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter, err := buildExtAuthzFilterForRBACFilter(&gatewayv1.HTTPExternalAuthFilter{
+				ExternalAuthProtocol: gatewayv1.HTTPRouteExternalAuthGRPCProtocol,
+				BackendRef: gatewayv1.BackendObjectReference{
+					Name: "authorizer",
+				},
+				GRPCAuthConfig: &gatewayv1.GRPCAuthConfig{},
+				ForwardBody: &gatewayv1.ForwardBodyConfig{
+					MaxSize: tt.maxSize,
+				},
+			}, "test", "default")
+			if err != nil {
+				t.Fatalf("build filter: %v", err)
+			}
+
+			extAuthz := &ext_authzv3.ExtAuthz{}
+			if err := filter.GetTypedConfig().UnmarshalTo(extAuthz); err != nil {
+				t.Fatalf("unmarshal ext_authz config: %v", err)
+			}
+			settings := extAuthz.GetWithRequestBody()
+			if !tt.wantBodySettings {
+				if settings != nil {
+					t.Fatalf("body settings = %v, want nil", settings)
+				}
+				return
+			}
+			if settings == nil {
+				t.Fatal("body settings are nil")
+			}
+			if settings.GetMaxRequestBytes() != uint32(tt.maxSize) {
+				t.Errorf("max request bytes = %d, want %d", settings.GetMaxRequestBytes(), tt.maxSize)
+			}
+			if settings.GetAllowPartialMessage() {
+				t.Error("partial request bodies must not be authorized")
+			}
+			if extAuthz.GetFailureModeAllow() {
+				t.Error("external authorization must fail closed")
+			}
+		})
+	}
+}
+
 func TestValidateListeners(t *testing.T) {
 	ns := "test-ns"
 	gwName := "test-gw"
