@@ -204,6 +204,21 @@ build_and_load_mcp_everything_image() {
   kind load docker-image "${registry}/quickstart-everything-mcp:${tag}" --name "${cluster_name}"
 }
 
+# Function to build and load the quickstart ADK agent image.
+# The image name is fixed in site-src/guides/quickstart/adk-agent/Makefile, so
+# only the registry and tag are parameterized here.
+build_and_load_adk_agent_image() {
+  local cluster_name=$1
+  local registry=$2
+  local tag=$3
+
+  header "Building ADK agent image"
+  make -C site-src/guides/quickstart/adk-agent build REGISTRY="${registry}" TAG="${tag}" EXTRA_BUILD_OPT="--label runnumber=${BUILD_ID:-0}"
+
+  header "Loading ADK agent image into cluster"
+  kind load docker-image "${registry}/quickstart-adk-agent:${tag}" --name "${cluster_name}"
+}
+
 # Function to install CRDs
 install_crds() {
   header "Installing Gateway API CRDs"
