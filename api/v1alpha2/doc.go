@@ -16,4 +16,6 @@ limitations under the License.
 
 // +k8s:deepcopy-gen=package
 // +groupName=agentic.networking.x-k8s.io
+
+// Package v1alpha2 contains API Schema definitions for the agentic.networking.x-k8s.io v1alpha2 API group.
 package v1alpha2

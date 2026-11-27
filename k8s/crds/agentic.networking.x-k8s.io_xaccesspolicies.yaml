@@ -2064,6 +2064,8 @@ spec:
                           properties:
                             expression:
                               description: Expression is the CEL expression to evaluate.
+                              maxLength: 4096
+                              minLength: 1
                               type: string
                           required:
                           - expression
@@ -2074,27 +2076,56 @@ spec:
                             All specified headers must match (AND semantics across list items).
                             If empty or omitted, no header checking is applied.
                           items:
-                            description: HTTPHeaderMatch describes how to select a
-                              HTTP route by matching HTTP request headers.
+                            description: |-
+                              HTTPHeaderMatch describes how to select a HTTP route by matching HTTP request
+                              headers.
                             properties:
                               name:
-                                description: Name is the name of the HTTP Header to
-                                  be matched.
+                                description: |-
+                                  Name is the name of the HTTP Header to be matched. Name matching MUST be
+                                  case-insensitive. (See https://tools.ietf.org/html/rfc7230#section-3.2).
+
+                                  If multiple entries specify equivalent header names, only the first
+                                  entry with an equivalent name MUST be considered for a match. Subsequent
+                                  entries with an equivalent header name MUST be ignored. Due to the
+                                  case-insensitivity of header names, "foo" and "Foo" are considered
+                                  equivalent.
+
+                                  When a header is repeated in an HTTP request, it is
+                                  implementation-specific behavior as to how this is represented.
+                                  Generally, proxies should follow the guidance from the RFC:
+                                  https://www.rfc-editor.org/rfc/rfc7230.html#section-3.2.2 regarding
+                                  processing a repeated header, with special handling for "Set-Cookie".
                                 maxLength: 256
                                 minLength: 1
                                 pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                 type: string
                               type:
                                 default: Exact
-                                description: Type specifies how to match against the
-                                  value of the header.
+                                description: |-
+                                  Type specifies how to match against the value of the header.
+
+                                  Support: Core (Exact)
+
+                                  Support: Implementation-specific (RegularExpression)
+
+                                  Since RegularExpression HeaderMatchType has implementation-specific
+                                  conformance, implementations can support POSIX, PCRE or any other dialects
+                                  of regular expressions. Please read the implementation's documentation to
+                                  determine the supported dialect.
                                 enum:
                                 - Exact
                                 - RegularExpression
                                 type: string
                               value:
-                                description: Value is the value of HTTP Header to
-                                  be matched.
+                                description: |-
+                                  Value is the value of HTTP Header to be matched.
+                                  <gateway:experimental:description>
+                                  Must consist of printable US-ASCII characters, optionally separated
+                                  by single tabs or spaces. See: https://tools.ietf.org/html/rfc7230#section-3.2
+                                  </gateway:experimental:description>
+
+                                  <gateway:experimental:validation:Pattern=`^[!-~]+([\t ]?[!-~]+)*$`>
                                 maxLength: 4096
                                 minLength: 1
                                 type: string
@@ -2103,6 +2134,7 @@ spec:
                             - value
                             type: object
                           maxItems: 10
+                          minItems: 1
                           type: array
                           x-kubernetes-list-type: atomic
                         hosts:
@@ -2111,13 +2143,27 @@ spec:
                             If specified, the request host / authority header must match one of the items in the list (OR semantics across list items).
                             If empty or omitted, any host is allowed.
                           items:
-                            description: Hostname is the fully qualified domain name
-                              of a network host.
+                            description: |-
+                              Hostname is the fully qualified domain name of a network host. This matches
+                              the RFC 1123 definition of a hostname with 2 notable exceptions:
+
+                               1. IPs are not allowed.
+                               2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
+                                  label must appear by itself as the first label.
+
+                              Hostname can be "precise" which is a domain name without the terminating
+                              dot of a network host (e.g. "foo.example.com") or "wildcard", which is a
+                              domain name prefixed with a single wildcard label (e.g. `*.example.com`).
+
+                              Note that as per RFC1035 and RFC1123, a *label* must consist of lower case
+                              alphanumeric characters or '-', and must start and end with an alphanumeric
+                              character. No other punctuation is allowed.
                             maxLength: 253
                             minLength: 1
                             pattern: ^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                             type: string
                           maxItems: 10
+                          minItems: 1
                           type: array
                           x-kubernetes-list-type: set
                         methods:
@@ -2126,8 +2172,19 @@ spec:
                             If specified, the request method must match one of the items in the list (OR semantics across list items).
                             If empty or omitted, any HTTP method is allowed.
                           items:
-                            description: HTTPMethod describes how to select a HTTP
-                              route by matching the HTTP method.
+                            description: |-
+                              HTTPMethod describes how to select a HTTP route by matching the HTTP
+                              method as defined by
+                              [RFC 7231](https://datatracker.ietf.org/doc/html/rfc7231#section-4) and
+                              [RFC 5789](https://datatracker.ietf.org/doc/html/rfc5789#section-2).
+                              The value is expected in upper case.
+
+                              Note that values may be added to this enum, implementations
+                              must ensure that unknown values will not cause a crash.
+
+                              Unknown values here must result in the implementation setting the
+                              Accepted Condition for the Route to `status: False`, with a
+                              Reason of `UnsupportedValue`.
                             enum:
                             - GET
                             - HEAD
@@ -2140,6 +2197,7 @@ spec:
                             - PATCH
                             type: string
                           maxItems: 9
+                          minItems: 1
                           type: array
                           x-kubernetes-list-type: set
                         paths:
@@ -2153,20 +2211,71 @@ spec:
                             properties:
                               type:
                                 default: PathPrefix
-                                description: Type specifies how to match against the
-                                  path Value.
+                                description: |-
+                                  Type specifies how to match against the path Value.
+
+                                  Support: Core (Exact, PathPrefix)
+
+                                  Support: Implementation-specific (RegularExpression)
                                 enum:
                                 - Exact
                                 - PathPrefix
                                 - RegularExpression
                                 type: string
                               value:
-                                default: ""
+                                default: /
                                 description: Value of the HTTP path to match against.
                                 maxLength: 1024
                                 type: string
                             type: object
+                            x-kubernetes-validations:
+                            - message: value must be an absolute path and start with
+                                '/' when type one of ['Exact', 'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? self.value.startsWith(''/'')
+                                : true'
+                            - message: must not contain '//' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.contains(''//'')
+                                : true'
+                            - message: must not contain '/./' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.contains(''/./'')
+                                : true'
+                            - message: must not contain '/../' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.contains(''/../'')
+                                : true'
+                            - message: must not contain '%2f' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.contains(''%2f'')
+                                : true'
+                            - message: must not contain '%2F' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.contains(''%2F'')
+                                : true'
+                            - message: must not contain '#' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.contains(''#'')
+                                : true'
+                            - message: must not end with '/..' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.endsWith(''/..'')
+                                : true'
+                            - message: must not end with '/.' when type one of ['Exact',
+                                'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? !self.value.endsWith(''/.'')
+                                : true'
+                            - message: type must be one of ['Exact', 'PathPrefix',
+                                'RegularExpression']
+                              rule: self.type in ['Exact','PathPrefix'] || self.type
+                                == 'RegularExpression'
+                            - message: must only contain valid characters (matching
+                                ^(?:[-A-Za-z0-9/._~!$&'()*+,;=:@]|[%][0-9a-fA-F]{2})+$)
+                                for types ['Exact', 'PathPrefix']
+                              rule: '(self.type in [''Exact'',''PathPrefix'']) ? self.value.matches(r"""^(?:[-A-Za-z0-9/._~!$&''()*+,;=:@]|[%][0-9a-fA-F]{2})+$""")
+                                : true'
                           maxItems: 10
+                          minItems: 1
                           type: array
                           x-kubernetes-list-type: atomic
                         ports:
@@ -2177,12 +2286,14 @@ spec:
                           items:
                             description: PortNumber defines a network port.
                             format: int32
-                            maximum: 65535
-                            minimum: 1
                             type: integer
                           maxItems: 10
+                          minItems: 1
                           type: array
                           x-kubernetes-list-type: set
+                          x-kubernetes-validations:
+                          - message: ports must be between 1 and 65535
+                            rule: self.all(p, p >= 1 && p <= 65535)
                         type:
                           description: AuthorizationRuleType identifies a type of
                             authorization rule.
@@ -2198,6 +2309,16 @@ spec:
                         rule: 'self.type == ''CEL'' ? has(self.cel) : true'
                       - message: cel must not be specified when type is set to 'Inline'
                         rule: 'self.type == ''Inline'' ? !has(self.cel) : true'
+                      - message: Inline authorization must specify at least one matcher
+                          (methods, paths, headers, hosts, or ports)
+                        rule: 'self.type == ''Inline'' ? (has(self.methods) || has(self.paths)
+                          || has(self.headers) || has(self.hosts) || has(self.ports))
+                          : true'
+                      - message: methods, paths, headers, hosts and ports must not
+                          be specified when type is set to 'CEL'
+                        rule: 'self.type == ''CEL'' ? (!has(self.methods) && !has(self.paths)
+                          && !has(self.headers) && !has(self.hosts) && !has(self.ports))
+                          : true'
                     name:
                       description: |-
                         Name specifies the name of the rule.
@@ -2214,7 +2335,7 @@ spec:
                       properties:
                         serviceAccount:
                           description: |-
-                            serviceAccount specifies a Kubernetes Service Account that is
+                            ServiceAccount specifies a Kubernetes Service Account that is
                             matched by this rule. A request originating from a pod associated with
                             this Service Account will match the rule.
 
@@ -2224,18 +2345,24 @@ spec:
                           properties:
                             name:
                               description: Name is the name of the ServiceAccount.
+                              maxLength: 253
+                              minLength: 1
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                               type: string
                             namespace:
                               description: |-
-                                Namespace is the namespace of the ServiceAccount
-                                If not specified, current namespace (the namespace of the policy) is used.
+                                Namespace is the namespace of the ServiceAccount.
+                                If not specified, the namespace of the policy is used.
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                               type: string
                           required:
                           - name
                           type: object
                         spiffe:
                           description: |-
-                            spiffe specifies an identity that is matched by this rule.
+                            SPIFFE specifies an identity that is matched by this rule.
 
                             spiffe identities must be specified as SPIFFE-formatted URIs following the pattern:
                               spiffe://<trust_domain>/<workload-identifier>
@@ -2251,16 +2378,26 @@ spec:
                               mapping between source IP addresses (pod IPs) and their associated
                               identities (e.g., Service Account, SPIFFE IDs).
                             - From JWTs or other request-level authentication tokens.
-                          pattern: ^spiffe://[a-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$
+                          maxLength: 2048
+                          pattern: ^spiffe://[a-z0-9._-]+(?:/[A-Za-z0-9._-]+)+$
                           type: string
                         type:
-                          description: AuthorizationSourceType identifies a type of
-                            source for authorization.
+                          description: Type identifies which source field is set.
                           enum:
                           - ServiceAccount
                           - SPIFFE
                           type: string
+                      required:
+                      - type
                       type: object
+                      x-kubernetes-validations:
+                      - message: spiffe must be specified when type is 'SPIFFE' and
+                          must not be specified otherwise
+                        rule: 'self.type == ''SPIFFE'' ? has(self.spiffe) : !has(self.spiffe)'
+                      - message: serviceAccount must be specified when type is 'ServiceAccount'
+                          and must not be specified otherwise
+                        rule: 'self.type == ''ServiceAccount'' ? has(self.serviceAccount)
+                          : !has(self.serviceAccount)'
                   required:
                   - name
                   type: object
@@ -2344,6 +2481,8 @@ spec:
             x-kubernetes-validations:
             - message: externalAuth must be specified when action is set to 'ExternalAuth'
               rule: 'self.action == ''ExternalAuth'' ? has(self.externalAuth) : true'
+            - message: externalAuth must not be specified when action is not 'ExternalAuth'
+              rule: 'self.action != ''ExternalAuth'' ? !has(self.externalAuth) : true'
           status:
             description: status defines the observed state of AccessPolicy.
             properties:

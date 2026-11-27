@@ -177,9 +177,9 @@ register: ## Generate register code for CRDs under ./api/v0alpha0, ./api/v1alpha
 		    ./api/v1alpha1'
 	@echo "+++ Generating register code for api/v1alpha2..."
 	@bash -c 'source $(CODEGEN_SCRIPT); \
-                kube::codegen::gen_register \
-                    --boilerplate $(BOILERPLATE_FILE) \
-                    ./api/v1alpha2'
+		kube::codegen::gen_register \
+		    --boilerplate $(BOILERPLATE_FILE) \
+		    ./api/v1alpha2'
 
 
 ## @ Dependencies
