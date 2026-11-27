@@ -38,7 +38,7 @@ spec:
       containers:
         - name: adk-agent
           image: us-central1-docker.pkg.dev/k8s-staging-images/agentic-net/quickstart-adk-agent:main
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           resources:
             limits:
               memory: "512Mi"

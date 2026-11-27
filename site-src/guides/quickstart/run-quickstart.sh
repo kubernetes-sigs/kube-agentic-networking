@@ -201,6 +201,16 @@ build_and_load_controller_image_step() {
     "${CLUSTER_NAME}" "${CONTROLLER_REGISTRY}" "${CONTROLLER_IMAGE_NAME}" "${CONTROLLER_TAG}")
 }
 
+# --- Step 1.7: Build and Load Quickstart Images ---
+
+build_and_load_quickstart_images_step() {
+  info "Step 1.7/9: Building MCP server and ADK agent images from source..."
+  # Subshell prevents lib.sh functions from overwriting this script's identically named functions.
+  (source dev/ci/lib.sh && \
+    build_and_load_mcp_everything_image "${CLUSTER_NAME}" "${CONTROLLER_REGISTRY}" "${CONTROLLER_TAG}" && \
+    build_and_load_adk_agent_image "${CLUSTER_NAME}" "${CONTROLLER_REGISTRY}" "${CONTROLLER_TAG}")
+}
+
 # --- Step 2: Install Gateway API CRDs ---
 
 install_gateway_api_crds() {
@@ -392,6 +402,7 @@ setup_port_forward() {
 create_kind_cluster
 install_metallb_step
 build_and_load_controller_image_step
+build_and_load_quickstart_images_step
 install_gateway_api_crds
 install_agentic_networking_crds
 create_namespaces
