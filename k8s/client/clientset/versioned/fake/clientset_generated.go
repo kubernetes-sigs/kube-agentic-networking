@@ -30,6 +30,8 @@ import (
 	fakeagenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v0alpha0/fake"
 	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v1alpha1"
 	fakeagenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v1alpha1/fake"
+	agenticv1alpha2 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v1alpha2"
+	fakeagenticv1alpha2 "sigs.k8s.io/kube-agentic-networking/k8s/client/clientset/versioned/typed/api/v1alpha2/fake"
 )
 
 // NewSimpleClientset returns a clientset that will respond with the provided objects.
@@ -105,4 +107,9 @@ func (c *Clientset) AgenticV0alpha0() agenticv0alpha0.AgenticV0alpha0Interface {
 // AgenticV1alpha1 retrieves the AgenticV1alpha1Client
 func (c *Clientset) AgenticV1alpha1() agenticv1alpha1.AgenticV1alpha1Interface {
 	return &fakeagenticv1alpha1.FakeAgenticV1alpha1{Fake: &c.Fake}
+}
+
+// AgenticV1alpha2 retrieves the AgenticV1alpha2Client
+func (c *Clientset) AgenticV1alpha2() agenticv1alpha2.AgenticV1alpha2Interface {
+	return &fakeagenticv1alpha2.FakeAgenticV1alpha2{Fake: &c.Fake}
 }

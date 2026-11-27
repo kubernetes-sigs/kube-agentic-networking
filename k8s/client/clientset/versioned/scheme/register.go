@@ -26,6 +26,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	agenticv0alpha0 "sigs.k8s.io/kube-agentic-networking/api/v0alpha0"
 	agenticv1alpha1 "sigs.k8s.io/kube-agentic-networking/api/v1alpha1"
+	agenticv1alpha2 "sigs.k8s.io/kube-agentic-networking/api/v1alpha2"
 )
 
 var Scheme = runtime.NewScheme()
@@ -34,6 +35,7 @@ var ParameterCodec = runtime.NewParameterCodec(Scheme)
 var localSchemeBuilder = runtime.SchemeBuilder{
 	agenticv0alpha0.AddToScheme,
 	agenticv1alpha1.AddToScheme,
+	agenticv1alpha2.AddToScheme,
 }
 
 // AddToScheme adds all types of this clientset into the given scheme. This allows composition
